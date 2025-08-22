@@ -13,3 +13,5 @@ __pycache__/
 node_modules/
 
 target/
+uv.lock
+package-lock.json
