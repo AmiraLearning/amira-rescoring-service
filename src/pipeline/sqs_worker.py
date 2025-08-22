@@ -120,10 +120,7 @@ class WorkerConfig(BaseModel):
     @field_validator("audio_dir")
     @classmethod
     def validate_audio_dir(cls, v):
-        # Resolve and validate the path to prevent traversal attacks
         resolved_path = Path(v).resolve()
-
-        # Ensure it's within allowed directories
         allowed_prefixes = [Path("/tmp"), Path("/opt/app"), Path("/var/task")]
 
         if not any(
@@ -131,7 +128,6 @@ class WorkerConfig(BaseModel):
         ):
             raise ValueError(f"Audio directory path not allowed: {resolved_path}")
 
-        # Create directory if it doesn't exist
         resolved_path.mkdir(parents=True, exist_ok=True)
 
         return str(resolved_path)
@@ -226,7 +222,7 @@ async def write_results_to_s3(
     await s3_client.put_object(Bucket=results_bucket, Key=data_key, Body=buf)
     await s3_client.put_object(Bucket=results_bucket, Key=success_key, Body=b"")
 
-# TODO wire up the activity group to the pipeline
+
 async def process_message(
     *, msg: SQSMessage, config: WorkerConfig, s3_client: Any
 ) -> None:
@@ -239,10 +235,9 @@ async def process_message(
     """
     start_time = time.time()
 
-    # Validate message age to prevent replay attacks
     if msg.timestamp:
         message_age = time.time() - msg.timestamp
-        if message_age > 3600:  # 1 hour max age
+        if message_age > 3600:
             logger.warning(
                 f"Rejecting old message: {msg.activityId} (age: {message_age}s)"
             )
@@ -291,7 +286,6 @@ async def handle_sqs_message(
 
     while retry_count <= max_retries:
         try:
-            # Parse and validate message
             raw_body = record.get("Body", "")
             if not raw_body:
                 logger.error(f"Empty message body for {message_id}")
@@ -303,12 +297,10 @@ async def handle_sqs_message(
                 logger.error(f"Invalid JSON in message {message_id}: {e}")
                 break
 
-            # Validate message structure
             if not isinstance(body, dict):
                 logger.error(f"Message body is not a dict for {message_id}")
                 break
 
-            # Create validated message object
             try:
                 msg = SQSMessage(**body)
             except Exception as e:
@@ -317,7 +309,6 @@ async def handle_sqs_message(
 
             start_ts = time.time()
 
-            # Process with timeout
             try:
                 await asyncio.wait_for(
                     process_message(msg=msg, config=config, s3_client=s3_client),
@@ -327,7 +318,6 @@ async def handle_sqs_message(
                 logger.error(f"Processing timeout for message {message_id}")
                 raise
 
-            # Extend visibility timeout if needed
             processing_time = time.time() - start_ts
             TIMEOUT_THRESHOLD = config.visibility_timeout * 0.75
 
@@ -341,7 +331,6 @@ async def handle_sqs_message(
                 except Exception as e:
                     logger.warning(f"Failed to extend visibility timeout: {e}")
 
-            # Delete message on success
             await sqs_client.delete_message(
                 QueueUrl=config.queue_url, ReceiptHandle=receipt
             )
@@ -355,12 +344,10 @@ async def handle_sqs_message(
             )
 
             if retry_count <= max_retries:
-                # Exponential backoff
                 backoff_time = min(2**retry_count, 30)
                 await asyncio.sleep(backoff_time)
             else:
                 logger.error(f"Exhausted retries for message {message_id}, giving up")
-                # Message will become visible again after visibility timeout
                 break
 
 
@@ -381,14 +368,13 @@ async def poll_and_process_messages(
 
     while True:
         try:
-            # Circuit breaker logic
             if consecutive_errors >= max_consecutive_errors:
                 if time.time() - last_success < circuit_breaker_timeout:
                     logger.warning(
                         f"Circuit breaker active, sleeping for {circuit_breaker_timeout}s"
                     )
                     await asyncio.sleep(circuit_breaker_timeout)
-                    consecutive_errors = 0  # Reset after timeout
+                    consecutive_errors = 0
 
             resp = await sqs_client.receive_message(
                 QueueUrl=config.queue_url,
@@ -402,7 +388,6 @@ async def poll_and_process_messages(
             if messages:
                 logger.info(f"Received {len(messages)} messages")
 
-                # Process messages concurrently with limited parallelism
                 semaphore = asyncio.Semaphore(config.max_messages)
 
                 async def process_with_semaphore(record):
@@ -419,10 +404,9 @@ async def poll_and_process_messages(
                     return_exceptions=True,
                 )
 
-                consecutive_errors = 0  # Reset on successful batch
+                consecutive_errors = 0
                 last_success = time.time()
             else:
-                # No messages, brief pause
                 await asyncio.sleep(1)
 
         except Exception as e:
@@ -431,20 +415,18 @@ async def poll_and_process_messages(
                 f"Error in polling loop (consecutive errors: {consecutive_errors}): {type(e).__name__}"
             )
 
-            # Exponential backoff for errors
             backoff_time = min(2 ** min(consecutive_errors, 6), 60)
             await asyncio.sleep(backoff_time)
 
 
 def main() -> None:
     """Main entry point for the SQS worker."""
-    # Configure structured logging
     logger.remove()
     logger.add(
         sys.stdout,
         level="INFO",
         format="{time:YYYY-MM-DD HH:mm:ss} | {level} | {name}:{function}:{line} | {message}",
-        serialize=True,  # JSON output for structured logging
+        serialize=True,
     )
 
     try:
@@ -453,7 +435,6 @@ def main() -> None:
             f"Starting SQS worker with config: queue={config.queue_url}, region={config.aws_region}"
         )
 
-        # Use session for connection pooling
         session = aioboto3.Session()
 
         async def run_worker():

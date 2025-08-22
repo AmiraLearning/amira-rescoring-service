@@ -1,0 +1,62 @@
+{
+  "agent": { "debug": false },
+  "metrics": {
+    "namespace": "CWAgent",
+    "metrics_collected": {
+      "prometheus": {
+        "emf_processor": {
+          "metric_declaration": [
+            {
+              "source_labels": ["__name__"],
+              "label_matcher": "^DCGM_FI_DEV_GPU_UTIL$",
+              "dimensions": [["gpu"]],
+              "metric_selectors": ["^DCGM_FI_DEV_GPU_UTIL$"]
+            },
+            {
+              "source_labels": ["__name__"],
+              "label_matcher": "^DCGM_FI_DEV_FB_USED$",
+              "dimensions": [["gpu"]],
+              "metric_selectors": ["^DCGM_FI_DEV_FB_USED$"]
+            },
+            {
+              "source_labels": ["__name__"],
+              "label_matcher": "^DCGM_FI_DEV_FB_TOTAL$",
+              "dimensions": [["gpu"]],
+              "metric_selectors": ["^DCGM_FI_DEV_FB_TOTAL$"]
+            },
+            {
+              "source_labels": ["__name__", "quantile"],
+              "label_matcher": "^nv_inference_request_duration_us;0.95$",
+              "dimensions": [["model"]],
+              "metric_selectors": ["^nv_inference_request_duration_us$"]
+            },
+            {
+              "source_labels": ["__name__", "quantile"],
+              "label_matcher": "^nv_inference_queue_duration_us;0.95$",
+              "dimensions": [["model"]],
+              "metric_selectors": ["^nv_inference_queue_duration_us$"]
+            },
+            {
+              "source_labels": ["__name__"],
+              "label_matcher": "^nv_inference_count$",
+              "dimensions": [["model"]],
+              "metric_selectors": ["^nv_inference_count$"]
+            },
+            {
+              "source_labels": ["__name__"],
+              "label_matcher": "^nv_inference_fail$",
+              "dimensions": [["model"]],
+              "metric_selectors": ["^nv_inference_fail$"]
+            }
+          ]
+        },
+        "metrics_declaration": [],
+        "scrape_interval": "15s",
+        "static_targets": [
+          { "targets": ["127.0.0.1:9400", "127.0.0.1:8002"] }
+        ]
+      }
+    }
+  }
+}
+

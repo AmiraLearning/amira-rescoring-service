@@ -20,6 +20,13 @@ dependencies = [
   "tritonclient>=2.59.0",
   "typer>=0.16.1",
   "torchaudio>=2.8.0",
+  "gevent>=25.5.1",
+  "geventhttpclient>=2.3.4",
+  "requests-toolbelt>=1.0.0",
+  "pydub>=0.25.1",
+  "torchcodec>=0.6.0",
+  "soundfile>=0.13.1",
+  "scipy>=1.16.1",
 ]
 
 [build-system]

@@ -18,8 +18,39 @@ import * as sns from 'aws-cdk-lib/aws-sns';
 import * as ssm from 'aws-cdk-lib/aws-ssm';
 import * as cw_dash from 'aws-cdk-lib/aws-cloudwatch';
 import { Construct } from 'constructs';
+import cwAgentConfig = require('./cw-agent-config.json');
 
 export class AmiraLetterScoringStack extends cdk.Stack {
+  private createAsgAndCapacityProvider(scope: Construct, id: string, vpc: ec2.IVpc, instanceType: ec2.InstanceType, securityGroup: ec2.ISecurityGroup, role: iam.IRole): { asg: autoscaling.AutoScalingGroup; capacityProvider: ecs.AsgCapacityProvider } {
+    const lt = new ec2.LaunchTemplate(scope, `${id}LaunchTemplate`, {
+      instanceType,
+      machineImage: ecs.EcsOptimizedImage.amazonLinux2(ecs.AmiHardwareType.GPU),
+      userData: ec2.UserData.forLinux(),
+      securityGroup,
+      role,
+      requireImdsv2: true,
+      spotOptions: { requestType: ec2.SpotRequestType.ONE_TIME, interruptionBehavior: ec2.SpotInstanceInterruption.STOP }
+    });
+
+    const asg = new autoscaling.AutoScalingGroup(scope, `${id}Asg`, {
+      vpc,
+      launchTemplate: lt,
+      minCapacity: 0,
+      maxCapacity: 10,
+      desiredCapacity: 0,
+      vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
+      capacityRebalance: true
+    });
+
+    const capacityProvider = new ecs.AsgCapacityProvider(scope, `${id}CapacityProvider`, {
+      autoScalingGroup: asg,
+      enableManagedScaling: true,
+      enableManagedTerminationProtection: true,
+      targetCapacityPercent: 100,
+      machineImageType: ecs.MachineImageType.AMAZON_LINUX_2
+    });
+    return { asg, capacityProvider };
+  }
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
     super(scope, id, props);
 
@@ -49,6 +80,26 @@ export class AmiraLetterScoringStack extends cdk.Stack {
     });
 
     // Parameters for runtime configuration
+    const appImageTagParam = new cdk.CfnParameter(this, 'AppImageTag', {
+      type: 'String',
+      default: 'v0.0.0',
+      description: 'ECR image tag for application container'
+    });
+    const tritonImageTagParam = new cdk.CfnParameter(this, 'TritonImageTag', {
+      type: 'String',
+      default: 'v0.0.0',
+      description: 'ECR image tag for Triton container'
+    });
+    const cwAgentImageTagParam = new cdk.CfnParameter(this, 'CwAgentImageTag', {
+      type: 'String',
+      default: 'latest',
+      description: 'ECR image tag for CloudWatch Agent container'
+    });
+    const dcgmImageTagParam = new cdk.CfnParameter(this, 'DcgmImageTag', {
+      type: 'String',
+      default: 'latest',
+      description: 'ECR image tag for DCGM exporter container'
+    });
     const modelPathParam = new cdk.CfnParameter(this, 'ModelPath', {
       type: 'String',
       default: 'facebook/wav2vec2-base-960h',
@@ -91,6 +142,26 @@ export class AmiraLetterScoringStack extends cdk.Stack {
       type: 'String',
       default: 'SELECT activity_id FROM activities WHERE process_flag = 1',
       description: 'Athena SQL to produce activity IDs'
+    });
+    const athenaTableParam = new cdk.CfnParameter(this, 'AthenaTable', {
+      type: 'String',
+      default: '',
+      description: 'Optional table name for dynamic query building'
+    });
+    const athenaWhereParam = new cdk.CfnParameter(this, 'AthenaWhere', {
+      type: 'String',
+      default: '',
+      description: 'Optional WHERE clause (without WHERE keyword)'
+    });
+    const athenaLimitParam = new cdk.CfnParameter(this, 'AthenaLimit', {
+      type: 'String',
+      default: '',
+      description: 'Optional LIMIT value for the query'
+    });
+    const athenaColumnsParam = new cdk.CfnParameter(this, 'AthenaColumns', {
+      type: 'String',
+      default: 'activity_id',
+      description: 'Optional columns to select for dynamic query'
     });
 
     // Optional Audio bucket for read-only access
@@ -142,6 +213,22 @@ export class AmiraLetterScoringStack extends cdk.Stack {
     });
     vpc.addInterfaceEndpoint('SqsEndpoint', {
       service: ec2.InterfaceVpcEndpointAwsService.SQS,
+      subnets: { subnets: vpc.privateSubnets }
+    });
+    vpc.addInterfaceEndpoint('SsmEndpoint', {
+      service: ec2.InterfaceVpcEndpointAwsService.SSM,
+      subnets: { subnets: vpc.privateSubnets }
+    });
+    vpc.addInterfaceEndpoint('SsmMessagesEndpoint', {
+      service: ec2.InterfaceVpcEndpointAwsService.SSM_MESSAGES,
+      subnets: { subnets: vpc.privateSubnets }
+    });
+    vpc.addInterfaceEndpoint('Ec2MessagesEndpoint', {
+      service: ec2.InterfaceVpcEndpointAwsService.EC2_MESSAGES,
+      subnets: { subnets: vpc.privateSubnets }
+    });
+    vpc.addInterfaceEndpoint('StsEndpoint', {
+      service: ec2.InterfaceVpcEndpointAwsService.STS,
       subnets: { subnets: vpc.privateSubnets }
     });
 
@@ -202,64 +289,10 @@ export class AmiraLetterScoringStack extends cdk.Stack {
       machineImageType: ecs.MachineImageType.AMAZON_LINUX_2
     });
     // Additional ASGs for diversified Spot capacity
-    const ltG5xlarge = new ec2.LaunchTemplate(this, 'GpuLaunchTemplateG5xlarge', {
-      instanceType: ec2.InstanceType.of(ec2.InstanceClass.G5, ec2.InstanceSize.XLARGE),
-      machineImage: ecs.EcsOptimizedImage.amazonLinux2(ecs.AmiHardwareType.GPU),
-      userData: ec2.UserData.forLinux(),
-      securityGroup,
-      role: instanceRole,
-      requireImdsv2: true,
-      spotOptions: {
-        requestType: ec2.SpotRequestType.ONE_TIME,
-        interruptionBehavior: ec2.SpotInstanceInterruption.STOP
-      }
-    });
-    const asgG5xlarge = new autoscaling.AutoScalingGroup(this, 'GpuAsgG5xlarge', {
-      vpc,
-      launchTemplate: ltG5xlarge,
-      minCapacity: 0,
-      maxCapacity: 10,
-      desiredCapacity: 0,
-      vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
-      capacityRebalance: true
-    });
-    const cpG5xlarge = new ecs.AsgCapacityProvider(this, 'GpuCapacityProviderG5xlarge', {
-      autoScalingGroup: asgG5xlarge,
-      enableManagedScaling: true,
-      enableManagedTerminationProtection: true,
-      targetCapacityPercent: 100,
-      machineImageType: ecs.MachineImageType.AMAZON_LINUX_2
-    });
+    const { asg: asgG5xlarge, capacityProvider: cpG5xlarge } = this.createAsgAndCapacityProvider(this, 'GpuG5xlarge', vpc, ec2.InstanceType.of(ec2.InstanceClass.G5, ec2.InstanceSize.XLARGE), securityGroup, instanceRole);
     cluster.addAsgCapacityProvider(cpG5xlarge);
 
-    const ltG52xlarge = new ec2.LaunchTemplate(this, 'GpuLaunchTemplateG52xlarge', {
-      instanceType: ec2.InstanceType.of(ec2.InstanceClass.G5, ec2.InstanceSize.XLARGE2),
-      machineImage: ecs.EcsOptimizedImage.amazonLinux2(ecs.AmiHardwareType.GPU),
-      userData: ec2.UserData.forLinux(),
-      securityGroup,
-      role: instanceRole,
-      requireImdsv2: true,
-      spotOptions: {
-        requestType: ec2.SpotRequestType.ONE_TIME,
-        interruptionBehavior: ec2.SpotInstanceInterruption.STOP
-      }
-    });
-    const asgG52xlarge = new autoscaling.AutoScalingGroup(this, 'GpuAsgG52xlarge', {
-      vpc,
-      launchTemplate: ltG52xlarge,
-      minCapacity: 0,
-      maxCapacity: 10,
-      desiredCapacity: 0,
-      vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
-      capacityRebalance: true
-    });
-    const cpG52xlarge = new ecs.AsgCapacityProvider(this, 'GpuCapacityProviderG52xlarge', {
-      autoScalingGroup: asgG52xlarge,
-      enableManagedScaling: true,
-      enableManagedTerminationProtection: true,
-      targetCapacityPercent: 100,
-      machineImageType: ecs.MachineImageType.AMAZON_LINUX_2
-    });
+    const { asg: asgG52xlarge, capacityProvider: cpG52xlarge } = this.createAsgAndCapacityProvider(this, 'GpuG52xlarge', vpc, ec2.InstanceType.of(ec2.InstanceClass.G5, ec2.InstanceSize.XLARGE2), securityGroup, instanceRole);
     cluster.addAsgCapacityProvider(cpG52xlarge);
 
     cluster.addAsgCapacityProvider(capacityProvider);
@@ -303,17 +336,35 @@ export class AmiraLetterScoringStack extends cdk.Stack {
       removalPolicy: cdk.RemovalPolicy.RETAIN,
       enforceSSL: true
     });
+    resultsBucket.addToResourcePolicy(new iam.PolicyStatement({
+      sid: 'DenyInsecureTransport',
+      effect: iam.Effect.DENY,
+      principals: [new iam.AnyPrincipal()],
+      actions: ['s3:*'],
+      resources: [resultsBucket.bucketArn, `${resultsBucket.bucketArn}/*`],
+      conditions: { Bool: { 'aws:SecureTransport': 'false' } }
+    }));
+    resultsBucket.addToResourcePolicy(new iam.PolicyStatement({
+      sid: 'DenyUnEncryptedObjectUploads',
+      effect: iam.Effect.DENY,
+      principals: [new iam.AnyPrincipal()],
+      actions: ['s3:PutObject'],
+      resources: [`${resultsBucket.bucketArn}/*`],
+      conditions: { StringNotEquals: { 's3:x-amz-server-side-encryption': 'aws:kms' } }
+    }));
 
     // Grant will be attached after taskRole is defined
 
     // SQS queue for jobs with DLQ
     const dlq = new sqs.Queue(this, 'JobsDLQ', {
       retentionPeriod: cdk.Duration.days(14),
+      encryption: sqs.QueueEncryption.KMS_MANAGED,
       enforceSSL: true
     });
     const jobsQueue = new sqs.Queue(this, 'JobsQueue', {
       visibilityTimeout: cdk.Duration.minutes(15),
       deadLetterQueue: { queue: dlq, maxReceiveCount: 3 },
+      encryption: sqs.QueueEncryption.KMS_MANAGED,
       enforceSSL: true
     });
 
@@ -327,6 +378,7 @@ export class AmiraLetterScoringStack extends cdk.Stack {
 
     // Task role with necessary permissions
     const taskRole = new iam.Role(this, 'TaskRole', {
+      roleName: `amira-letter-scoring-task-${cdk.Stack.of(this).stackName}`,
       assumedBy: new iam.ServicePrincipal('ecs-tasks.amazonaws.com'),
       inlinePolicies: {
         S3Access: new iam.PolicyDocument({
@@ -356,7 +408,7 @@ export class AmiraLetterScoringStack extends cdk.Stack {
     const audioProvided = new cdk.CfnCondition(this, 'AudioBucketProvided', {
       expression: cdk.Fn.conditionNot(cdk.Fn.conditionEquals(audioBucketNameParam.valueAsString, ''))
     });
-    const audioPolicy = new iam.Policy(this, 'TaskRoleAudioReadPolicy', {
+    const audioPolicyDoc = new iam.PolicyDocument({
       statements: [
         new iam.PolicyStatement({
           actions: ['s3:ListBucket'],
@@ -371,8 +423,12 @@ export class AmiraLetterScoringStack extends cdk.Stack {
         })
       ]
     });
-    audioPolicy.attachToRole(taskRole);
-    (audioPolicy.node.defaultChild as iam.CfnPolicy).cfnOptions.condition = audioProvided;
+    const audioCfnPolicy = new iam.CfnPolicy(this, 'TaskRoleAudioReadPolicy', {
+      policyDocument: audioPolicyDoc,
+      roles: [taskRole.roleName!],
+      policyName: `TaskRoleAudioReadPolicy-${cdk.Stack.of(this).stackName}`
+    });
+    audioCfnPolicy.cfnOptions.condition = audioProvided;
 
     // Allow task role to use the KMS key for SSE-KMS objects
     resultsBucketKey.grantEncryptDecrypt(taskRole);
@@ -380,13 +436,14 @@ export class AmiraLetterScoringStack extends cdk.Stack {
     // CloudWatch Log Group
     const logGroup = new logs.LogGroup(this, 'AmiraLetterScoringLogGroup', {
       logGroupName: '/ecs/amira-letter-scoring',
-      retention: logs.RetentionDays.ONE_WEEK,
-      removalPolicy: cdk.RemovalPolicy.DESTROY
+      retention: logs.RetentionDays.ONE_MONTH,
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
+      encryptionKey: resultsBucketKey
     });
 
     // ECS Task Definition
     const taskDefinition = new ecs.Ec2TaskDefinition(this, 'AmiraLetterScoringTaskDef', {
-      family: 'amira-letter-scoring',
+      family: `amira-letter-scoring-${cdk.Stack.of(this).stackName}`,
       executionRole: taskExecutionRole,
       taskRole,
       networkMode: ecs.NetworkMode.AWS_VPC
@@ -394,7 +451,7 @@ export class AmiraLetterScoringStack extends cdk.Stack {
 
     // Container definition
     const container = taskDefinition.addContainer('AmiraLetterScoringContainer', {
-      image: ecs.ContainerImage.fromEcrRepository(repository, 'latest'),
+      image: ecs.ContainerImage.fromEcrRepository(repository, appImageTagParam.valueAsString),
       memoryReservationMiB: 8192,
       cpu: 2048,
       // gpuCount assigned to Triton sidecar when enabled
@@ -444,7 +501,7 @@ export class AmiraLetterScoringStack extends cdk.Stack {
 
     // Triton sidecar container (serves model on localhost:8000)
     const tritonContainer = taskDefinition.addContainer('TritonServerContainer', {
-      image: ecs.ContainerImage.fromEcrRepository(tritonRepository, 'latest'),
+      image: ecs.ContainerImage.fromEcrRepository(tritonRepository, tritonImageTagParam.valueAsString),
       memoryReservationMiB: 4096,
       cpu: 1024,
       gpuCount: 1,
@@ -462,7 +519,7 @@ export class AmiraLetterScoringStack extends cdk.Stack {
     tritonContainer.addPortMappings({ containerPort: 8002 });
     // DCGM exporter sidecar (expects image to be pushed to ECR repo)
     const dcgmContainer = taskDefinition.addContainer('DcgmExporterContainer', {
-      image: ecs.ContainerImage.fromEcrRepository(dcgmExporterRepository, 'latest'),
+      image: ecs.ContainerImage.fromEcrRepository(dcgmExporterRepository, dcgmImageTagParam.valueAsString),
       memoryReservationMiB: 256,
       cpu: 128,
       logging: ecs.LogDriver.awsLogs({ logGroup, streamPrefix: 'dcgm-exporter' }),
@@ -470,70 +527,13 @@ export class AmiraLetterScoringStack extends cdk.Stack {
     });
 
     // CloudWatch Agent sidecar to scrape DCGM metrics (config in SSM)
+    const cwAgentConfigString: string = JSON.stringify(cwAgentConfig);
     const cwAgentConfigParam = new ssm.StringParameter(this, 'SsmCwAgentConfig', {
       parameterName: '/amira/cwagent_config',
-      stringValue: JSON.stringify({
-        agent: { debug: false },
-        metrics: {
-          namespace: 'CWAgent',
-          metrics_collected: {
-            prometheus: {
-              emf_processor: {
-                metric_declaration: [
-                  {
-                    source_labels: ["__name__"],
-                    label_matcher: "^DCGM_FI_DEV_GPU_UTIL$",
-                    dimensions: [["gpu"]],
-                    metric_selectors: ["^DCGM_FI_DEV_GPU_UTIL$"]
-                  },
-                  {
-                    source_labels: ["__name__"],
-                    label_matcher: "^DCGM_FI_DEV_FB_USED$",
-                    dimensions: [["gpu"]],
-                    metric_selectors: ["^DCGM_FI_DEV_FB_USED$"]
-                  },
-                  {
-                    source_labels: ["__name__"],
-                    label_matcher: "^DCGM_FI_DEV_FB_TOTAL$",
-                    dimensions: [["gpu"]],
-                    metric_selectors: ["^DCGM_FI_DEV_FB_TOTAL$"]
-                  },
-                  {
-                    source_labels: ["__name__","quantile"],
-                    label_matcher: "^nv_inference_request_duration_us;0.95$",
-                    dimensions: [["model"]],
-                    metric_selectors: ["^nv_inference_request_duration_us$"]
-                  },
-                  {
-                    source_labels: ["__name__","quantile"],
-                    label_matcher: "^nv_inference_queue_duration_us;0.95$",
-                    dimensions: [["model"]],
-                    metric_selectors: ["^nv_inference_queue_duration_us$"]
-                  },
-                  {
-                    source_labels: ["__name__"],
-                    label_matcher: "^nv_inference_count$",
-                    dimensions: [["model"]],
-                    metric_selectors: ["^nv_inference_count$"]
-                  },
-                  {
-                    source_labels: ["__name__"],
-                    label_matcher: "^nv_inference_fail$",
-                    dimensions: [["model"]],
-                    metric_selectors: ["^nv_inference_fail$"]
-                  }
-                ]
-              },
-              metrics_declaration: [],
-              scrape_interval: '15s',
-              static_targets: [ { targets: ['127.0.0.1:9400','127.0.0.1:8002'] } ]
-            }
-          }
-        }
-      })
+      stringValue: cwAgentConfigString
     });
     const cwAgentContainer = taskDefinition.addContainer('CloudWatchAgentContainer', {
-      image: ecs.ContainerImage.fromEcrRepository(cwAgentRepository, 'latest'),
+      image: ecs.ContainerImage.fromEcrRepository(cwAgentRepository, cwAgentImageTagParam.valueAsString),
       memoryReservationMiB: 256,
       cpu: 128,
       logging: ecs.LogDriver.awsLogs({ logGroup, streamPrefix: 'cloudwatch-agent' }),
@@ -576,7 +576,8 @@ export class AmiraLetterScoringStack extends cdk.Stack {
         ecs.PlacementStrategy.spreadAcrossInstances()
       ],
       minHealthyPercent: 100,
-      maxHealthyPercent: 200
+      maxHealthyPercent: 200,
+      enableExecuteCommand: true
     });
 
     // Autoscale ECS service based on SQS queue depth
@@ -594,25 +595,23 @@ export class AmiraLetterScoringStack extends cdk.Stack {
       statistic: 'Average',
       period: cdk.Duration.minutes(1)
     });
-    const scaleOut = new appscaling.StepScalingPolicy(this, 'ScaleOutOnQueueDepth', {
-      scalingTarget: scalableTarget,
-      metric: visibleMetric,
-      adjustmentType: appscaling.AdjustmentType.CHANGE_IN_CAPACITY,
-      scalingSteps: [
-        { lower: 10, upper: 1000, change: +5 },
-        { lower: 1000, change: +10 }
-      ],
-      cooldown: cdk.Duration.minutes(2)
-    });
-    const scaleIn = new appscaling.StepScalingPolicy(this, 'ScaleInOnQueueDepth', {
-      scalingTarget: scalableTarget,
-      metric: visibleMetric,
-      adjustmentType: appscaling.AdjustmentType.CHANGE_IN_CAPACITY,
-      scalingSteps: [
-        { upper: 1, change: -3 },
-        { upper: 5, change: -2 }
-      ],
-      cooldown: cdk.Duration.minutes(5)
+    scalableTarget.scaleToTrackMetric('QueueBacklogTargetTracking', {
+      customMetric: new cw.MathExpression({
+        expression: 'm1 / max(m2, 1)',
+        usingMetrics: {
+          m1: visibleMetric,
+          m2: new cw.Metric({
+            namespace: 'ECS/ContainerInsights',
+            metricName: 'ServiceDesiredCount',
+            dimensionsMap: { ClusterName: cluster.clusterName, ServiceName: 'amira-letter-scoring-service' },
+            statistic: 'Average',
+            period: cdk.Duration.minutes(1)
+          })
+        }
+      }),
+      targetValue: 10,
+      scaleInCooldown: cdk.Duration.minutes(5),
+      scaleOutCooldown: cdk.Duration.minutes(2)
     });
 
     // Additional policy on age of oldest message for faster reaction
@@ -639,11 +638,16 @@ export class AmiraLetterScoringStack extends cdk.Stack {
       handler: 'index.handler',
       code: lambda.Code.fromAsset('../lambda/enqueue_jobs'),
       timeout: cdk.Duration.minutes(5),
+      tracing: lambda.Tracing.ACTIVE,
       environment: {
         JOBS_QUEUE_URL: jobsQueue.queueUrl,
         ATHENA_DATABASE: athenaDbParam.valueAsString,
         ATHENA_OUTPUT: athenaOutputParam.valueAsString,
-        ATHENA_QUERY: athenaQueryParam.valueAsString
+        ATHENA_QUERY: athenaQueryParam.valueAsString,
+        ATHENA_TABLE: athenaTableParam.valueAsString,
+        ATHENA_WHERE: athenaWhereParam.valueAsString,
+        ATHENA_LIMIT: athenaLimitParam.valueAsString,
+        ATHENA_COLUMNS: athenaColumnsParam.valueAsString
       }
     });
     // IAM scoping for enqueuer Lambda
@@ -696,41 +700,34 @@ export class AmiraLetterScoringStack extends cdk.Stack {
       schedule: events.Schedule.cron({ minute: '0', hour: '2' })
     });
     nightlyRule.addTarget(new targets.LambdaFunction(enqueueFn));
+    enqueueFn.addEnvironment('AWS_XRAY_TRACING_NAME', 'EnqueueJobsFunction');
+    enqueueFn.addEnvironment('AWS_XRAY_DAEMON_ADDRESS', '169.254.79.2:2000');
+    enqueueFn.addEnvironment('AWS_XRAY_SDK_ENABLED', 'true');
 
-    // Pre-scale ASG 5 minutes before 2 AM UTC
-    // Scheduled actions for pre-scale
-    new autoscaling.CfnScheduledAction(this, 'PrescaleMain', {
-      autoScalingGroupName: autoScalingGroup.autoScalingGroupName,
-      desiredCapacity: 1,
-      recurrence: '55 1 * * *'
+    autoScalingGroup.scaleOnSchedule('PrescaleMain', {
+      schedule: autoscaling.Schedule.cron({ minute: '55', hour: '1' }),
+      desiredCapacity: 1
     });
-    new autoscaling.CfnScheduledAction(this, 'PrescaleG5x', {
-      autoScalingGroupName: asgG5xlarge.autoScalingGroupName,
-      desiredCapacity: 1,
-      recurrence: '55 1 * * *'
+    asgG5xlarge.scaleOnSchedule('PrescaleG5x', {
+      schedule: autoscaling.Schedule.cron({ minute: '55', hour: '1' }),
+      desiredCapacity: 1
     });
-    new autoscaling.CfnScheduledAction(this, 'PrescaleG52x', {
-      autoScalingGroupName: asgG52xlarge.autoScalingGroupName,
-      desiredCapacity: 1,
-      recurrence: '55 1 * * *'
+    asgG52xlarge.scaleOnSchedule('PrescaleG52x', {
+      schedule: autoscaling.Schedule.cron({ minute: '55', hour: '1' }),
+      desiredCapacity: 1
     });
 
-    // Scale-in rule after nightly run to avoid idle Spot costs (3:30 AM UTC)
-    // Scheduled actions for scale down
-    new autoscaling.CfnScheduledAction(this, 'ScaleDownMain', {
-      autoScalingGroupName: autoScalingGroup.autoScalingGroupName,
-      desiredCapacity: 0,
-      recurrence: '30 3 * * *'
+    autoScalingGroup.scaleOnSchedule('ScaleDownMain', {
+      schedule: autoscaling.Schedule.cron({ minute: '30', hour: '3' }),
+      desiredCapacity: 0
     });
-    new autoscaling.CfnScheduledAction(this, 'ScaleDownG5x', {
-      autoScalingGroupName: asgG5xlarge.autoScalingGroupName,
-      desiredCapacity: 0,
-      recurrence: '30 3 * * *'
+    asgG5xlarge.scaleOnSchedule('ScaleDownG5x', {
+      schedule: autoscaling.Schedule.cron({ minute: '30', hour: '3' }),
+      desiredCapacity: 0
     });
-    new autoscaling.CfnScheduledAction(this, 'ScaleDownG52x', {
-      autoScalingGroupName: asgG52xlarge.autoScalingGroupName,
-      desiredCapacity: 0,
-      recurrence: '30 3 * * *'
+    asgG52xlarge.scaleOnSchedule('ScaleDownG52x', {
+      schedule: autoscaling.Schedule.cron({ minute: '30', hour: '3' }),
+      desiredCapacity: 0
     });
 
     // CloudWatch alarms for SQS
@@ -789,6 +786,7 @@ export class AmiraLetterScoringStack extends cdk.Stack {
       handler: 'index.handler',
       code: lambda.Code.fromAsset('../lambda/manual_enqueue'),
       timeout: cdk.Duration.minutes(1),
+      tracing: lambda.Tracing.ACTIVE,
       environment: { JOBS_QUEUE_URL: jobsQueue.queueUrl }
     });
     jobsQueue.grantSendMessages(manualEnqueueFn);
@@ -881,6 +879,48 @@ export class AmiraLetterScoringStack extends cdk.Stack {
         left: [tritonThroughput],
         right: [tritonFailures],
         width: 24
+      }),
+      new cw_dash.GraphWidget({
+        title: 'ECS Desired vs Running',
+        left: [
+          new cw.Metric({ namespace: 'ECS/ContainerInsights', metricName: 'ServiceDesiredCount', dimensionsMap: { ClusterName: cluster.clusterName, ServiceName: service.serviceName }, statistic: 'Average' }),
+          new cw.Metric({ namespace: 'ECS/ContainerInsights', metricName: 'ServiceRunningCount', dimensionsMap: { ClusterName: cluster.clusterName, ServiceName: service.serviceName }, statistic: 'Average' })
+        ],
+        width: 24
+      }),
+      new cw_dash.GraphWidget({
+        title: 'SQS Depth & Oldest Age',
+        left: [
+          new cw.Metric({ namespace: 'AWS/SQS', metricName: 'ApproximateNumberOfMessagesVisible', dimensionsMap: { QueueName: jobsQueue.queueName }, statistic: 'Average' })
+        ],
+        right: [
+          new cw.Metric({ namespace: 'AWS/SQS', metricName: 'ApproximateAgeOfOldestMessage', dimensionsMap: { QueueName: jobsQueue.queueName }, statistic: 'Average' })
+        ],
+        width: 24
+      }),
+      new cw_dash.GraphWidget({
+        title: 'ASG Desired vs InService',
+        left: [
+          new cw.Metric({ namespace: 'AWS/AutoScaling', metricName: 'GroupDesiredCapacity', dimensionsMap: { AutoScalingGroupName: autoScalingGroup.autoScalingGroupName }, statistic: 'Average' }),
+          new cw.Metric({ namespace: 'AWS/AutoScaling', metricName: 'GroupInServiceInstances', dimensionsMap: { AutoScalingGroupName: autoScalingGroup.autoScalingGroupName }, statistic: 'Average' })
+        ],
+        right: [
+          new cw.Metric({ namespace: 'AWS/AutoScaling', metricName: 'GroupDesiredCapacity', dimensionsMap: { AutoScalingGroupName: asgG5xlarge.autoScalingGroupName }, statistic: 'Average' }),
+          new cw.Metric({ namespace: 'AWS/AutoScaling', metricName: 'GroupDesiredCapacity', dimensionsMap: { AutoScalingGroupName: asgG52xlarge.autoScalingGroupName }, statistic: 'Average' })
+        ],
+        width: 24
+      }),
+      new cw_dash.GraphWidget({
+        title: 'Lambda Invocations/Errors',
+        left: [
+          enqueueFn.metricInvocations(),
+          enqueueFn.metricErrors()
+        ],
+        right: [
+          new cw.Metric({ namespace: 'AWS/Lambda', metricName: 'Invocations', dimensionsMap: { FunctionName: 'EcsDrainOnSpotFn' }, statistic: 'Sum' }),
+          new cw.Metric({ namespace: 'AWS/Lambda', metricName: 'Errors', dimensionsMap: { FunctionName: 'EcsDrainOnSpotFn' }, statistic: 'Sum' })
+        ],
+        width: 24
       })
     );
 
@@ -888,13 +928,18 @@ export class AmiraLetterScoringStack extends cdk.Stack {
     const drainFn = new lambda.Function(this, 'EcsDrainOnSpotFn', {
       runtime: lambda.Runtime.PYTHON_3_12,
       handler: 'index.handler',
-      code: lambda.Code.fromInline(`import os\nimport boto3\n\necs = boto3.client('ecs')\ncluster_arn = os.environ.get('CLUSTER_ARN')\n\ndef handler(event, context):\n    detail = event.get('detail', {})\n    instance_id = detail.get('instance-id') or detail.get('EC2InstanceId')\n    if not instance_id:\n        return {'status': 'no-instance-id'}\n    next_token = None\n    container_instance_arn = None\n    while True:\n        kwargs = {'cluster': cluster_arn}\n        if next_token:\n            kwargs['nextToken'] = next_token\n        resp = ecs.list_container_instances(**kwargs)\n        if not resp.get('containerInstanceArns'):\n            break\n        desc = ecs.describe_container_instances(cluster=cluster_arn, containerInstances=resp['containerInstanceArns'])\n        for ci in desc.get('containerInstances', []):\n            if ci.get('ec2InstanceId') == instance_id:\n                container_instance_arn = ci.get('containerInstanceArn')\n                break\n        if container_instance_arn:\n            break\n        next_token = resp.get('nextToken')\n        if not next_token:\n            break\n    if not container_instance_arn:\n        return {'status': 'no-container-instance'}\n    ecs.update_container_instances_state(cluster=cluster_arn, containerInstances=[container_instance_arn], status='DRAINING')\n    return {'status': 'draining', 'containerInstanceArn': container_instance_arn}\n`),
+      code: lambda.Code.fromAsset('../lambda/ecs_drain_on_spot'),
       timeout: cdk.Duration.seconds(60),
       environment: { CLUSTER_ARN: cluster.clusterArn }
     });
     drainFn.addToRolePolicy(new iam.PolicyStatement({
-      actions: ['ecs:ListContainerInstances', 'ecs:DescribeContainerInstances', 'ecs:UpdateContainerInstancesState'],
-      resources: [cluster.clusterArn, `${cluster.clusterArn}/*`]
+      actions: ['ecs:ListContainerInstances', 'ecs:DescribeContainerInstances'],
+      resources: [cluster.clusterArn]
+    }));
+    drainFn.addToRolePolicy(new iam.PolicyStatement({
+      actions: ['ecs:UpdateContainerInstancesState'],
+      resources: ['*'],
+      conditions: { StringEquals: { 'ecs:cluster': cluster.clusterArn } }
     }));
     new events.Rule(this, 'SpotInterruptionDrainRule', {
       description: 'Drain ECS container instances on Spot interruption warnings',

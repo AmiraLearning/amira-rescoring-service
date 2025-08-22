@@ -16,10 +16,16 @@ class PreprocessResult(BaseModel):
     input_values: torch.Tensor
     preprocess_time_ms: float
 
+    class Config:
+        arbitrary_types_allowed = True
+
 
 class InferenceResult(BaseModel):
     logits: torch.Tensor
     model_inference_time_ms: float
+
+    class Config:
+        arbitrary_types_allowed = True
 
 
 class DecodePredictionResult(BaseModel):
@@ -28,15 +34,24 @@ class DecodePredictionResult(BaseModel):
     predicted_ids: torch.Tensor
     decode_time_ms: float
 
+    class Config:
+        arbitrary_types_allowed = True
+
 
 class ConfidenceResult(BaseModel):
     max_probs: np.ndarray
     confidence_time_ms: float
 
+    class Config:
+        arbitrary_types_allowed = True
+
 
 class InferenceInput(BaseModel):
     audio_array: np.ndarray
     inference_id: str | None = None
+
+    class Config:
+        arbitrary_types_allowed = True
 
 
 class PhoneticTranscript(BaseModel):
@@ -68,6 +83,9 @@ class GPUInferenceResult(BaseModel):
         if value is None:
             return None
         return value.tolist()
+
+    class Config:
+        arbitrary_types_allowed = True
 
 
 @dataclass(frozen=True)

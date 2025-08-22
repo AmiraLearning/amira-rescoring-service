@@ -10,8 +10,6 @@ Intended usage:
 """
 
 from pathlib import Path
-import subprocess
-import time
 import shutil
 from typing import Any, Final
 from pydantic import BaseModel
@@ -20,10 +18,12 @@ import boto3
 import botocore
 from loguru import logger
 
-from utils.download_audio import s3_find
+from pydantic import BaseModel
+from datetime import datetime
 
-BotoClient = Any
-BotoResource = Any
+from infra.s3_client import ProductionS3Client, S3OperationResult
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
 _S3_SPEECH_ROOT_PROD: Final[str] = "amira-speech-stream"
 _S3_SPEECH_ROOT_STAGE: Final[str] = "amira-speech-stream-stage"
 SEGMENTS_TXT_FILES_BY_ACT: Final[str] = "segments_txt_files_by_act"
@@ -31,26 +31,88 @@ RECONSTITUTED_PHRASE_AUDIO: Final[str] = "reconstituted_phrase_audio"
 SEGMENTS_BY_ACT: Final[str] = "segments_by_act"
 
 
+class S3Object(BaseModel):
+    key: str
+    last_modified: datetime | None = None
+
+
+async def s3_find(
+    *,
+    bucket: str,
+    prefix: str = "/",
+    delimiter: str = "/",
+    start_after: str = "",
+    s3_client: ProductionS3Client,
+    include_last_mod: bool = False,
+) -> list[S3Object]:
+    """Enumerate S3 prefix (as a virtual directory)
+
+    Args:
+        bucket: Bucket containing the objects
+        prefix: Prefix to enumerate
+        delimiter: Virtual directory separator
+        start_after: Don't enumerate objects with lexical names before this start point
+        s3_client: ProductionS3Client to use
+        include_last_mod: include last modification timestamp in result
+
+    Returns:
+        List of S3Object instances
+    """
+    prefix: str = prefix.lstrip(delimiter)
+    result = await s3_client.list_objects_batch([(bucket, prefix)])
+
+    if not result or not result[0].success:
+        logger.warning(f"Failed to list objects in s3://{bucket}/{prefix}")
+        return []
+
+    objects_data: list[dict[str, Any]] = result[0].data.get("objects", [])
+
+    s3_objects: list[S3Object] = []
+    for obj in objects_data:
+        key: str = obj["Key"]
+
+        if start_after and key <= start_after:
+            continue
+
+        if include_last_mod:
+            s3_objects.append(S3Object(key=key, last_modified=obj.get("LastModified")))
+        else:
+            s3_objects.append(S3Object(key=key))
+
+    return s3_objects
+
+
 def bucket_for(*, stage_source: bool) -> str:
-    """Resolve bucket name based on environment."""
+    """Resolve bucket name based on environment.
+
+    Args:
+        stage_source: Whether to use the staging bucket.
+
+    Returns:
+        str: The bucket name.
+    """
     return _S3_SPEECH_ROOT_STAGE if stage_source else _S3_SPEECH_ROOT_PROD
 
 
 def _ensure_parent_dir(*, path: str) -> None:
-    """Ensure parent directory exists for a target path."""
+    """Ensure parent directory exists for a target path.
+
+    Args:
+        path: The path to ensure the parent directory exists for.
+    """
     parent: Path = Path(path).parent
     if not parent.exists():
         parent.mkdir(parents=True, exist_ok=True)
 
 
-def get_segment_file_names(
-    *, activity_id: str, s3_client: BotoClient, stage_source: bool = False
+async def get_segment_file_names(
+    *, activity_id: str, s3_client: ProductionS3Client, stage_source: bool = False
 ) -> list[str]:
     """Get the file names of all the audio segments for an activity.
 
     Args:
         activity_id: Activity identifier.
-        s3: Boto3 S3 client.
+        s3_client: ProductionS3Client to use.
         stage_source: Whether to use the staging bucket.
 
     Returns:
@@ -58,8 +120,11 @@ def get_segment_file_names(
     """
     bucket: str = bucket_for(stage_source=stage_source)
     keys: list[str] = []
-    for obj in s3_find(bucket=bucket, prefix=f"{activity_id}/", s3_client=s3_client):
-        key: str = obj if isinstance(obj, str) else getattr(obj, "key", "")
+    objects = await s3_find(
+        bucket=bucket, prefix=f"{activity_id}/", s3_client=s3_client
+    )
+    for obj in objects:
+        key: str = obj.key
         if ".wav" in key and "complete" not in key:
             keys.append(key)
         else:
@@ -69,11 +134,11 @@ def get_segment_file_names(
     return keys
 
 
-def download_segment_files(
+async def download_segment_files(
     *,
     segment_file_names: list[str],
     destination_path: str,
-    s3_client: BotoClient,
+    s3_client: ProductionS3Client,
     stage_source: bool = False,
 ) -> bool:
     """Download a list of files (in this case, lil' tiny audio segments)."""
@@ -85,28 +150,28 @@ def download_segment_files(
     mkdir_path: Path = Path(destination_path) / segment_file_names[0]
     _ensure_parent_dir(path=mkdir_path)
 
-    def download_segment(segment_file: str, attempt: int = 0) -> bool:
-        dest_pathname: Path = Path(destination_path) / segment_file
-        try:
-            bucket: str = bucket_for(stage_source=stage_source)
-            s3_client.download_file(bucket, segment_file, dest_pathname)
-        except Exception as e:
-            logger.info(e)
-            logger.info(f"attempt #{str(attempt)}, {segment_file}, {dest_pathname}")
-            logger.info(segment_file)
-            logger.info(dest_pathname)
-            if attempt < 5:
-                time.sleep(0.1)
-                return download_segment(segment_file, attempt=(attempt + 1))
-            else:
-                logger.warning(
-                    f"could not download segment {segment_file} in {str(attempt)} attempts"
-                )
-                return False
-        return True
+    bucket: str = bucket_for(stage_source=stage_source)
 
-    # Simple parallelization placeholder: sequential to preserve behavior
-    return all(download_segment(sf) for sf in segment_file_names)
+    download_operations: list[tuple[str, str, str]] = [
+        (bucket, segment_file, str(Path(destination_path) / segment_file))
+        for segment_file in segment_file_names
+    ]
+
+    results: list[S3OperationResult] = await s3_client.download_files_batch(
+        download_operations
+    )
+
+    successful_downloads: list[S3OperationResult] = [r for r in results if r.success]
+
+    if len(successful_downloads) != len(segment_file_names):
+        failed_downloads: list[S3OperationResult] = [
+            r for r in results if not r.success
+        ]
+        for failed in failed_downloads:
+            logger.warning(f"Failed to download {failed.operation.key}: {failed.error}")
+        return False
+
+    return True
 
 
 class SegmentHead(BaseModel):
@@ -117,10 +182,10 @@ class SegmentHead(BaseModel):
     success: bool
 
 
-def get_segment_metadata(
+async def get_segment_metadata(
     *,
     segment_file_names: list[str],
-    s3_client: BotoClient,
+    s3_client: ProductionS3Client,
     activity_id: str | None = None,
     retry_limit: int | None = 2,
     stage_source: bool = False,
@@ -142,30 +207,44 @@ def get_segment_metadata(
         - Boolean indicating success
     """
 
-    def make_segment_head_call(segment_file: str) -> SegmentHead:
-        """Make a segment head call.
+    bucket = bucket_for(stage_source=stage_source)
 
-        Args:
-            segment_file: Segment file name.
+    head_requests: list[tuple[str, str]] = [
+        (bucket, segment_file) for segment_file in segment_file_names
+    ]
+    head_results: list[S3OperationResult] = await s3_client.head_objects_batch(
+        head_requests
+    )
 
-        Returns:
-            SegmentHead: Segment head.
-        """
-        try:
-            bucket = bucket_for(stage_source=stage_source)
-            response = s3_client.head_object(Bucket=bucket, Key=segment_file)
-            return SegmentHead(
-                segment_file=segment_file,
-                phrase_index=int(response["Metadata"]["phraseindex"]),
-                sequence_number=response["Metadata"]["sequencenumber"],
-                last_segment=response["Metadata"]["lastsegment"],
-                success=True,
-            )
-        except Exception as e:
-            logger.info(
-                f"exception encountered while fetching segment metadata: {str(e)}"
-            )
-            return SegmentHead(
+    metadata_across_segments: list[SegmentHead] = []
+
+    for idx, result in enumerate(head_results):
+        segment_file: str = segment_file_names[idx]
+
+        if result.success and result.data:
+            metadata: dict[str, Any] = result.data.get("metadata", {})
+            try:
+                segment_head: SegmentHead = SegmentHead(
+                    segment_file=segment_file,
+                    phrase_index=int(
+                        metadata.get("Metadata", {}).get("phraseindex", -1)
+                    ),
+                    sequence_number=metadata.get("Metadata", {}).get("sequencenumber"),
+                    last_segment=metadata.get("Metadata", {}).get("lastsegment"),
+                    success=True,
+                )
+            except (ValueError, KeyError) as e:
+                logger.warning(f"Failed to parse metadata for {segment_file}: {e}")
+                segment_head: SegmentHead = SegmentHead(
+                    segment_file=segment_file,
+                    phrase_index=None,
+                    sequence_number=None,
+                    last_segment=None,
+                    success=False,
+                )
+        else:
+            logger.warning(f"Failed to get metadata for {segment_file}: {result.error}")
+            segment_head: SegmentHead = SegmentHead(
                 segment_file=segment_file,
                 phrase_index=None,
                 sequence_number=None,
@@ -173,10 +252,7 @@ def get_segment_metadata(
                 success=False,
             )
 
-    # Preserve behavior: iterate in order; consider parallelization later
-    metadata_across_segments: list[SegmentHead] = [
-        make_segment_head_call(sf) for sf in segment_file_names
-    ]
+        metadata_across_segments.append(segment_head)
 
     slices_by_phrase: dict[int, Any] = {}
     num_phrases_in_act: int = 0
@@ -190,31 +266,49 @@ def get_segment_metadata(
                 logger.info(
                     f"retrying due to failed custom segment metadata head call: activity_id {activity_id}..."
                 )
-            # Add a retry logic based on retry attempts
             for idx in range(retry_limit):
-                segment_meta_file = segment_meta.segment_file
+                segment_meta_file: str = segment_meta.segment_file
                 logger.info(
                     f"retry {idx} during segment metadata head call: segment_meta_file {segment_meta_file}..."
                 )
-                segment_meta = make_segment_head_call(segment_meta_file)
-                if segment_meta.success:
-                    break
+
+                retry_results: list[
+                    S3OperationResult
+                ] = await s3_client.head_objects_batch([(bucket, segment_meta_file)])
+
+                if retry_results and retry_results[0].success:
+                    result: S3OperationResult = retry_results[0]
+                    metadata: dict[str, Any] = result.data.get("metadata", {})
+                    try:
+                        segment_meta: SegmentHead = SegmentHead(
+                            segment_file=segment_meta_file,
+                            phrase_index=int(
+                                metadata.get("Metadata", {}).get("phraseindex", -1)
+                            ),
+                            sequence_number=metadata.get("Metadata", {}).get(
+                                "sequencenumber"
+                            ),
+                            last_segment=metadata.get("Metadata", {}).get(
+                                "lastsegment"
+                            ),
+                            success=True,
+                        )
+                        break
+                    except (ValueError, KeyError):
+                        continue
             if not segment_meta.success:
                 return {}, 0, False
-        segment_file = segment_meta.segment_file
-        phrase_index = segment_meta.phrase_index
-        sequence_number = segment_meta.sequence_number
-        last_segment = segment_meta.last_segment
+        segment_file: str = segment_meta.segment_file
+        phrase_index: int | None = segment_meta.phrase_index
+        sequence_number: str | None = segment_meta.sequence_number
+        last_segment: str | None = segment_meta.last_segment
 
-        # Track last phrase in act
         if (phrase_index + 1) > num_phrases_in_act:
             num_phrases_in_act = phrase_index + 1
 
-        # Initialize data structure if necessary
         if phrase_index not in slices_by_phrase.keys():
             slices_by_phrase[phrase_index] = {"last_segment": {}, "segments": {}}
 
-        # Organize phrase segment metadata
         slices_by_phrase[phrase_index]["segments"][sequence_number] = segment_file
         if last_segment:
             slices_by_phrase[phrase_index]["last_segment"] = {
@@ -222,7 +316,7 @@ def get_segment_metadata(
                 "sequence_number": sequence_number,
             }
 
-    if not all(index in slices_by_phrase for index in range(num_phrases_in_act)):
+    if not all(idx in slices_by_phrase for idx in range(num_phrases_in_act)):
         logger.info("not all phrases present in segments")
         return slices_by_phrase, num_phrases_in_act, False
 
@@ -265,14 +359,68 @@ def reconstitute_and_save_phrase(
         phrase_segments_concat_dir.parent.mkdir(parents=True, exist_ok=True)
 
     def _concat_input_line(*, root_dir: str, segment_path: str) -> str:
-        return f"file '{Path(root_dir) / segment_path}'"
+        full_path: Path = (Path(root_dir) / segment_path).resolve()
+        return f"file '{full_path}'"
 
     def _concat_export(*, concat_file: str, export_file: str) -> None:
-        logger.info("Will now concatenate with ffmpeg:")
-        subprocess.call(
-            f"ffmpeg -nostdin -f concat -safe 0 -i {concat_file} -c copy {export_file} -y",
-            shell=True,
-        )
+        """Concatenate audio files using ffmpeg concat demuxer for performance.
+
+        Args:
+            concat_file: Path to the file containing the list of files to concatenate.
+            export_file: Path to the output file.
+        """
+        import subprocess
+
+        logger.info("Concatenating audio files with ffmpeg concat demuxer")
+        cmd: list[str] = [
+            "ffmpeg",
+            "-hide_banner",
+            "-loglevel",
+            "warning",
+            "-threads",
+            "2",
+            "-f",
+            "concat",
+            "-safe",
+            "0",
+            "-i",
+            str(concat_file),
+            "-c",
+            "copy",
+            str(export_file),
+            "-y",
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            logger.warning(
+                f"ffmpeg concat copy failed; falling back to re-encode: {result.stderr}"
+            )
+            fallback_cmd: list[str] = [
+                "ffmpeg",
+                "-hide_banner",
+                "-loglevel",
+                "warning",
+                "-threads",
+                "2",
+                "-f",
+                "concat",
+                "-safe",
+                "0",
+                "-i",
+                str(concat_file),
+                "-ar",
+                "16000",
+                "-ac",
+                "1",
+                "-c:a",
+                "pcm_s16le",
+                str(export_file),
+                "-y",
+            ]
+            result2 = subprocess.run(fallback_cmd, capture_output=True, text=True)
+            if result2.returncode != 0:
+                logger.error(f"ffmpeg concat re-encode failed: {result2.stderr}")
+                raise RuntimeError("Phrase concatenation failed")
 
     def _phrase_start_index(*, phrase_index: int) -> int:
         """Get the start index for a phrase.
@@ -307,7 +455,7 @@ def reconstitute_and_save_phrase(
         last_seq: int = int(phrase_meta["last_segment"]["sequence_number"])
         while curr <= last_seq:
             try:
-                seg = phrase_meta["segments"][str(curr)]
+                seg: str = phrase_meta["segments"][str(curr)]
                 if phrase_dir is None:
                     phrase_dir = Path(phrase_segments_root_dir) / seg.split("/")[0]
                 files.append(
@@ -327,7 +475,7 @@ def reconstitute_and_save_phrase(
             curr += 1
         return files, phrase_dir
 
-    def reconstitute_phrase(phrase_index: int):
+    def reconstitute_phrase(*, phrase_index: int) -> str | None:
         """Reconstitute a phrase.
 
         Args:
@@ -354,23 +502,37 @@ def reconstitute_and_save_phrase(
         return phrase_dir
 
     phrase_indices: list[int] = list(range(num_phrases_in_act))
-    # Sequential to preserve ordering and side effects
-    phrase_segments_activity_dirs: list[str | None] = [
-        reconstitute_phrase(i) for i in phrase_indices
-    ]
+    phrase_segments_activity_dirs: list[str | None] = [None] * len(phrase_indices)
+
+    max_workers: int = min(6, max(1, len(phrase_indices)))
+    with ThreadPoolExecutor(max_workers=max_workers) as pool:
+        future_map = {
+            pool.submit(reconstitute_phrase, phrase_index=idx): idx
+            for idx in phrase_indices
+        }
+        for fut in as_completed(future_map):
+            idx: int = future_map[fut]
+            try:
+                phrase_segments_activity_dirs[idx] = fut.result()
+            except Exception as e:
+                logger.error(
+                    f"Failed to reconstitute phrase {idx} for activity {activity_id}: {e}"
+                )
+                phrase_segments_activity_dirs[idx] = None
 
     if not keep_intermediaries:
         try:
             shutil.rmtree(phrase_segments_concat_dir)
-            for d in frozenset(phrase_segments_activity_dirs):
-                shutil.rmtree(d)
+            for item in frozenset(phrase_segments_activity_dirs):
+                if item is not None:
+                    shutil.rmtree(item)
         except Exception as e:
             logger.warning(
                 f"could not delete intermediaries for activity {activity_id} in reconstruction: {str(e)}"
             )
             return False
 
-    return all([d is not None for d in phrase_segments_activity_dirs])
+    return all([item is not None for item in phrase_segments_activity_dirs])
 
 
 class PhraseSlicer:
@@ -386,7 +548,7 @@ class PhraseSlicer:
         self,
         *,
         destination_path: str,
-        s3_client: BotoClient | None = None,
+        s3_client: ProductionS3Client | None = None,
         stage_source: bool = False,
     ):
         """Initialize the PhraseSlicer
@@ -396,7 +558,7 @@ class PhraseSlicer:
             s3: S3 client
             stage_source: Whether to use the staging bucket
         """
-        self.s3_client: BotoClient = s3_client or boto3.client(
+        self.s3_client: ProductionS3Client = s3_client or boto3.client(
             "s3", config=botocore.client.Config(max_pool_connections=50)
         )
         self.destination_path: str = (
@@ -406,7 +568,7 @@ class PhraseSlicer:
         )
         self.stage_source: bool = stage_source
 
-    def process_activity_into_phrase_sliced_audio(
+    async def process_activity_into_phrase_sliced_audio(
         self,
         *,
         activity_id: str,
@@ -425,25 +587,32 @@ class PhraseSlicer:
         """
         source_activity_id: str = activity_id
         logger.info(f"getting file names for activity {source_activity_id}...")
-        segment_file_names: list[str] = get_segment_file_names(
+        segment_file_names: list[str] = await get_segment_file_names(
             activity_id=source_activity_id,
             s3_client=self.s3_client,
             stage_source=self.stage_source,
         )
 
         logger.info(f"downloading / categorizing metadata {source_activity_id}...")
-        slices_by_phrase, num_phrases_in_act, success_bool = get_segment_metadata(
+        slices_by_phrase, num_phrases_in_act, success_bool = await get_segment_metadata(
             segment_file_names=segment_file_names,
             s3_client=self.s3_client,
             activity_id=source_activity_id,
             retry_limit=2,
             stage_source=self.stage_source,
         )
+        logger.info(f"slices_by_phrase: {slices_by_phrase}")
+        logger.info(f"num_phrases_in_act: {num_phrases_in_act}")
+        logger.info(f"success_bool: {success_bool}")
         if not success_bool:
             return success_bool
 
         logger.info(f"downloading segments {source_activity_id}...")
-        success_bool: bool = download_segment_files(
+        logger.info(f"segment_file_names: {segment_file_names}")
+        logger.info(f"destination_path: {self.destination_path}")
+        logger.info(f"s3_client: {self.s3_client}")
+        logger.info(f"stage_source: {self.stage_source}")
+        success_bool: bool = await download_segment_files(
             segment_file_names=segment_file_names,
             destination_path=self.destination_path.replace(
                 RECONSTITUTED_PHRASE_AUDIO, SEGMENTS_BY_ACT
@@ -456,9 +625,9 @@ class PhraseSlicer:
 
         logger.info(f"reconstituting phrase audio {source_activity_id}...")
         if replay_suffix is not None:
-            target_activity_id = source_activity_id[:-4] + replay_suffix
+            target_activity_id: str = source_activity_id[:-4] + replay_suffix
         else:
-            target_activity_id = source_activity_id
+            target_activity_id: str = source_activity_id
         success_bool: bool = reconstitute_and_save_phrase(
             num_phrases_in_act=num_phrases_in_act,
             slices_by_phrase=slices_by_phrase,

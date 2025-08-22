@@ -14,6 +14,7 @@ sqs = boto3.client("sqs")
 
 # TODO share types with other handler
 
+
 class SQSMessage(BaseModel):
     """Message to be sent to SQS queue.
 

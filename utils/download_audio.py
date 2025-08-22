@@ -7,15 +7,13 @@ keyword-only arguments for safer, more readable usage.
 """
 
 from pathlib import Path
-from typing import Final, Generator
-from datetime import datetime
-from botocore.paginate import Paginator
+from typing import Final
 from botocore.client import BaseClient as BotoClient
 from pydantic import BaseModel
 
 from loguru import logger
 
-from utils.phrase_slicing import PhraseSlicer
+from utils.phrase_slicing import PhraseSlicer, s3_find
 
 # TODO double check logic
 # TODO move config to config
@@ -24,11 +22,6 @@ from utils.phrase_slicing import PhraseSlicer
 _S3_SPEECH_ROOT_PROD: Final[str] = "amira-speech-stream"
 _S3_SPEECH_ROOT_STAGE: Final[str] = "amira-speech-stream-stage"
 RECONSTITUTED_PHRASE_AUDIO: Final[str] = "reconstituted_phrase_audio"
-
-
-class S3Object(BaseModel):
-    key: str
-    last_modified: datetime | None = None
 
 
 def resolve_bucket(stage_source: bool) -> str:
@@ -87,43 +80,6 @@ def iter_wav_files(*, directory: Path) -> list[Path]:
         List of Path objects representing the WAV files
     """
     return [f for f in directory.iterdir() if f.is_file() and f.suffix == ".wav"]
-
-
-def s3_find(
-    *,
-    bucket: str,
-    prefix: str = "/",
-    delimiter: str = "/",
-    start_after: str = "",
-    s3_client: BotoClient,
-    include_last_mod: bool = False,
-) -> Generator[S3Object, None, None]:
-    """Enumerate S3 prefix (as a virtual directory)
-
-    Args:
-        bucket: Bucket containing the objects
-        prefix: Prefix to enumerate
-        delimiter: Virtual directory separator
-        start_after: Don't enumerate objects with lexical names before this start point
-        s3_client: S3 client to use
-        include_last_mod: include last modification timestamp in result
-
-    Returns:
-        Generator that will yield object keys or tuples of (object key, last-mod-timestamp)
-    """
-    paginator: Paginator = s3_client.get_paginator("list_objects_v2")
-    prefix = prefix.lstrip(delimiter)
-    start_after = (start_after or prefix) if prefix.endswith(delimiter) else start_after
-
-    for page in paginator.paginate(
-        Bucket=bucket, Prefix=prefix, StartAfter=start_after
-    ):
-        for content in page.get("Contents", ()):
-            yield (
-                S3Object(content["Key"], content.get("LastModified"))
-                if include_last_mod
-                else S3Object(content["Key"])
-            )
 
 
 def get_segment_file_names(

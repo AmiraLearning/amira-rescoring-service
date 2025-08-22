@@ -17,3 +17,7 @@ uv.lock
 package-lock.json
 
 cdk.out/
+
+data/
+models/
+*.log

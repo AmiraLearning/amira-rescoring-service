@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 from botocore.client import BaseClient as BotoClient
 from loguru import logger
 
+from infra.s3_client import ProductionS3Client
 from utils.phrase_slicing import PhraseSlicer, RECONSTITUTED_PHRASE_AUDIO
 
 
@@ -113,14 +114,14 @@ def _upload_phrase_files_to_s3(
             )
 
 
-def extract_phrase_slices_tutor_style(
+async def extract_phrase_slices_tutor_style(
     *,
     activity_id: str,
     activity_dir: str,
     replay_suffix: str | None = None,
     dataset_name: str | None = None,
     audio_s3_root: Path | None = None,
-    s3_client: BotoClient,
+    s3_client: ProductionS3Client,
     stage_source: bool = False,
     use_audio_dir_as_activities_root: bool = False,
 ) -> bool:
@@ -165,7 +166,7 @@ def extract_phrase_slices_tutor_style(
                 audio_paths.dataset_dir_full_path / audio_paths.stage_activity_id
             )
         else:
-            PhraseSlicer(
+            await PhraseSlicer(
                 destination_path=str(audio_paths.dataset_dir_full_path),
                 s3_client=s3_client,
                 stage_source=stage_source,

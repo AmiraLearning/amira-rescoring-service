@@ -10,6 +10,10 @@ import asyncio
 import re
 import time
 from dataclasses import dataclass
+import os
+import hashlib
+import json
+from datetime import datetime, timedelta
 from enum import StrEnum
 from pathlib import Path
 from typing import Any, Final
@@ -21,11 +25,19 @@ from pydantic import BaseModel, Field
 from urllib.parse import urlparse
 from loguru import logger
 
-from application.exceptions import (
-    AthenaClientError,
-    AthenaQueryError,
-    AthenaTimeoutError,
-)
+
+class AthenaClientError(Exception):
+    """Exception raised for errors in the Athena client."""
+
+
+class AthenaQueryError(Exception):
+    """Exception raised for errors in the Athena query."""
+
+
+class AthenaTimeoutError(Exception):
+    """Exception raised for timeout errors in the Athena client."""
+
+
 from infra.s3_client import (
     ProductionS3Client,
     HighPerformanceS3Config,
@@ -142,6 +154,76 @@ class AthenaClientConfig(BaseModel):
     auto_cleanup: bool = Field(
         default=True, description="Automatically cleanup staging files after query"
     )
+    enable_result_reuse: bool = Field(
+        default=True, description="Enable Athena result reuse cache"
+    )
+    result_reuse_max_age_minutes: int = Field(
+        default=1000,
+        ge=1,
+        le=1440,
+        description="Max age in minutes for result reuse cache",
+    )
+
+    enable_local_cache: bool = Field(
+        default=False, description="Enable local on-disk cache for DataFrame results"
+    )
+    local_cache_ttl_minutes: int = Field(
+        default=60,
+        ge=1,
+        le=10080,
+        description="TTL in minutes for local DataFrame cache",
+    )
+    local_cache_dir: str = Field(
+        default=str(Path.home() / ".cache" / "amira" / "athena"),
+        description="Directory for local cache files",
+    )
+
+
+class LocalResultCache:
+    """Filesystem-backed cache for Athena query DataFrames."""
+
+    def __init__(self, *, cache_dir: str, ttl_minutes: int) -> None:
+        self._cache_dir: Path = Path(cache_dir)
+        self._ttl: timedelta = timedelta(minutes=ttl_minutes)
+        self._cache_dir.mkdir(parents=True, exist_ok=True)
+
+    def _key(self, *, query: str, database: str, region: str) -> str:
+        payload: dict[str, str] = {
+            "query": query,
+            "database": database,
+            "region": region,
+        }
+        raw: str = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+        return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+    def _paths(self, *, key: str) -> tuple[Path, Path]:
+        df_path: Path = self._cache_dir / f"{key}.parquet"
+        meta_path: Path = self._cache_dir / f"{key}.json"
+        return df_path, meta_path
+
+    def load(self, *, query: str, database: str, region: str) -> pl.DataFrame | None:
+        key: str = self._key(query=query, database=database, region=region)
+        df_path, meta_path = self._paths(key=key)
+        if not df_path.exists() or not meta_path.exists():
+            return None
+        try:
+            with meta_path.open("r", encoding="utf-8") as f:
+                meta: dict[str, str] = json.load(f)
+            ts_str: str = meta.get("timestamp", "")
+            ts: datetime = datetime.fromisoformat(ts_str) if ts_str else datetime.min
+            if datetime.utcnow() - ts > self._ttl:
+                return None
+            return pl.read_parquet(df_path)
+        except Exception:
+            return None
+
+    def save(self, *, query: str, database: str, region: str, df: pl.DataFrame) -> None:
+        key: str = self._key(query=query, database=database, region=region)
+        df_path, meta_path = self._paths(key=key)
+        df.write_parquet(df_path)
+        meta: dict[str, str] = {"timestamp": datetime.utcnow().isoformat()}
+        with meta_path.open("w", encoding="utf-8") as f:
+            json.dump(meta, f)
 
 
 class LogMessages(StrEnum):
@@ -153,7 +235,7 @@ class LogMessages(StrEnum):
     QUERY_SUBMITTED = (
         "Query submitted to Athena - execution_id={}, s3_output_location={}"
     )
-    STATE_CHANGED = "Athena query state changed"
+    STATE_CHANGED = "Athena query state changed, execution_id={execution_id}, old_state={old_state}, new_state={new_state}"
     STATUS_CHECK_FAILED = "Failed to check query status - execution_id={}, error={}"
     CLEANUP_SUCCESS = "Cleaned up S3 staging files"
     CLEANUP_LIST_FAILED = "Could not list staging files for cleanup"
@@ -182,7 +264,7 @@ class ProductionAthenaClient:
             config: Client configuration settings.
         """
         self._config: AthenaClientConfig = config
-        self._logger = logger
+        self._logger = logger  # TODO remove this
         self._session: aioboto3.Session | None = None
         self._athena_client: Any | None = None
 
@@ -211,8 +293,10 @@ class ProductionAthenaClient:
 
     async def close(self) -> None:
         """Close async clients and cleanup resources."""
+        if self._s3_client:
+            await self._s3_client.close()
         self._session = None
-        self._logger.debug(LogMessages.RESOURCES_CLOSED)
+        logger.debug(LogMessages.RESOURCES_CLOSED)
 
     async def execute_query(
         self,
@@ -240,15 +324,27 @@ class ProductionAthenaClient:
         """
         database = database or self._config.database
 
-        self._logger.info(
-            LogMessages.STARTING_QUERY,
-            query[:NUM_QUERIES_TO_PREVIEW] + "..."
-            if len(query) > NUM_QUERIES_TO_PREVIEW
-            else query,
-            database,
+        logger.info(
+            LogMessages.STARTING_QUERY.format(
+                query[:NUM_QUERIES_TO_PREVIEW] + "..."
+                if len(query) > NUM_QUERIES_TO_PREVIEW
+                else query,
+                database,
+            )
         )
 
         try:
+            if return_dataframe and self._config.enable_local_cache:
+                cache = LocalResultCache(
+                    cache_dir=self._config.local_cache_dir,
+                    ttl_minutes=self._config.local_cache_ttl_minutes,
+                )
+                cached_df: pl.DataFrame | None = cache.load(
+                    query=query, database=database, region=self._config.aws_region
+                )
+                if cached_df is not None:
+                    logger.info("Returning DataFrame from local cache")
+                    return cached_df
             if progress and task_id is not None:
                 progress.update(task_id, description=ProgressMessages.EXECUTING_QUERY)
 
@@ -285,24 +381,37 @@ class ProductionAthenaClient:
                         task_id, description=ProgressMessages.PARSING_RESULTS
                     )
 
-                self._logger.info(
-                    LogMessages.QUERY_COMPLETED,
-                    result.execution_id,
-                    len(dataframe),
-                    result.execution_time_ms,
+                logger.info(
+                    LogMessages.QUERY_COMPLETED.format(
+                        result.execution_id,
+                        len(dataframe),
+                        result.execution_time_ms,
+                    )
                 )
 
+                if self._config.enable_local_cache:
+                    cache = LocalResultCache(
+                        cache_dir=self._config.local_cache_dir,
+                        ttl_minutes=self._config.local_cache_ttl_minutes,
+                    )
+                    cache.save(
+                        query=query,
+                        database=database,
+                        region=self._config.aws_region,
+                        df=dataframe,
+                    )
                 return dataframe
             else:
                 raise AthenaClientError("Query succeeded but no output file found")
 
         except Exception as e:
-            self._logger.error(
-                LogMessages.QUERY_FAILED,
-                query[:NUM_QUERIES_TO_PREVIEW] + "..."
-                if len(query) > NUM_QUERIES_TO_PREVIEW
-                else query,
-                str(e),
+            logger.error(
+                LogMessages.QUERY_FAILED.format(
+                    query[:NUM_QUERIES_TO_PREVIEW] + "..."
+                    if len(query) > NUM_QUERIES_TO_PREVIEW
+                    else query,
+                    str(e),
+                )
             )
             raise
 
@@ -332,11 +441,23 @@ class ProductionAthenaClient:
     ) -> str:
         """Submit query for execution."""
         try:
-            s3_output_location: str = Path(
+            s3_output_location: str = (
                 f"s3://{self._config.s3_staging_bucket}/{self._config.s3_staging_path}/"
-            ).as_posix()
+            )
+
+            logger.info(f"Query: {query}")
+            logger.info(f"Database: {database}")
+            logger.info(f"S3 Output Location: {s3_output_location}")
 
             athena_client: Any = await self._get_athena_client()
+            result_reuse_configuration: dict[str, Any] | None = None
+            if self._config.enable_result_reuse:
+                result_reuse_configuration = {
+                    "ResultReuseByAgeConfiguration": {
+                        "Enabled": True,
+                        "MaxAgeInMinutes": self._config.result_reuse_max_age_minutes,
+                    }
+                }
             async with athena_client as client:
                 response: dict[str, Any] = await client.start_query_execution(
                     QueryString=query,
@@ -344,12 +465,17 @@ class ProductionAthenaClient:
                     ResultConfiguration={
                         AthenaResponseKeys.OUTPUT_LOCATION: s3_output_location
                     },
+                    **(
+                        {"ResultReuseConfiguration": result_reuse_configuration}
+                        if result_reuse_configuration
+                        else {}
+                    ),
                 )
 
             execution_id: str = response[AthenaResponseKeys.QUERY_EXECUTION_ID]
 
-            self._logger.debug(
-                LogMessages.QUERY_SUBMITTED, execution_id, s3_output_location
+            logger.debug(
+                LogMessages.QUERY_SUBMITTED.format(execution_id, s3_output_location)
             )
 
             return execution_id
@@ -400,11 +526,12 @@ class ProductionAthenaClient:
                 )
 
                 if state != new_state:
-                    self._logger.info(
-                        message=LogMessages.STATE_CHANGED,
-                        execution_id=execution_id,
-                        old_state=state,
-                        new_state=new_state,
+                    logger.info(
+                        LogMessages.STATE_CHANGED.format(
+                            execution_id=execution_id,
+                            old_state=state,
+                            new_state=new_state,
+                        )
                     )
                     state = new_state
 
@@ -452,10 +579,11 @@ class ProductionAthenaClient:
                 await asyncio.sleep(self._config.sleep_time)
 
             except (BotoCoreError, ClientError) as e:
-                self._logger.error(
-                    LogMessages.STATUS_CHECK_FAILED,
-                    execution_id,
-                    str(e),
+                logger.error(
+                    LogMessages.STATUS_CHECK_FAILED.format(
+                        execution_id,
+                        str(e),
+                    )
                 )
                 raise AthenaClientError(f"Failed to check query status: {e}") from e
 
@@ -506,10 +634,11 @@ class ProductionAthenaClient:
             )
             if not list_results or not list_results[0].success:
                 error: str = list_results[0].error if list_results else "Unknown"
-                self._logger.warning(
-                    LogMessages.CLEANUP_LIST_FAILED,
-                    prefix=prefix,
-                    error=error,
+                logger.warning(
+                    LogMessages.CLEANUP_LIST_FAILED.format(
+                        prefix=prefix,
+                        error=error,
+                    )
                 )
                 return
 
@@ -528,24 +657,27 @@ class ProductionAthenaClient:
             ] = await s3_client.delete_objects_batch(bucket, keys_to_delete)
 
             if delete_result and delete_result[0].success:
-                self._logger.info(
-                    LogMessages.CLEANUP_SUCCESS,
-                    file_count=len(keys_to_delete),
-                    prefix=prefix,
+                logger.info(
+                    LogMessages.CLEANUP_SUCCESS.format(
+                        file_count=len(keys_to_delete),
+                        prefix=prefix,
+                    )
                 )
             else:
                 error: str = delete_result[0].error if delete_result else "Unknown"
-                self._logger.warning(
-                    LogMessages.CLEANUP_DELETE_FAILED,
-                    prefix=prefix,
-                    error=error,
+                logger.warning(
+                    LogMessages.CLEANUP_DELETE_FAILED.format(
+                        prefix=prefix,
+                        error=error,
+                    )
                 )
 
         except (BotoCoreError, ClientError) as e:
-            self._logger.warning(
-                LogMessages.CLEANUP_ERROR,
-                filename=filename,
-                error=str(e),
+            logger.warning(
+                LogMessages.CLEANUP_ERROR.format(
+                    filename=filename,
+                    error=str(e),
+                )
             )
 
     async def get_query_status(self, *, execution_id: str) -> QueryExecution:
@@ -606,9 +738,10 @@ class ProductionAthenaClient:
             async with athena_client as client:
                 await client.stop_query_execution(QueryExecutionId=execution_id)
 
-            self._logger.info(
-                "Query cancellation requested - execution_id=%s",
-                execution_id,
+            logger.info(
+                LogMessages.QUERY_CANCELLED.format(
+                    execution_id=execution_id,
+                )
             )
 
             return True
@@ -652,13 +785,48 @@ async def query_athena(
     Returns:
         DataFrame with query results.
     """
+    enable_reuse_env: str | None = os.environ.get("ATHENA_CACHE_ENABLED", "true")
+    max_age_env: str | None = os.environ.get("ATHENA_CACHE_MAX_AGE_MINUTES", "1000")
+    enable_reuse: bool = enable_reuse_env.lower() in {"1", "true", "yes", "on"}
+    try:
+        max_age_minutes: int = max(1, min(1440, int(max_age_env)))
+    except Exception:
+        max_age_minutes = 60
+
+    local_cache_enabled_env: str | None = os.environ.get(
+        "ATHENA_LOCAL_CACHE_ENABLED", "true"
+    )
+    local_cache_ttl_env: str | None = os.environ.get(
+        "ATHENA_LOCAL_CACHE_TTL_MINUTES", "60"
+    )
+    local_cache_dir_env: str | None = os.environ.get("ATHENA_LOCAL_CACHE_DIR")
+    local_cache_enabled: bool = local_cache_enabled_env.lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+    try:
+        local_cache_ttl: int = max(1, min(10080, int(local_cache_ttl_env)))
+    except Exception:
+        local_cache_ttl = 60
+
     config: AthenaClientConfig = AthenaClientConfig(
         aws_region=region,
         aws_profile="legacy",
         database=database,
         s3_staging_bucket=s3_staging_bucket,
         s3_staging_path=s3_staging_path,
+        enable_result_reuse=enable_reuse,
+        result_reuse_max_age_minutes=max_age_minutes,
+        enable_local_cache=local_cache_enabled,
+        local_cache_ttl_minutes=local_cache_ttl,
+        local_cache_dir=local_cache_dir_env
+        or str(Path.home() / ".cache" / "amira" / "athena"),
     )
 
     client: ProductionAthenaClient = ProductionAthenaClient(config=config)
-    return await client.execute_query(query=query, database=database)
+    try:
+        return await client.execute_query(query=query, database=database)
+    finally:
+        await client.close()

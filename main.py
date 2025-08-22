@@ -2,6 +2,7 @@
 
 import time
 import traceback
+import asyncio
 from typing import Any
 import polars as pl
 import typer
@@ -16,7 +17,7 @@ app: typer.Typer = typer.Typer(
 )
 
 
-def run_pipeline_core(*, config: PipelineConfig) -> bool:
+async def run_pipeline_core(*, config: PipelineConfig) -> bool:
     """Core pipeline execution logic.
 
     Args:
@@ -28,10 +29,17 @@ def run_pipeline_core(*, config: PipelineConfig) -> bool:
     start_time: float = time.time()
 
     try:
-        logger.info(f"Pipeline config: {config}")
+        logger.info(
+            f"Pipeline config:\n"
+            + "\n".join(
+                f"  {field}: {getattr(config, field)}"
+                for field in config.__class__.model_fields
+            )
+        )
 
-        config_dict: dict[str, Any] = config.dict()
-        _: pl.DataFrame = run_activity_pipeline(config_dict)
+        activity_responses: list[dict[str, Any]] = await run_activity_pipeline(
+            config=config
+        )
 
         total_time: float = time.time() - start_time
         logger.info(f"Total time (including setup): {total_time:.1f}s")
@@ -51,12 +59,25 @@ def run_pipeline_core(*, config: PipelineConfig) -> bool:
 @app.command()
 def run(
     config_path: str = typer.Option(
-        ..., "--config", "-c", help="Path to configuration YAML file"
+        default=None,
+        help="Path to configuration YAML file",
+        show_default=False,
+    ),
+    activity_id: str = typer.Option(
+        None,
+        "--activity-id",
+        help="Process a specific activity ID using GraphQL instead of Athena",
+        show_default=False,
     ),
     cleanup: bool = typer.Option(
         False,
         "--cleanup",
         help="Clean up audio and result files after pipeline completion",
+    ),
+    use_complete_audio: bool = typer.Option(
+        False,
+        "--use-complete-audio",
+        help="Use complete.wav from S3 instead of reconstituted phrase audio",
     ),
 ) -> None:
     """Run the CPU-GPU Parallel LNS Scoring Pipeline."""
@@ -68,7 +89,16 @@ def run(
 
     try:
         config_obj: PipelineConfig = load_config(config_path=config_path)
-        success = run_pipeline_core(config=config_obj)
+
+        if activity_id:
+            config_obj.metadata.activity_id = activity_id
+            typer.echo(f"Processing specific activity ID: {activity_id}")
+            
+        if use_complete_audio:
+            config_obj.audio.use_complete_audio = use_complete_audio
+            typer.echo("Using complete.wav audio method")
+
+        success = asyncio.run(run_pipeline_core(config=config_obj))
 
         if success:
             typer.echo("Pipeline completed successfully!")

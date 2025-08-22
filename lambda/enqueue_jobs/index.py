@@ -88,9 +88,22 @@ class JobEnqueuer(BaseModel):
 
             database = os.environ.get("ATHENA_DATABASE", "default")
             output_location = os.environ.get("ATHENA_OUTPUT")
-            query = os.environ.get(
-                "ATHENA_QUERY", "SELECT 'sample-activity' AS activity_id"
-            )
+            query_override = os.environ.get("ATHENA_QUERY")
+
+            if query_override:
+                query = query_override
+            else:
+                table = os.environ.get("ATHENA_TABLE", "activities")
+                where = os.environ.get("ATHENA_WHERE")
+                limit = os.environ.get("ATHENA_LIMIT")
+                columns = os.environ.get("ATHENA_COLUMNS", "activity_id")
+
+                base = f"SELECT {columns} FROM {table}"
+                if where:
+                    base = f"{base} WHERE {where}"
+                if limit and limit.isdigit():
+                    base = f"{base} LIMIT {limit}"
+                query = base
 
             return cls(
                 queue_url=queue_url,
@@ -133,10 +146,13 @@ async def execute_athena_query(*, athena_client: Any, config: AthenaConfig) -> s
         {"OutputLocation": config.output_location} if config.output_location else {}
     )
 
+    reuse_cfg: dict[str, Any] | None = _result_reuse_configuration_from_env()
+
     response: dict[str, Any] = await athena_client.start_query_execution(
         QueryString=config.query,
         QueryExecutionContext={"Database": config.database},
         ResultConfiguration=result_config,
+        **({"ResultReuseConfiguration": reuse_cfg} if reuse_cfg else {}),
     )
     return response["QueryExecutionId"]
 
@@ -186,6 +202,31 @@ async def wait_for_query_completion(
             await asyncio.sleep(DEFAULT_POLL_INTERVAL_SECONDS)
 
     return "TIMEOUT"
+
+
+def _result_reuse_configuration_from_env() -> dict[str, Any] | None:
+    """Build Athena result reuse configuration from environment variables.
+
+    Returns:
+        dict[str, Any] | None: Result reuse configuration or None if disabled.
+    """
+    enabled_str: str | None = os.environ.get("ATHENA_CACHE_ENABLED", "true")
+    enabled: bool = enabled_str.lower() in {"1", "true", "yes", "on"}
+    if not enabled:
+        return None
+
+    max_age_str: str | None = os.environ.get("ATHENA_CACHE_MAX_AGE_MINUTES", "60")
+    try:
+        max_age: int = max(1, min(1440, int(max_age_str)))
+    except Exception:
+        max_age = 60
+
+    return {
+        "ResultReuseByAgeConfiguration": {
+            "Enabled": True,
+            "MaxAgeInMinutes": max_age,
+        }
+    }
 
 
 async def fetch_query_results(

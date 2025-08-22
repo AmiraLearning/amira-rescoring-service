@@ -245,6 +245,23 @@ class ProductionS3Client:
             * 1000,
         )
 
+    async def warm_up(self, *, num_clients: int = 2) -> None:
+        """Eagerly initialize session and pre-create clients in the pool.
+
+        Args:
+            num_clients: Number of S3 clients to create and return to pool.
+        """
+        await self._ensure_session()
+        created: int = 0
+        while created < max(1, num_clients):
+            try:
+                client = await self._get_client()
+                await self._return_client(client)
+                created += 1
+            except Exception as e:
+                self._logger.warning(f"S3 warm up client creation failed: {e}")
+                break
+
     async def download_files_batch(
         self,
         operations: list[tuple[str, str, str]],
@@ -827,6 +844,21 @@ class ProductionS3Client:
             success=False, operation=operation, error="Max retries exceeded"
         )
 
+    async def get_paginator(self, operation_name: str) -> Any:
+        """Get paginator for specified operation.
+
+        Args:
+            operation_name: Name of the operation to paginate.
+
+        Returns:
+            Paginator object for the operation.
+        """
+        client = await self._get_client()
+        try:
+            return client.get_paginator(operation_name)
+        finally:
+            await self._return_client(client)
+
     def get_performance_metrics(self) -> dict[str, Any]:
         """Get performance metrics for monitoring."""
         avg_operation_time: float = self._total_operation_time / max(
@@ -874,3 +906,21 @@ class S3OperationError(S3ClientError):
         """
         super().__init__(message=f"S3 {operation} failed: {message}", **kwargs)
         self.operation = operation
+
+
+# Global S3 client registry to avoid repeated session inits per run
+_GLOBAL_S3_CLIENTS: dict[tuple[str, str], ProductionS3Client] = {}
+
+
+def get_global_s3_client(*, config: HighPerformanceS3Config) -> ProductionS3Client:
+    """Get or create a global S3 client for the given profile/region key."""
+    key = (config.aws_profile, config.aws_region)
+    if key not in _GLOBAL_S3_CLIENTS:
+        _GLOBAL_S3_CLIENTS[key] = ProductionS3Client(config=config)
+    return _GLOBAL_S3_CLIENTS[key]
+
+
+async def preload_s3_client_async(*, config: HighPerformanceS3Config, num_clients: int = 2) -> None:
+    """Asynchronously preload the S3 client and create clients in pool."""
+    client = get_global_s3_client(config=config)
+    await client.warm_up(num_clients=num_clients)

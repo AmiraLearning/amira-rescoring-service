@@ -21,13 +21,18 @@ ACTIVITY_QUERY: Final[str] = """
         createdat,
         status,
         displaystatus
-    FROM activities_v
-    WHERE type = 'letterNamingAndSounds'
-    AND createdat >= TIMESTAMP '{start_time}'
-    AND createdat < TIMESTAMP '{end_time}'
-    AND districtid in (955168, 1000022968)
-    AND status = 'underReview' 
+    FROM activity_v
+    WHERE districtid in ('955168', '1000022968')
+    AND storyid = '3E53D222EC5B4D8E897AB054AB20DC98'
+    AND createdat >= TIMESTAMP '2024-01-09 00:00:00'
+    AND createdat < TIMESTAMP '2025-12-10 23:59:59'
+    LIMIT {limit}
 """
+
+# WHERE type = 'letterNamingAndSounds'
+# AND createdat >= TIMESTAMP '{start_time}'
+# AND createdat < TIMESTAMP '{end_time}'
+# AND districtid IN ('955168', '1000022968')
 
 COLUMN_MAPPING: Final[MappingProxyType[str, str]] = MappingProxyType(
     {
@@ -35,7 +40,6 @@ COLUMN_MAPPING: Final[MappingProxyType[str, str]] = MappingProxyType(
         "storyid": "storyId",
         "studentid": "studentId",
         "districtid": "districtId",
-        "schoolid": "schoolId",
         "createdat": "createdAt",
         "status": "status",
         "displaystatus": "displayStatus",
@@ -65,7 +69,7 @@ class MergeColumns(StrEnum):
 
 
 async def load_activity_data(*, config: PipelineConfig) -> pl.DataFrame:
-    """Fetch activity data based on config and save activities.csv.
+    """Fetch activity data based on config and save activities.parquet.
 
     Args:
         config: Pipeline configuration containing metadata and result settings.
@@ -78,11 +82,31 @@ async def load_activity_data(*, config: PipelineConfig) -> pl.DataFrame:
     """
     result_dir: str = config.result.output_dir
 
-    if config.metadata.activity_file:
+    if config.metadata.activity_id:
+        logger.info(
+            f"Loading specific activity via GraphQL: {config.metadata.activity_id}"
+        )
+        from infra.appsync_utils import load_activity_from_graphql
+
+        activity_df: pl.DataFrame = load_activity_from_graphql(
+            activity_id=config.metadata.activity_id
+        )
+
+        activity_raw_path: Path = Path(result_dir) / "activities.parquet"
+        activity_raw_path.parent.mkdir(parents=True, exist_ok=True)
+        activity_df.write_parquet(activity_raw_path)
+        logger.info(f"GraphQL activity data saved: {activity_raw_path}")
+
+        return activity_df
+    elif config.metadata.activity_file:
         logger.info(
             f"Loading existing activity data from {config.metadata.activity_file}"
         )
-        activity_df: pl.DataFrame = pl.read_csv(config.metadata.activity_file)
+        activity_file_path = Path(config.metadata.activity_file)
+        if activity_file_path.suffix == ".parquet":
+            activity_df: pl.DataFrame = pl.read_parquet(config.metadata.activity_file)
+        else:
+            activity_df: pl.DataFrame = pl.read_csv(config.metadata.activity_file)
     else:
         logger.info("Fetching activities from data lake")
         processing_start_time: str | None = config.metadata.processing_start_time
@@ -97,19 +121,22 @@ async def load_activity_data(*, config: PipelineConfig) -> pl.DataFrame:
             )
 
         activity_df: pl.DataFrame = await query_athena(
-            query=ACTIVITY_QUERY,
-            start_time=processing_start_time,
-            end_time=processing_end_time,
+            query=ACTIVITY_QUERY.format(
+                start_time=processing_start_time,
+                end_time=processing_end_time,
+                limit=config.metadata.limit,
+            )
         )
 
         logger.info(f"Fetched {activity_df.height} activities")
         if activity_df.is_empty():
             raise ValueError("No activities found for the specified date range")
 
-        activity_df = activity_df.rename(columns=COLUMN_MAPPING)
+        activity_df = activity_df.rename(COLUMN_MAPPING)
 
-        activity_raw_path: Path = Path(result_dir) / "activities.csv"
-        activity_df.write_csv(activity_raw_path)
+        activity_raw_path: Path = Path(result_dir) / "activities.parquet"
+        activity_raw_path.parent.mkdir(parents=True, exist_ok=True)
+        activity_df.write_parquet(activity_raw_path)
         logger.info(f"Activity raw data saved: {activity_raw_path}")
 
     return activity_df
@@ -134,46 +161,45 @@ def load_story_phrase_data(*, config: PipelineConfig) -> pl.DataFrame:
         FileNotFoundError: If story phrase file doesn't exist.
         ValueError: If file format is unsupported or required columns are missing.
     """
-    story_phrase_path: Path = Path(config.cached["story_phrase_info"])
-    parquet_path: Path = story_phrase_path.with_suffix(FileFormat.PARQUET)
+    if not config.cached.story_phrase_path:
+        raise FileNotFoundError("Story phrase file path is not configured")
 
-    if not story_phrase_path.exists() and not parquet_path.exists():
+    story_phrase_path: Path = Path(config.cached.story_phrase_path)
+
+    if not story_phrase_path.exists():
         raise FileNotFoundError(f"Story phrase file not found: {story_phrase_path}")
 
-    if parquet_path.exists():
-        logger.info(f"Loading pre-processed story phrases from {parquet_path}")
-        story_phrase_df: pl.DataFrame = pl.read_parquet(parquet_path)
+    if story_phrase_path.suffix == FileFormat.PARQUET:
+        logger.info(f"Loading pre-processed story phrases from {story_phrase_path}")
+        story_phrase_df: pl.DataFrame = pl.read_parquet(story_phrase_path)
+    elif story_phrase_path.suffix == FileFormat.CSV:
+        logger.info(f"Loading and processing story phrases from {story_phrase_path}")
+        story_phrase_df: pl.DataFrame = pl.read_csv(story_phrase_path)
     else:
-        match story_phrase_path.suffix:
-            case FileFormat.CSV:
-                logger.info(
-                    f"Loading and processing story phrases from {story_phrase_path}"
-                )
-                story_phrase_df: pl.DataFrame = pl.read_csv(story_phrase_path)
+        raise ValueError(
+            f"Unsupported file format: {story_phrase_path.suffix}. Use {FileFormat.PARQUET} or {FileFormat.CSV}"
+        )
 
-                required_columns: set[str] = {StoryPhraseColumns.EXPECTED_TEXT}
-                missing_columns: set[str] = required_columns - set(
-                    story_phrase_df.columns
-                )
-                if missing_columns:
-                    raise ValueError(f"Missing required columns: {missing_columns}")
+    REQUIRED_COLUMNS: Final[frozenset[str]] = frozenset(
+        {StoryPhraseColumns.EXPECTED_TEXT}
+    )
+    missing_columns: set[str] = REQUIRED_COLUMNS - set(story_phrase_df.columns)
+    if missing_columns:
+        raise ValueError(f"Missing required columns: {missing_columns}")
 
-                for column in COLUMNS_TO_EVALUATE:
-                    if column in story_phrase_df.columns:
-                        story_phrase_df = story_phrase_df.with_column(
-                            pl.col(column).map_elements(
-                                literal_eval, return_dtype=pl.List
-                            )
-                        )
+    columns_to_process: list[pl.Expr] = []
+    for column in COLUMNS_TO_EVALUATE:
+        if column in story_phrase_df.columns:
+            columns_to_process.append(
+                pl.col(column).map_elements(literal_eval, return_dtype=pl.Object)
+            )
 
-                logger.info(
-                    f"Saving processed story phrases to {parquet_path} for future use"
-                )
-                story_phrase_df.write_parquet(parquet_path)
-            case _:
-                raise ValueError(
-                    f"Unsupported file format: {story_phrase_path}. Use .csv or .parquet"
-                )
+    if columns_to_process:
+        story_phrase_df = story_phrase_df.with_columns(columns_to_process)
+
+    logger.info(f"Saving processed story phrases to {story_phrase_path} for future use")
+    if story_phrase_path.suffix != FileFormat.PARQUET:
+        logger.info(f"Skipping parquet save due to Object columns in processed data")
 
     logger.info(f"Loaded {story_phrase_df.height} story phrases")
     return story_phrase_df
@@ -196,6 +222,9 @@ async def merge_activities_with_phrases(
     )
 
     initial_count: int = phrase_df.height
+
+    logger.debug(f"Initial phrase count: {initial_count}")
+    logger.debug(f"Phrase dataframe: {phrase_df.head()}")
     phrase_df = phrase_df.filter(pl.col(MergeColumns.PHRASE_INDEX).is_not_null())
     final_count: int = phrase_df.height
 

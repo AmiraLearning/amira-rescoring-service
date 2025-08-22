@@ -10,7 +10,7 @@ from typing import Any
 from utils.config import PipelineConfig
 
 
-def cpu_download_worker(
+async def cpu_download_worker(
     *,
     phrases_input: list[PhraseInput],
     activity_id: str,
@@ -20,7 +20,12 @@ def cpu_download_worker(
     activity_input: ActivityInput = ActivityInput(
         activityId=activity_id, phrases=phrases_input
     )
-    return engine.prepare_activity_audio(activity_input=activity_input)
+    
+    # Choose audio preparation method based on config flag
+    if config.audio.use_complete_audio:
+        return await engine.prepare_activity_audio_with_complete(activity_input=activity_input)
+    else:
+        return await engine.prepare_activity_audio(activity_input=activity_input)
 
 
 __all__ = [
