@@ -1,0 +1,22 @@
+[package]
+name = "my-asr-aligner"
+version = "0.1.0"
+edition = "2021"
+description = "A high-performance ASR aligner in Rust."
+authors = ["Your Name <you@example.com>"]
+license = "MIT"
+readme = "README.md"
+requires-python = ">=3.8,<3.13"
+
+[lib]
+name = "my_asr_aligner"
+crate-type = ["cdylib"]
+
+[package.metadata.maturin]
+python-source = "python"
+module-name = "my_asr_aligner._core"
+
+[dependencies]
+pyo3 = { version = "0.21.2", features = ["extension-module"] }
+lazy_static = "1.4.0"
+similar = "2.4.0"

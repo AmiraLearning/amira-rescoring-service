@@ -1,0 +1,35 @@
+[project]
+name = "amira-letter-scoring"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+  "polars>=0.20.30",
+  "loguru>=0.7.2",
+  "rich>=14.1.0",
+  "pydantic>=2.11.7",
+  "aioboto3>=15.1.0",
+  "botocore>=1.39.11",
+  "ggl>=1.1.0",
+  "numpy>=2.3.2",
+  "torch>=2.8.0",
+  "transformers>=4.55.3",
+  "gql>=4.0.0",
+  "pyarrow>=21.0.0",
+  "tritonclient>=2.59.0",
+  "typer>=0.16.1",
+  "torchaudio>=2.8.0",
+]
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[dependency-groups]
+dev = [
+    "mypy>=1.17.1",
+    "pre-commit>=4.3.0",
+    "ruff>=0.12.10",
+    "maturin>=1.9.3",
+]

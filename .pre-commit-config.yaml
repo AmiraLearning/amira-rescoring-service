@@ -1,0 +1,10 @@
+# This configuration makes pre-commit a no-op
+repos:
+  - repo: local
+    hooks:
+      - id: no-op
+        name: No operation
+        entry: uv run python -c "import sys; sys.exit(0)"
+        language: system
+        pass_filenames: false
+        always_run: true

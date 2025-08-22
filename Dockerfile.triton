@@ -1,0 +1,23 @@
+FROM nvcr.io/nvidia/tritonserver:25.07-py3 as base
+
+# Set environment variables
+ENV MODEL_REPOSITORY=/models \
+    LD_PRELOAD=""
+
+# Create a non-root user for better security
+RUN useradd -r -s /bin/false tritonuser && \
+    mkdir -p ${MODEL_REPOSITORY} && \
+    chown -R tritonuser:tritonuser ${MODEL_REPOSITORY}
+
+# Copy model repository into the image
+COPY --chown=tritonuser:tritonuser triton_models/ ${MODEL_REPOSITORY}/
+
+# Expose only necessary ports
+EXPOSE 8000 8001 8002
+
+# Switch to non-root user
+USER tritonuser
+
+# Use exec form of ENTRYPOINT for proper signal handling
+ENTRYPOINT ["/opt/tritonserver/bin/tritonserver"]
+CMD ["--model-repository=/models", "--log-verbose=0", "--http-port=8000", "--grpc-port=8001", "--metrics-port=8002"]

@@ -1,0 +1,303 @@
+from __future__ import annotations
+
+"""S3 helpers for downloading and preparing tutor-style phrase audio.
+
+This module provides small, focused utilities with clear typing and
+keyword-only arguments for safer, more readable usage.
+"""
+
+from pathlib import Path
+from typing import Final, Generator
+from datetime import datetime
+from botocore.paginate import Paginator
+from botocore.client import BaseClient as BotoClient
+from pydantic import BaseModel
+
+from loguru import logger
+
+from utils.phrase_slicing import PhraseSlicer
+
+# TODO double check logic
+# TODO move config to config
+
+
+_S3_SPEECH_ROOT_PROD: Final[str] = "amira-speech-stream"
+_S3_SPEECH_ROOT_STAGE: Final[str] = "amira-speech-stream-stage"
+RECONSTITUTED_PHRASE_AUDIO: Final[str] = "reconstituted_phrase_audio"
+
+
+class S3Object(BaseModel):
+    key: str
+    last_modified: datetime | None = None
+
+
+def resolve_bucket(stage_source: bool) -> str:
+    return _S3_SPEECH_ROOT_STAGE if stage_source else _S3_SPEECH_ROOT_PROD
+
+
+class DatasetLayout(BaseModel):
+    root_dir: Path
+    dataset_dir: Path
+    dataset_suffix: str
+
+
+def effective_activity_id(*, activity_id: str, replay_suffix: str | None) -> str:
+    return f"{activity_id[:-4]}{replay_suffix}" if replay_suffix else activity_id
+
+
+def resolve_dataset_layout(
+    *, audio_path: Path, dataset_name: str, use_audio_dir_as_root: bool
+) -> DatasetLayout:
+    """Resolve the dataset layout for a given audio directory
+
+    Args:
+        audio_dir: Path to the local audio directory
+        dataset_name: dataset name to use
+        use_audio_dir_as_root: whether to use audio_dir as the root for activities
+
+    Returns:
+        The resolved dataset layout
+    """
+    if RECONSTITUTED_PHRASE_AUDIO in str(audio_path):
+        root_dir: Path = Path(str(audio_path).split(RECONSTITUTED_PHRASE_AUDIO)[0])
+        dataset_suffix = (
+            str(audio_path).split(RECONSTITUTED_PHRASE_AUDIO)[-1].strip("/")
+        )
+    else:
+        root_dir: Path = audio_path
+        dataset_suffix: str = dataset_name
+
+    dataset_dir: Path = (
+        audio_path
+        if use_audio_dir_as_root
+        else root_dir / RECONSTITUTED_PHRASE_AUDIO / dataset_suffix
+    )
+    return DatasetLayout(
+        root_dir=root_dir, dataset_dir=dataset_dir, dataset_suffix=dataset_suffix
+    )
+
+
+def iter_wav_files(*, directory: Path) -> list[Path]:
+    """Iterate over all WAV files in a given directory
+
+    Args:
+        directory: Path to the directory to iterate over
+
+    Returns:
+        List of Path objects representing the WAV files
+    """
+    return [f for f in directory.iterdir() if f.is_file() and f.suffix == ".wav"]
+
+
+def s3_find(
+    *,
+    bucket: str,
+    prefix: str = "/",
+    delimiter: str = "/",
+    start_after: str = "",
+    s3_client: BotoClient,
+    include_last_mod: bool = False,
+) -> Generator[S3Object, None, None]:
+    """Enumerate S3 prefix (as a virtual directory)
+
+    Args:
+        bucket: Bucket containing the objects
+        prefix: Prefix to enumerate
+        delimiter: Virtual directory separator
+        start_after: Don't enumerate objects with lexical names before this start point
+        s3_client: S3 client to use
+        include_last_mod: include last modification timestamp in result
+
+    Returns:
+        Generator that will yield object keys or tuples of (object key, last-mod-timestamp)
+    """
+    paginator: Paginator = s3_client.get_paginator("list_objects_v2")
+    prefix = prefix.lstrip(delimiter)
+    start_after = (start_after or prefix) if prefix.endswith(delimiter) else start_after
+
+    for page in paginator.paginate(
+        Bucket=bucket, Prefix=prefix, StartAfter=start_after
+    ):
+        for content in page.get("Contents", ()):
+            yield (
+                S3Object(content["Key"], content.get("LastModified"))
+                if include_last_mod
+                else S3Object(content["Key"])
+            )
+
+
+def get_segment_file_names(
+    *, activity_id: str, s3_client: BotoClient, stage_source: bool = False
+) -> list[str]:
+    """Get the file names of all the audio segments for an activity
+
+    Args:
+        activity_id: Activity ID to process
+        s3_client: S3 client to use
+        stage_source: Whether the source activity is from staging
+
+    Returns:
+        List of file names of the audio segments for the activity
+    """
+    keys: list[str] = []
+    bucket: str = resolve_bucket(stage_source)
+    for obj in s3_find(bucket=bucket, prefix=f"{activity_id}/", s3_client=s3_client):
+        if ".wav" in obj.key and "complete" not in obj.key:
+            keys.append(obj.key)
+        else:
+            logger.error(
+                f"skipping non-phrase key under s3://{bucket}/{activity_id}: {obj.key}"
+            )
+    return keys
+
+
+def download_tutor_style_audio(
+    *,
+    activity_id: str,
+    audio_path: Path,
+    s3_client: BotoClient,
+    dataset_name: str,
+    audio_s3_root: Path,
+    replay_suffix: str | None = None,
+    stage_source: bool = False,
+    use_audio_dir_as_root: bool = False,
+) -> bool:
+    """
+    Downloads and prepares phrase audio files for a specific activity.
+
+    First attempts to download pre-sliced phrase audio from S3. If not available,
+    downloads and slices the audio locally, then uploads the sliced files back to S3.
+
+    Args:
+        activity_id: Activity ID to process
+        audio_dir: Path to the local audio directory
+        s3_client: S3 client to use
+        dataset_name: Dataset name to use
+        audio_s3_root: S3 endpoint for phrase audio files
+        replay_suffix: Four-letter replay suffix for production IDs
+        stage_source: Whether the source activity is from staging
+        use_audio_dir_as_root: whether to use audio_dir as the root for activities
+
+    Returns:
+        True if the operation was successful
+    """
+    eff_act_id: str = effective_activity_id(
+        activity_id=activity_id, replay_suffix=replay_suffix
+    )
+
+    logger.info(f"Downloading audio for activity {eff_act_id} to {audio_path}")
+
+    layout: DatasetLayout = resolve_dataset_layout(
+        audio_path=audio_path,
+        dataset_name=dataset_name,
+        use_audio_dir_as_root=use_audio_dir_as_root,
+    )
+
+    activity_dir: Path = layout.dataset_dir / eff_act_id
+    layout.dataset_dir.mkdir(parents=True, exist_ok=True)
+
+    existing_folders: set[str] = {
+        folder.name for folder in layout.dataset_dir.iterdir() if folder.is_dir()
+    }
+
+    if eff_act_id not in existing_folders:
+        if activity_id in existing_folders:
+            Path(layout.dataset_dir, activity_id).rename(
+                Path(layout.dataset_dir, eff_act_id)
+            )
+        else:
+            PhraseSlicer(
+                destination_path=str(layout.dataset_dir),
+                s3_client=s3_client,
+                stage_source=stage_source,
+            ).process_activity_into_phrase_sliced_audio(
+                activity_id=activity_id,
+                replay_suffix=replay_suffix,
+                keep_intermediaries=False,
+            )
+
+            if audio_s3_root:
+                _upload_sliced_audio_to_s3(
+                    audio_s3_root=audio_s3_root,
+                    activity_dir=activity_dir,
+                    dataset_suffix=layout.dataset_suffix,
+                    effective_activity_id=eff_act_id,
+                    s3_client=s3_client,
+                )
+
+    return True
+
+
+def _upload_sliced_audio_to_s3(
+    *,
+    audio_s3_root: Path,
+    activity_dir: Path,
+    dataset_suffix: str,
+    effective_activity_id: str,
+    s3_client: BotoClient,
+) -> None:
+    """
+    Uploads sliced audio files to S3.
+
+    Args:
+        audio_s3_root: S3 root URL
+        activity_dir: Path to the activity directory containing WAV files
+        dataset_suffix: Dataset name suffix
+        effective_activity_id: Activity ID to use for the S3 path
+        s3_client: S3 client to use for uploads
+    """
+    bucket_name: str = audio_s3_root.netloc
+
+    activity_dir.mkdir(parents=True, exist_ok=True)
+
+    for wav_file in iter_wav_files(directory=activity_dir):
+        base_path: str = audio_s3_root.path.strip("/").split(
+            RECONSTITUTED_PHRASE_AUDIO
+        )[0]
+        s3_path: Path = (
+            Path(base_path)
+            / RECONSTITUTED_PHRASE_AUDIO
+            / dataset_suffix
+            / effective_activity_id
+            / wav_file.name
+        )
+
+        _try_upload_or_warn(
+            bucket=bucket_name,
+            key=str(s3_path),
+            file_path=wav_file,
+            s3_client=s3_client,
+            fallback_prefix=audio_s3_root.path.strip("/"),
+            effective_activity_id=effective_activity_id,
+        )
+
+
+def _try_upload_or_warn(
+    *,
+    bucket: str,
+    key: str,
+    file_path: Path,
+    s3_client: BotoClient,
+    fallback_prefix: str,
+    effective_activity_id: str,
+) -> None:
+    """
+    Uploads a file to S3 or warns if upload fails.
+
+    Args:
+        bucket: S3 bucket name
+        key: S3 key for the file
+        file_path: Path to the local file to upload
+        s3_client: S3 client to use
+        fallback_prefix: Prefix to use if upload fails
+        effective_activity_id: Activity ID to use for the S3 path
+    """
+    try:
+        s3_client.upload_file(Filename=str(file_path), Bucket=bucket, Key=key)
+    except Exception as e:
+        s3_filepath: Path = (
+            Path(bucket) / fallback_prefix / effective_activity_id / file_path.name
+        )
+        logger.warning(
+            f"Could not upload file {file_path} to S3 location {s3_filepath}: {e}"
+        )

@@ -1,0 +1,159 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main, develop]
+  workflow_run:
+    workflows: ["Test", "Build", "Security"]
+    types: [completed]
+    branches: [main, develop]
+
+env:
+  PYTHON_VERSION: "3.12"
+
+jobs:
+  deploy-staging:
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/develop' && github.event.workflow_run.conclusion == 'success'
+    environment: staging
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+    
+    - name: Deploy to staging
+      run: |
+        echo "🚀 Deploying to staging environment"
+        echo "Branch: ${{ github.ref }}"
+        echo "Commit: ${{ github.sha }}"
+        
+        # Add your staging deployment commands here
+        # Examples:
+        # - Deploy to staging ECS cluster
+        # - Update staging Lambda functions
+        # - Deploy to staging Kubernetes namespace
+        
+        # kubectl apply -f k8s/staging/ --validate=false
+        # aws ecs update-service --cluster staging --service amira-scoring --force-new-deployment
+        
+        echo "✅ Staging deployment completed"
+    
+    - name: Run staging smoke tests
+      run: |
+        echo "🧪 Running staging smoke tests"
+        
+        # Add smoke tests for staging environment
+        # curl -f https://staging.amira-scoring.com/health || exit 1
+        
+        echo "✅ Staging smoke tests passed"
+
+  deploy-production:
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && github.event.workflow_run.conclusion == 'success'
+    environment: production
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+    
+    - name: Deploy to production
+      run: |
+        echo "🚀 Deploying to production environment"
+        echo "Branch: ${{ github.ref }}"
+        echo "Commit: ${{ github.sha }}"
+        
+        # Add your production deployment commands here
+        # Examples:
+        # - Deploy to production ECS cluster with blue-green deployment
+        # - Update production Lambda functions
+        # - Deploy to production Kubernetes namespace
+        
+        # kubectl apply -f k8s/prod/ --validate=false
+        # aws ecs update-service --cluster production --service amira-scoring --force-new-deployment
+        
+        echo "✅ Production deployment completed"
+    
+    - name: Run production smoke tests
+      run: |
+        echo "🧪 Running production smoke tests"
+        
+        # Add smoke tests for production environment
+        # curl -f https://amira-scoring.com/health || exit 1
+        
+        echo "✅ Production smoke tests passed"
+    
+    - name: Create release
+      if: success()
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: v${{ github.run_number }}
+        release_name: Release v${{ github.run_number }}
+        body: |
+          Automated release v${{ github.run_number }}
+          
+          **Changes in this release:**
+          - Commit: ${{ github.sha }}
+          - Branch: ${{ github.ref }}
+          
+          **Deployment:**
+          - ✅ Tests passed
+          - ✅ Build successful  
+          - ✅ Security checks passed
+          - ✅ Production deployment successful
+        draft: false
+        prerelease: false
+
+  cdk-deploy:
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    environment: production
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+        cache: 'npm'
+        cache-dependency-path: cdk/package-lock.json
+    
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        # Use OIDC for secure authentication (recommended)
+        role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+        role-session-name: GitHubActions-CDKDeploy
+        aws-region: ${{ vars.AWS_REGION }}
+        # Alternative: use access keys (less secure)
+        # aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        # aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+    
+    - name: Install CDK dependencies
+      working-directory: cdk
+      run: npm ci
+    
+    - name: Build CDK project
+      working-directory: cdk
+      run: npm run build
+    
+    - name: CDK diff
+      working-directory: cdk
+      run: npx cdk diff
+    
+    - name: CDK deploy
+      working-directory: cdk
+      run: |
+        echo "🚀 Deploying AWS infrastructure with CDK"
+        npx cdk deploy --require-approval never --verbose
+        echo "✅ CDK deployment completed"

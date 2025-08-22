@@ -1,0 +1,92 @@
+name: Test
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+env:
+  PYTHON_VERSION: "3.12"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python ${{ env.PYTHON_VERSION }}
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+    
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+    
+    - name: Cache Rust dependencies
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          my_asr_aligner/target
+        key: ${{ runner.os }}-cargo-${{ hashFiles('my_asr_aligner/Cargo.lock') }}
+        restore-keys: |
+          ${{ runner.os }}-cargo-
+    
+    - name: Install uv
+      run: curl -LsSf https://astral.sh/uv/install.sh | sh
+    
+    - name: Cache uv dependencies
+      uses: actions/cache@v4
+      with:
+        path: ~/.cache/uv
+        key: ${{ runner.os }}-uv-${{ hashFiles('uv.lock') }}
+        restore-keys: |
+          ${{ runner.os }}-uv-
+    
+    - name: Install Python dependencies
+      run: uv sync --frozen --dev
+    
+    - name: Build Rust extension with maturin
+      working-directory: my_asr_aligner
+      run: |
+        uv run maturin develop --release
+        # Verify the build worked by importing the module
+        cd .. && uv run python -c "import my_asr_aligner; print('Rust extension imported successfully')"
+    
+    - name: Run pre-commit hooks
+      run: uv run pre-commit run --all-files
+    
+    - name: Run type checking with mypy
+      run: uv run mypy src/ utils/ main.py
+      continue-on-error: true
+    
+    - name: Run tests
+      run: |
+        if [ -d "tests" ]; then
+          uv run python -m pytest tests/ -v --tb=short
+        else
+          echo "No tests directory found"
+          # Test basic functionality
+          uv run python main.py --help
+          uv run python -c "
+            from src.pipeline.pipeline import run_activity_pipeline
+            print('Pipeline import successful')
+          "
+        fi
+    
+    - name: Test Rust extension functionality
+      run: |
+        uv run python -c "
+        import my_asr_aligner
+        # Test the word_level_alignment function
+        result = my_asr_aligner.word_level_alignment(
+            ['a_sound', 'b_sound'], 
+            ['æ', 'b'], 
+            ['æ', 'bʌ'], 
+            [0.9, 0.8]
+        )
+        print('Rust extension test passed:', result)
+        "

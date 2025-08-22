@@ -1,0 +1,13 @@
+__pycache__/
+.DS_Store
+.env
+.venv/
+.vscode/
+.idea/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+*.egg-info/
+
+node_modules/

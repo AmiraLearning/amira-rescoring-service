@@ -1,0 +1,4381 @@
+{
+ "Resources": {
+  "AmiraLetterScoringRepo09CE897F": {
+   "Type": "AWS::ECR::Repository",
+   "Properties": {
+    "ImageScanningConfiguration": {
+     "ScanOnPush": true
+    },
+    "LifecyclePolicy": {
+     "LifecyclePolicyText": "{\"rules\":[{\"rulePriority\":1,\"description\":\"Keep only 10 most recent images\",\"selection\":{\"tagStatus\":\"any\",\"countType\":\"imageCountMoreThan\",\"countNumber\":10},\"action\":{\"type\":\"expire\"}}]}"
+    },
+    "RepositoryName": "amira-letter-scoring"
+   },
+   "UpdateReplacePolicy": "Retain",
+   "DeletionPolicy": "Retain",
+   "Metadata": {
+    "aws:cdk:path": "AmiraLetterScoringStack/AmiraLetterScoringRepo/Resource"
+   }
+  },
+  "TritonServerRepoE954F487": {
+   "Type": "AWS::ECR::Repository",
+   "Properties": {
+    "ImageScanningConfiguration": {
+     "ScanOnPush": true
+    },
+    "LifecyclePolicy": {
+     "LifecyclePolicyText": "{\"rules\":[{\"rulePriority\":1,\"selection\":{\"tagStatus\":\"any\",\"countType\":\"imageCountMoreThan\",\"countNumber\":5},\"action\":{\"type\":\"expire\"}}]}"
+    },
+    "RepositoryName": "triton-server"
+   },
+   "UpdateReplacePolicy": "Retain",
+   "DeletionPolicy": "Retain",
+   "Metadata": {
+    "aws:cdk:path": "AmiraLetterScoringStack/TritonServerRepo/Resource"
+   }
+  },
+  "CloudWatchAgentRepo62FDA875": {
+   "Type": "AWS::ECR::Repository",
+   "Properties": {
+    "ImageScanningConfiguration": {
+     "ScanOnPush": true
+    },
+    "LifecyclePolicy": {
+     "LifecyclePolicyText": "{\"rules\":[{\"rulePriority\":1,\"selection\":{\"tagStatus\":\"any\",\"countType\":\"imageCountMoreThan\",\"countNumber\":5},\"action\":{\"type\":\"expire\"}}]}"
+    },
+    "RepositoryName": "cloudwatch-agent"
+   },
+   "UpdateReplacePolicy": "Retain",
+   "DeletionPolicy": "Retain",
+   "Metadata": {
+    "aws:cdk:path": "AmiraLetterScoringStack/CloudWatchAgentRepo/Resource"
+   }
+  },
+  "DcgmExporterRepo96FE0342": {
+   "Type": "AWS::ECR::Repository",
+   "Properties": {
+    "ImageScanningConfiguration": {
+     "ScanOnPush": true
+    },
+    "LifecyclePolicy": {
+     "LifecyclePolicyText": "{\"rules\":[{\"rulePriority\":1,\"selection\":{\"tagStatus\":\"any\",\"countType\":\"imageCountMoreThan\",\"countNumber\":5},\"action\":{\"type\":\"expire\"}}]}"
+    },
+    "RepositoryName": "dcgm-exporter"
+   },
+   "UpdateReplacePolicy": "Retain",
+   "DeletionPolicy": "Retain",
+   "Metadata": {
+    "aws:cdk:path": "AmiraLetterScoringStack/DcgmExporterRepo/Resource"
+   }
+  },
+  "AmiraLetterScoringVpc85F626DF": {
+   "Type": "AWS::EC2::VPC",
+   "Properties": {
+    "CidrBlock": "10.0.0.0/16",
+    "EnableDnsHostnames": true,
+    "EnableDnsSupport": true,
+    "InstanceTenancy": "default",
+    "Tags": [
+     {
+      "Key": "Name",
+      "Value": "AmiraLetterScoringStack/AmiraLetterScoringVpc"
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "AmiraLetterScoringStack/AmiraLetterScoringVpc/Resource"
+   }
+  },
+  "AmiraLetterScoringVpcPublicSubnet1Subnet39C1EE11": {
+   "Type": "AWS::EC2::Subnet",
+   "Properties": {
+    "AvailabilityZone": {
+     "Fn::Select": [
+      0,
+      {
+       "Fn::GetAZs": ""
+      }
+     ]
+    },
+    "CidrBlock": "10.0.0.0/24",
+    "MapPublicIpOnLaunch": true,
+    "Tags": [
+     {
+      "Key": "aws-cdk:subnet-name",
+      "Value": "Public"
+     },
+     {
+      "Key": "aws-cdk:subnet-type",
+      "Value": "Public"
+     },
+     {
+      "Key": "Name",
+      "Value": "AmiraLetterScoringStack/AmiraLetterScoringVpc/PublicSubnet1"
+     }
+    ],
+    "VpcId": {
+     "Ref": "AmiraLetterScoringVpc85F626DF"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "AmiraLetterScoringStack/AmiraLetterScoringVpc/PublicSubnet1/Subnet"
+   }
+  },
+  "AmiraLetterScoringVpcPublicSubnet1RouteTableCB80D605": {
+   "Type": "AWS::EC2::RouteTable",
+   "Properties": {
+    "Tags": [
+     {
+      "Key": "Name",
+      "Value": "AmiraLetterScoringStack/AmiraLetterScoringVpc/PublicSubnet1"
+     }
+    ],
+    "VpcId": {
+     "Ref": "AmiraLetterScoringVpc85F626DF"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "AmiraLetterScoringStack/AmiraLetterScoringVpc/PublicSubnet1/RouteTable"
+   }
+  },
+  "AmiraLetterScoringVpcPublicSubnet1RouteTableAssociationA53A83BA": {
+   "Type": "AWS::EC2::SubnetRouteTableAssociation",
+   "Properties": {
+    "RouteTableId": {
+     "Ref": "AmiraLetterScoringVpcPublicSubnet1RouteTableCB80D605"
+    },
+    "SubnetId": {
+     "Ref": "AmiraLetterScoringVpcPublicSubnet1Subnet39C1EE11"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "AmiraLetterScoringStack/AmiraLetterScoringVpc/PublicSubnet1/RouteTableAssociation"
+   }
+  },
+  "AmiraLetterScoringVpcPublicSubnet1DefaultRoute21CE50AF": {
+   "Type": "AWS::EC2::Route",
+   "Properties": {
+    "DestinationCidrBlock": "0.0.0.0/0",
+    "GatewayId": {
+     "Ref": "AmiraLetterScoringVpcIGW57A8F92B"
+    },
+    "RouteTableId": {
+     "Ref": "AmiraLetterScoringVpcPublicSubnet1RouteTableCB80D605"
+    }
+   },
+   "DependsOn": [
+    "AmiraLetterScoringVpcVPCGWD4D55898"
+   ],
+   "Metadata": {
+    "aws:cdk:path": "AmiraLetterScoringStack/AmiraLetterScoringVpc/PublicSubnet1/DefaultRoute"
+   }
+  },
+  "AmiraLetterScoringVpcPublicSubnet2Subnet32CF4745": {
+   "Type": "AWS::EC2::Subnet",
+   "Properties": {
+    "AvailabilityZone": {
+     "Fn::Select": [
+      1,
+      {
+       "Fn::GetAZs": ""
+      }
+     ]
+    },
+    "CidrBlock": "10.0.1.0/24",
+    "MapPublicIpOnLaunch": true,
+    "Tags": [
+     {
+      "Key": "aws-cdk:subnet-name",
+      "Value": "Public"
+     },
+     {
+      "Key": "aws-cdk:subnet-type",
+      "Value": "Public"
+     },
+     {
+      "Key": "Name",
+      "Value": "AmiraLetterScoringStack/AmiraLetterScoringVpc/PublicSubnet2"
+     }
+    ],
+    "VpcId": {
+     "Ref": "AmiraLetterScoringVpc85F626DF"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "AmiraLetterScoringStack/AmiraLetterScoringVpc/PublicSubnet2/Subnet"
+   }
+  },
+  "AmiraLetterScoringVpcPublicSubnet2RouteTable0AB3B914": {
+   "Type": "AWS::EC2::RouteTable",
+   "Properties": {
+    "Tags": [
+     {
+      "Key": "Name",
+      "Value": "AmiraLetterScoringStack/AmiraLetterScoringVpc/PublicSubnet2"
+     }
+    ],
+    "VpcId": {
+     "Ref": "AmiraLetterScoringVpc85F626DF"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "AmiraLetterScoringStack/AmiraLetterScoringVpc/PublicSubnet2/RouteTable"
+   }
+  },
+  "AmiraLetterScoringVpcPublicSubnet2RouteTableAssociation0F60D7C1": {
+   "Type": "AWS::EC2::SubnetRouteTableAssociation",
+   "Properties": {
+    "RouteTableId": {
+     "Ref": "AmiraLetterScoringVpcPublicSubnet2RouteTable0AB3B914"
+    },
+    "SubnetId": {
+     "Ref": "AmiraLetterScoringVpcPublicSubnet2Subnet32CF4745"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "AmiraLetterScoringStack/AmiraLetterScoringVpc/PublicSubnet2/RouteTableAssociation"
+   }
+  },
+  "AmiraLetterScoringVpcPublicSubnet2DefaultRouteB64D4302": {
+   "Type": "AWS::EC2::Route",
+   "Properties": {
+    "DestinationCidrBlock": "0.0.0.0/0",
+    "GatewayId": {
+     "Ref": "AmiraLetterScoringVpcIGW57A8F92B"
+    },
+    "RouteTableId": {
+     "Ref": "AmiraLetterScoringVpcPublicSubnet2RouteTable0AB3B914"
+    }
+   },
+   "DependsOn": [
+    "AmiraLetterScoringVpcVPCGWD4D55898"
+   ],
+   "Metadata": {
+    "aws:cdk:path": "AmiraLetterScoringStack/AmiraLetterScoringVpc/PublicSubnet2/DefaultRoute"
+   }
+  },
+  "AmiraLetterScoringVpcPrivateSubnet1SubnetAFBD66CD": {
+   "Type": "AWS::EC2::Subnet",
+   "Properties": {
+    "AvailabilityZone": {
+     "Fn::Select": [
+      0,
+      {
+       "Fn::GetAZs": ""
+      }
+     ]
+    },
+    "CidrBlock": "10.0.2.0/24",
+    "MapPublicIpOnLaunch": false,
+    "Tags": [
+     {
+      "Key": "aws-cdk:subnet-name",
+      "Value": "Private"
+     },
+     {
+      "Key": "aws-cdk:subnet-type",
+      "Value": "Private"
+     },
+     {
+      "Key": "Name",
+      "Value": "AmiraLetterScoringStack/AmiraLetterScoringVpc/PrivateSubnet1"
+     }
+    ],
+    "VpcId": {
+     "Ref": "AmiraLetterScoringVpc85F626DF"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "AmiraLetterScoringStack/AmiraLetterScoringVpc/PrivateSubnet1/Subnet"
+   }
+  },
+  "AmiraLetterScoringVpcPrivateSubnet1RouteTable2FFD8D29": {
+   "Type": "AWS::EC2::RouteTable",
+   "Properties": {
+    "Tags": [
+     {
+      "Key": "Name",
+      "Value": "AmiraLetterScoringStack/AmiraLetterScoringVpc/PrivateSubnet1"
+     }
+    ],
+    "VpcId": {
+     "Ref": "AmiraLetterScoringVpc85F626DF"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "AmiraLetterScoringStack/AmiraLetterScoringVpc/PrivateSubnet1/RouteTable"
+   }
+  },
+  "AmiraLetterScoringVpcPrivateSubnet1RouteTableAssociation6FE89659": {
+   "Type": "AWS::EC2::SubnetRouteTableAssociation",
+   "Properties": {
+    "RouteTableId": {
+     "Ref": "AmiraLetterScoringVpcPrivateSubnet1RouteTable2FFD8D29"
+    },
+    "SubnetId": {
+     "Ref": "AmiraLetterScoringVpcPrivateSubnet1SubnetAFBD66CD"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "AmiraLetterScoringStack/AmiraLetterScoringVpc/PrivateSubnet1/RouteTableAssociation"
+   }
+  },
+  "AmiraLetterScoringVpcPrivateSubnet2Subnet12E38A78": {
+   "Type": "AWS::EC2::Subnet",
+   "Properties": {
+    "AvailabilityZone": {
+     "Fn::Select": [
+      1,
+      {
+       "Fn::GetAZs": ""
+      }
+     ]
+    },
+    "CidrBlock": "10.0.3.0/24",
+    "MapPublicIpOnLaunch": false,
+    "Tags": [
+     {
+      "Key": "aws-cdk:subnet-name",
+      "Value": "Private"
+     },
+     {
+      "Key": "aws-cdk:subnet-type",
+      "Value": "Private"
+     },
+     {
+      "Key": "Name",
+      "Value": "AmiraLetterScoringStack/AmiraLetterScoringVpc/PrivateSubnet2"
+     }
+    ],
+    "VpcId": {
+     "Ref": "AmiraLetterScoringVpc85F626DF"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "AmiraLetterScoringStack/AmiraLetterScoringVpc/PrivateSubnet2/Subnet"
+   }
+  },
+  "AmiraLetterScoringVpcPrivateSubnet2RouteTableAA55AFF2": {
+   "Type": "AWS::EC2::RouteTable",
+   "Properties": {
+    "Tags": [
+     {
+      "Key": "Name",
+      "Value": "AmiraLetterScoringStack/AmiraLetterScoringVpc/PrivateSubnet2"
+     }
+    ],
+    "VpcId": {
+     "Ref": "AmiraLetterScoringVpc85F626DF"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "AmiraLetterScoringStack/AmiraLetterScoringVpc/PrivateSubnet2/RouteTable"
+   }
+  },
+  "AmiraLetterScoringVpcPrivateSubnet2RouteTableAssociation92B0C2C8": {
+   "Type": "AWS::EC2::SubnetRouteTableAssociation",
+   "Properties": {
+    "RouteTableId": {
+     "Ref": "AmiraLetterScoringVpcPrivateSubnet2RouteTableAA55AFF2"
+    },
+    "SubnetId": {
+     "Ref": "AmiraLetterScoringVpcPrivateSubnet2Subnet12E38A78"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "AmiraLetterScoringStack/AmiraLetterScoringVpc/PrivateSubnet2/RouteTableAssociation"
+   }
+  },
+  "AmiraLetterScoringVpcIGW57A8F92B": {
+   "Type": "AWS::EC2::InternetGateway",
+   "Properties": {
+    "Tags": [
+     {
+      "Key": "Name",
+      "Value": "AmiraLetterScoringStack/AmiraLetterScoringVpc"
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "AmiraLetterScoringStack/AmiraLetterScoringVpc/IGW"
+   }
+  },
+  "AmiraLetterScoringVpcVPCGWD4D55898": {
+   "Type": "AWS::EC2::VPCGatewayAttachment",
+   "Properties": {
+    "InternetGatewayId": {
+     "Ref": "AmiraLetterScoringVpcIGW57A8F92B"
+    },
+    "VpcId": {
+     "Ref": "AmiraLetterScoringVpc85F626DF"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "AmiraLetterScoringStack/AmiraLetterScoringVpc/VPCGW"
+   }
+  },
+  "AmiraLetterScoringVpcRestrictDefaultSecurityGroupCustomResourceF5CF5CC4": {
+   "Type": "Custom::VpcRestrictDefaultSG",
+   "Properties": {
+    "ServiceToken": {
+     "Fn::GetAtt": [
+      "CustomVpcRestrictDefaultSGCustomResourceProviderHandlerDC833E5E",
+      "Arn"
+     ]
+    },
+    "DefaultSecurityGroupId": {
+     "Fn::GetAtt": [
+      "AmiraLetterScoringVpc85F626DF",
+      "DefaultSecurityGroup"
+     ]
+    },
+    "Account": {
+     "Ref": "AWS::AccountId"
+    }
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "AmiraLetterScoringStack/AmiraLetterScoringVpc/RestrictDefaultSecurityGroupCustomResource/Default"
+   }
+  },
+  "AmiraLetterScoringVpcS3EndpointDC4C45F0": {
+   "Type": "AWS::EC2::VPCEndpoint",
+   "Properties": {
+    "RouteTableIds": [
+     {
+      "Ref": "AmiraLetterScoringVpcPrivateSubnet1RouteTable2FFD8D29"
+     },
+     {
+      "Ref": "AmiraLetterScoringVpcPrivateSubnet2RouteTableAA55AFF2"
+     }
+    ],
+    "ServiceName": {
+     "Fn::Join": [
+      "",
+      [
+       "com.amazonaws.",
+       {
+        "Ref": "AWS::Region"
+       },
+       ".s3"
+      ]
+     ]
+    },
+    "Tags": [
+     {
+      "Key": "Name",
+      "Value": "AmiraLetterScoringStack/AmiraLetterScoringVpc"
+     }
+    ],
+    "VpcEndpointType": "Gateway",
+    "VpcId": {
+     "Ref": "AmiraLetterScoringVpc85F626DF"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "AmiraLetterScoringStack/AmiraLetterScoringVpc/S3Endpoint/Resource"
+   }
+  },
+  "AmiraLetterScoringVpcEcrApiEndpointSecurityGroupEE461FE9": {
+   "Type": "AWS::EC2::SecurityGroup",
+   "Properties": {
+    "GroupDescription": "AmiraLetterScoringStack/AmiraLetterScoringVpc/EcrApiEndpoint/SecurityGroup",
+    "SecurityGroupEgress": [
+     {
+      "CidrIp": "0.0.0.0/0",
+      "Description": "Allow all outbound traffic by default",
+      "IpProtocol": "-1"
+     }
+    ],
+    "SecurityGroupIngress": [
+     {
+      "CidrIp": {
+       "Fn::GetAtt": [
+        "AmiraLetterScoringVpc85F626DF",
+        "CidrBlock"
+       ]
+      },
+      "Description": {
+       "Fn::Join": [
+        "",
+        [
+         "from ",
+         {
+          "Fn::GetAtt": [
+           "AmiraLetterScoringVpc85F626DF",
+           "CidrBlock"
+          ]
+         },
+         ":443"
+        ]
+       ]
+      },
+      "FromPort": 443,
+      "IpProtocol": "tcp",
+      "ToPort": 443
+     }
+    ],
+    "Tags": [
+     {
+      "Key": "Name",
+      "Value": "AmiraLetterScoringStack/AmiraLetterScoringVpc"
+     }
+    ],
+    "VpcId": {
+     "Ref": "AmiraLetterScoringVpc85F626DF"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "AmiraLetterScoringStack/AmiraLetterScoringVpc/EcrApiEndpoint/SecurityGroup/Resource"
+   }
+  },
+  "AmiraLetterScoringVpcEcrApiEndpoint0DFDBE09": {
+   "Type": "AWS::EC2::VPCEndpoint",
+   "Properties": {
+    "PrivateDnsEnabled": true,
+    "SecurityGroupIds": [
+     {
+      "Fn::GetAtt": [
+       "AmiraLetterScoringVpcEcrApiEndpointSecurityGroupEE461FE9",
+       "GroupId"
+      ]
+     }
+    ],
+    "ServiceName": "com.amazonaws.us-east-1.ecr.api",
+    "SubnetIds": [
+     {
+      "Ref": "AmiraLetterScoringVpcPrivateSubnet1SubnetAFBD66CD"
+     },
+     {
+      "Ref": "AmiraLetterScoringVpcPrivateSubnet2Subnet12E38A78"
+     }
+    ],
+    "Tags": [
+     {
+      "Key": "Name",
+      "Value": "AmiraLetterScoringStack/AmiraLetterScoringVpc"
+     }
+    ],
+    "VpcEndpointType": "Interface",
+    "VpcId": {
+     "Ref": "AmiraLetterScoringVpc85F626DF"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "AmiraLetterScoringStack/AmiraLetterScoringVpc/EcrApiEndpoint/Resource"
+   }
+  },
+  "AmiraLetterScoringVpcEcrDockerEndpointSecurityGroupC70589F1": {
+   "Type": "AWS::EC2::SecurityGroup",
+   "Properties": {
+    "GroupDescription": "AmiraLetterScoringStack/AmiraLetterScoringVpc/EcrDockerEndpoint/SecurityGroup",
+    "SecurityGroupEgress": [
+     {
+      "CidrIp": "0.0.0.0/0",
+      "Description": "Allow all outbound traffic by default",
+      "IpProtocol": "-1"
+     }
+    ],
+    "SecurityGroupIngress": [
+     {
+      "CidrIp": {
+       "Fn::GetAtt": [
+        "AmiraLetterScoringVpc85F626DF",
+        "CidrBlock"
+       ]
+      },
+      "Description": {
+       "Fn::Join": [
+        "",
+        [
+         "from ",
+         {
+          "Fn::GetAtt": [
+           "AmiraLetterScoringVpc85F626DF",
+           "CidrBlock"
+          ]
+         },
+         ":443"
+        ]
+       ]
+      },
+      "FromPort": 443,
+      "IpProtocol": "tcp",
+      "ToPort": 443
+     }
+    ],
+    "Tags": [
+     {
+      "Key": "Name",
+      "Value": "AmiraLetterScoringStack/AmiraLetterScoringVpc"
+     }
+    ],
+    "VpcId": {
+     "Ref": "AmiraLetterScoringVpc85F626DF"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "AmiraLetterScoringStack/AmiraLetterScoringVpc/EcrDockerEndpoint/SecurityGroup/Resource"
+   }
+  },
+  "AmiraLetterScoringVpcEcrDockerEndpoint0F3F303D": {
+   "Type": "AWS::EC2::VPCEndpoint",
+   "Properties": {
+    "PrivateDnsEnabled": true,
+    "SecurityGroupIds": [
+     {
+      "Fn::GetAtt": [
+       "AmiraLetterScoringVpcEcrDockerEndpointSecurityGroupC70589F1",
+       "GroupId"
+      ]
+     }
+    ],
+    "ServiceName": "com.amazonaws.us-east-1.ecr.dkr",
+    "SubnetIds": [
+     {
+      "Ref": "AmiraLetterScoringVpcPrivateSubnet1SubnetAFBD66CD"
+     },
+     {
+      "Ref": "AmiraLetterScoringVpcPrivateSubnet2Subnet12E38A78"
+     }
+    ],
+    "Tags": [
+     {
+      "Key": "Name",
+      "Value": "AmiraLetterScoringStack/AmiraLetterScoringVpc"
+     }
+    ],
+    "VpcEndpointType": "Interface",
+    "VpcId": {
+     "Ref": "AmiraLetterScoringVpc85F626DF"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "AmiraLetterScoringStack/AmiraLetterScoringVpc/EcrDockerEndpoint/Resource"
+   }
+  },
+  "AmiraLetterScoringVpcCloudWatchLogsEndpointSecurityGroup1B31903A": {
+   "Type": "AWS::EC2::SecurityGroup",
+   "Properties": {
+    "GroupDescription": "AmiraLetterScoringStack/AmiraLetterScoringVpc/CloudWatchLogsEndpoint/SecurityGroup",
+    "SecurityGroupEgress": [
+     {
+      "CidrIp": "0.0.0.0/0",
+      "Description": "Allow all outbound traffic by default",
+      "IpProtocol": "-1"
+     }
+    ],
+    "SecurityGroupIngress": [
+     {
+      "CidrIp": {
+       "Fn::GetAtt": [
+        "AmiraLetterScoringVpc85F626DF",
+        "CidrBlock"
+       ]
+      },
+      "Description": {
+       "Fn::Join": [
+        "",
+        [
+         "from ",
+         {
+          "Fn::GetAtt": [
+           "AmiraLetterScoringVpc85F626DF",
+           "CidrBlock"
+          ]
+         },
+         ":443"
+        ]
+       ]
+      },
+      "FromPort": 443,
+      "IpProtocol": "tcp",
+      "ToPort": 443
+     }
+    ],
+    "Tags": [
+     {
+      "Key": "Name",
+      "Value": "AmiraLetterScoringStack/AmiraLetterScoringVpc"
+     }
+    ],
+    "VpcId": {
+     "Ref": "AmiraLetterScoringVpc85F626DF"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "AmiraLetterScoringStack/AmiraLetterScoringVpc/CloudWatchLogsEndpoint/SecurityGroup/Resource"
+   }
+  },
+  "AmiraLetterScoringVpcCloudWatchLogsEndpoint04B2C406": {
+   "Type": "AWS::EC2::VPCEndpoint",
+   "Properties": {
+    "PrivateDnsEnabled": true,
+    "SecurityGroupIds": [
+     {
+      "Fn::GetAtt": [
+       "AmiraLetterScoringVpcCloudWatchLogsEndpointSecurityGroup1B31903A",
+       "GroupId"
+      ]
+     }
+    ],
+    "ServiceName": "com.amazonaws.us-east-1.logs",
+    "SubnetIds": [
+     {
+      "Ref": "AmiraLetterScoringVpcPrivateSubnet1SubnetAFBD66CD"
+     },
+     {
+      "Ref": "AmiraLetterScoringVpcPrivateSubnet2Subnet12E38A78"
+     }
+    ],
+    "Tags": [
+     {
+      "Key": "Name",
+      "Value": "AmiraLetterScoringStack/AmiraLetterScoringVpc"
+     }
+    ],
+    "VpcEndpointType": "Interface",
+    "VpcId": {
+     "Ref": "AmiraLetterScoringVpc85F626DF"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "AmiraLetterScoringStack/AmiraLetterScoringVpc/CloudWatchLogsEndpoint/Resource"
+   }
+  },
+  "AmiraLetterScoringVpcSqsEndpointSecurityGroupABE6AD9F": {
+   "Type": "AWS::EC2::SecurityGroup",
+   "Properties": {
+    "GroupDescription": "AmiraLetterScoringStack/AmiraLetterScoringVpc/SqsEndpoint/SecurityGroup",
+    "SecurityGroupEgress": [
+     {
+      "CidrIp": "0.0.0.0/0",
+      "Description": "Allow all outbound traffic by default",
+      "IpProtocol": "-1"
+     }
+    ],
+    "SecurityGroupIngress": [
+     {
+      "CidrIp": {
+       "Fn::GetAtt": [
+        "AmiraLetterScoringVpc85F626DF",
+        "CidrBlock"
+       ]
+      },
+      "Description": {
+       "Fn::Join": [
+        "",
+        [
+         "from ",
+         {
+          "Fn::GetAtt": [
+           "AmiraLetterScoringVpc85F626DF",
+           "CidrBlock"
+          ]
+         },
+         ":443"
+        ]
+       ]
+      },
+      "FromPort": 443,
+      "IpProtocol": "tcp",
+      "ToPort": 443
+     }
+    ],
+    "Tags": [
+     {
+      "Key": "Name",
+      "Value": "AmiraLetterScoringStack/AmiraLetterScoringVpc"
+     }
+    ],
+    "VpcId": {
+     "Ref": "AmiraLetterScoringVpc85F626DF"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "AmiraLetterScoringStack/AmiraLetterScoringVpc/SqsEndpoint/SecurityGroup/Resource"
+   }
+  },
+  "AmiraLetterScoringVpcSqsEndpointC9A61938": {
+   "Type": "AWS::EC2::VPCEndpoint",
+   "Properties": {
+    "PrivateDnsEnabled": true,
+    "SecurityGroupIds": [
+     {
+      "Fn::GetAtt": [
+       "AmiraLetterScoringVpcSqsEndpointSecurityGroupABE6AD9F",
+       "GroupId"
+      ]
+     }
+    ],
+    "ServiceName": "com.amazonaws.us-east-1.sqs",
+    "SubnetIds": [
+     {
+      "Ref": "AmiraLetterScoringVpcPrivateSubnet1SubnetAFBD66CD"
+     },
+     {
+      "Ref": "AmiraLetterScoringVpcPrivateSubnet2Subnet12E38A78"
+     }
+    ],
+    "Tags": [
+     {
+      "Key": "Name",
+      "Value": "AmiraLetterScoringStack/AmiraLetterScoringVpc"
+     }
+    ],
+    "VpcEndpointType": "Interface",
+    "VpcId": {
+     "Ref": "AmiraLetterScoringVpc85F626DF"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "AmiraLetterScoringStack/AmiraLetterScoringVpc/SqsEndpoint/Resource"
+   }
+  },
+  "CustomVpcRestrictDefaultSGCustomResourceProviderRole26592FE0": {
+   "Type": "AWS::IAM::Role",
+   "Properties": {
+    "AssumeRolePolicyDocument": {
+     "Version": "2012-10-17",
+     "Statement": [
+      {
+       "Action": "sts:AssumeRole",
+       "Effect": "Allow",
+       "Principal": {
+        "Service": "lambda.amazonaws.com"
+       }
+      }
+     ]
+    },
+    "ManagedPolicyArns": [
+     {
+      "Fn::Sub": "arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+     }
+    ],
+    "Policies": [
+     {
+      "PolicyName": "Inline",
+      "PolicyDocument": {
+       "Version": "2012-10-17",
+       "Statement": [
+        {
+         "Effect": "Allow",
+         "Action": [
+          "ec2:AuthorizeSecurityGroupIngress",
+          "ec2:AuthorizeSecurityGroupEgress",
+          "ec2:RevokeSecurityGroupIngress",
+          "ec2:RevokeSecurityGroupEgress"
+         ],
+         "Resource": [
+          {
+           "Fn::Join": [
+            "",
+            [
+             "arn:aws:ec2:us-east-1:",
+             {
+              "Ref": "AWS::AccountId"
+             },
+             ":security-group/",
+             {
+              "Fn::GetAtt": [
+               "AmiraLetterScoringVpc85F626DF",
+               "DefaultSecurityGroup"
+              ]
+             }
+            ]
+           ]
+          }
+         ]
+        }
+       ]
+      }
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "AmiraLetterScoringStack/Custom::VpcRestrictDefaultSGCustomResourceProvider/Role"
+   }
+  },
+  "CustomVpcRestrictDefaultSGCustomResourceProviderHandlerDC833E5E": {
+   "Type": "AWS::Lambda::Function",
+   "Properties": {
+    "Code": {
+     "S3Bucket": {
+      "Fn::Sub": "cdk-hnb659fds-assets-${AWS::AccountId}-us-east-1"
+     },
+     "S3Key": "7fa1e366ee8a9ded01fc355f704cff92bfd179574e6f9cfee800a3541df1b200.zip"
+    },
+    "Timeout": 900,
+    "MemorySize": 128,
+    "Handler": "__entrypoint__.handler",
+    "Role": {
+     "Fn::GetAtt": [
+      "CustomVpcRestrictDefaultSGCustomResourceProviderRole26592FE0",
+      "Arn"
+     ]
+    },
+    "Runtime": "nodejs22.x",
+    "Description": "Lambda function for removing all inbound/outbound rules from the VPC default security group"
+   },
+   "DependsOn": [
+    "CustomVpcRestrictDefaultSGCustomResourceProviderRole26592FE0"
+   ],
+   "Metadata": {
+    "aws:cdk:path": "AmiraLetterScoringStack/Custom::VpcRestrictDefaultSGCustomResourceProvider/Handler",
+    "aws:asset:path": "asset.7fa1e366ee8a9ded01fc355f704cff92bfd179574e6f9cfee800a3541df1b200",
+    "aws:asset:property": "Code"
+   }
+  },
+  "AmiraLetterScoringSecurityGroup645D2D92": {
+   "Type": "AWS::EC2::SecurityGroup",
+   "Properties": {
+    "GroupDescription": "Security group for Amira Letter Scoring ECS tasks",
+    "SecurityGroupEgress": [
+     {
+      "CidrIp": "0.0.0.0/0",
+      "Description": "Allow all outbound traffic by default",
+      "IpProtocol": "-1"
+     }
+    ],
+    "VpcId": {
+     "Ref": "AmiraLetterScoringVpc85F626DF"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "AmiraLetterScoringStack/AmiraLetterScoringSecurityGroup/Resource"
+   }
+  },
+  "AmiraLetterScoringCluster5CE0BCC9": {
+   "Type": "AWS::ECS::Cluster",
+   "Properties": {
+    "ClusterName": "amira-letter-scoring-cluster",
+    "ClusterSettings": [
+     {
+      "Name": "containerInsights",
+      "Value": "enabled"
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "AmiraLetterScoringStack/AmiraLetterScoringCluster/Resource"
+   }
+  },
+  "AmiraLetterScoringCluster040FA716": {
+   "Type": "AWS::ECS::ClusterCapacityProviderAssociations",
+   "Properties": {
+    "CapacityProviders": [
+     {
+      "Ref": "GpuCapacityProviderG5xlargeD25A2496"
+     },
+     {
+      "Ref": "GpuCapacityProviderG52xlarge96802DE0"
+     },
+     {
+      "Ref": "GpuCapacityProvider4F6714BE"
+     }
+    ],
+    "Cluster": {
+     "Ref": "AmiraLetterScoringCluster5CE0BCC9"
+    },
+    "DefaultCapacityProviderStrategy": []
+   },
+   "Metadata": {
+    "aws:cdk:path": "AmiraLetterScoringStack/AmiraLetterScoringCluster/AmiraLetterScoringCluster"
+   }
+  },
+  "GpuInstanceRole141744D4": {
+   "Type": "AWS::IAM::Role",
+   "Properties": {
+    "AssumeRolePolicyDocument": {
+     "Statement": [
+      {
+       "Action": "sts:AssumeRole",
+       "Effect": "Allow",
+       "Principal": {
+        "Service": "ec2.amazonaws.com"
+       }
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "ManagedPolicyArns": [
+     {
+      "Fn::Join": [
+       "",
+       [
+        "arn:",
+        {
+         "Ref": "AWS::Partition"
+        },
+        ":iam::aws:policy/service-role/AmazonEC2ContainerServiceforEC2Role"
+       ]
+      ]
+     },
+     {
+      "Fn::Join": [
+       "",
+       [
+        "arn:",
+        {
+         "Ref": "AWS::Partition"
+        },
+        ":iam::aws:policy/AmazonSSMManagedInstanceCore"
+       ]
+      ]
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "AmiraLetterScoringStack/GpuInstanceRole/Resource"
+   }
+  },
+  "GpuInstanceRoleDefaultPolicyC5ED993F": {
+   "Type": "AWS::IAM::Policy",
+   "Properties": {
+    "PolicyDocument": {
+     "Statement": [
+      {
+       "Action": [
+        "ecs:DeregisterContainerInstance",
+        "ecs:RegisterContainerInstance",
+        "ecs:Submit*"
+       ],
+       "Effect": "Allow",
+       "Resource": {
+        "Fn::GetAtt": [
+         "AmiraLetterScoringCluster5CE0BCC9",
+         "Arn"
+        ]
+       }
+      },
+      {
+       "Action": [
+        "ecs:Poll",
+        "ecs:StartTelemetrySession"
+       ],
+       "Condition": {
+        "ArnEquals": {
+         "ecs:cluster": {
+          "Fn::GetAtt": [
+           "AmiraLetterScoringCluster5CE0BCC9",
+           "Arn"
+          ]
+         }
+        }
+       },
+       "Effect": "Allow",
+       "Resource": "*"
+      },
+      {
+       "Action": [
+        "ecr:GetAuthorizationToken",
+        "ecs:DiscoverPollEndpoint",
+        "logs:CreateLogStream",
+        "logs:PutLogEvents"
+       ],
+       "Effect": "Allow",
+       "Resource": "*"
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "PolicyName": "GpuInstanceRoleDefaultPolicyC5ED993F",
+    "Roles": [
+     {
+      "Ref": "GpuInstanceRole141744D4"
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "AmiraLetterScoringStack/GpuInstanceRole/DefaultPolicy/Resource"
+   }
+  },
+  "GpuLaunchTemplateProfile2D03B57E": {
+   "Type": "AWS::IAM::InstanceProfile",
+   "Properties": {
+    "Roles": [
+     {
+      "Ref": "GpuInstanceRole141744D4"
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "AmiraLetterScoringStack/GpuLaunchTemplate/Profile"
+   }
+  },
+  "GpuLaunchTemplateEF2D4048": {
+   "Type": "AWS::EC2::LaunchTemplate",
+   "Properties": {
+    "LaunchTemplateData": {
+     "IamInstanceProfile": {
+      "Arn": {
+       "Fn::GetAtt": [
+        "GpuLaunchTemplateProfile2D03B57E",
+        "Arn"
+       ]
+      }
+     },
+     "ImageId": {
+      "Ref": "SsmParameterValueawsserviceecsoptimizedamiamazonlinux2gpurecommendedimageidC96584B6F00A464EAD1953AFF4B05118Parameter"
+     },
+     "InstanceMarketOptions": {
+      "MarketType": "spot",
+      "SpotOptions": {
+       "InstanceInterruptionBehavior": "stop",
+       "SpotInstanceType": "one-time"
+      }
+     },
+     "InstanceType": "g5.4xlarge",
+     "MetadataOptions": {
+      "HttpTokens": "required"
+     },
+     "SecurityGroupIds": [
+      {
+       "Fn::GetAtt": [
+        "AmiraLetterScoringSecurityGroup645D2D92",
+        "GroupId"
+       ]
+      }
+     ],
+     "TagSpecifications": [
+      {
+       "ResourceType": "instance",
+       "Tags": [
+        {
+         "Key": "Name",
+         "Value": "AmiraLetterScoringStack/GpuLaunchTemplate"
+        }
+       ]
+      },
+      {
+       "ResourceType": "volume",
+       "Tags": [
+        {
+         "Key": "Name",
+         "Value": "AmiraLetterScoringStack/GpuLaunchTemplate"
+        }
+       ]
+      }
+     ],
+     "UserData": {
+      "Fn::Base64": {
+       "Fn::Join": [
+        "",
+        [
+         "#!/bin/bash\necho ECS_CLUSTER=",
+         {
+          "Ref": "AmiraLetterScoringCluster5CE0BCC9"
+         },
+         " >> /etc/ecs/ecs.config\nsudo iptables --insert FORWARD 1 --in-interface docker+ --destination 169.254.169.254/32 --jump DROP\nsudo service iptables save\necho ECS_AWSVPC_BLOCK_IMDS=true >> /etc/ecs/ecs.config"
+        ]
+       ]
+      }
+     }
+    },
+    "TagSpecifications": [
+     {
+      "ResourceType": "launch-template",
+      "Tags": [
+       {
+        "Key": "Name",
+        "Value": "AmiraLetterScoringStack/GpuLaunchTemplate"
+       }
+      ]
+     }
+    ]
+   },
+   "DependsOn": [
+    "GpuInstanceRoleDefaultPolicyC5ED993F",
+    "GpuInstanceRole141744D4"
+   ],
+   "Metadata": {
+    "aws:cdk:path": "AmiraLetterScoringStack/GpuLaunchTemplate/Resource"
+   }
+  },
+  "GpuAutoScalingGroupASG98F60F09": {
+   "Type": "AWS::AutoScaling::AutoScalingGroup",
+   "Properties": {
+    "CapacityRebalance": true,
+    "DesiredCapacity": "0",
+    "LaunchTemplate": {
+     "LaunchTemplateId": {
+      "Ref": "GpuLaunchTemplateEF2D4048"
+     },
+     "Version": {
+      "Fn::GetAtt": [
+       "GpuLaunchTemplateEF2D4048",
+       "LatestVersionNumber"
+      ]
+     }
+    },
+    "MaxSize": "10",
+    "MinSize": "0",
+    "NewInstancesProtectedFromScaleIn": true,
+    "VPCZoneIdentifier": [
+     {
+      "Ref": "AmiraLetterScoringVpcPrivateSubnet1SubnetAFBD66CD"
+     },
+     {
+      "Ref": "AmiraLetterScoringVpcPrivateSubnet2Subnet12E38A78"
+     }
+    ]
+   },
+   "UpdatePolicy": {
+    "AutoScalingScheduledAction": {
+     "IgnoreUnmodifiedGroupSizeProperties": true
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "AmiraLetterScoringStack/GpuAutoScalingGroup/ASG"
+   }
+  },
+  "GpuCapacityProvider4F6714BE": {
+   "Type": "AWS::ECS::CapacityProvider",
+   "Properties": {
+    "AutoScalingGroupProvider": {
+     "AutoScalingGroupArn": {
+      "Ref": "GpuAutoScalingGroupASG98F60F09"
+     },
+     "ManagedScaling": {
+      "Status": "ENABLED",
+      "TargetCapacity": 100
+     },
+     "ManagedTerminationProtection": "ENABLED"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "AmiraLetterScoringStack/GpuCapacityProvider/GpuCapacityProvider"
+   }
+  },
+  "GpuLaunchTemplateG5xlargeProfileE7AF50B4": {
+   "Type": "AWS::IAM::InstanceProfile",
+   "Properties": {
+    "Roles": [
+     {
+      "Ref": "GpuInstanceRole141744D4"
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "AmiraLetterScoringStack/GpuLaunchTemplateG5xlarge/Profile"
+   }
+  },
+  "GpuLaunchTemplateG5xlarge139826E5": {
+   "Type": "AWS::EC2::LaunchTemplate",
+   "Properties": {
+    "LaunchTemplateData": {
+     "IamInstanceProfile": {
+      "Arn": {
+       "Fn::GetAtt": [
+        "GpuLaunchTemplateG5xlargeProfileE7AF50B4",
+        "Arn"
+       ]
+      }
+     },
+     "ImageId": {
+      "Ref": "SsmParameterValueawsserviceecsoptimizedamiamazonlinux2gpurecommendedimageidC96584B6F00A464EAD1953AFF4B05118Parameter"
+     },
+     "InstanceMarketOptions": {
+      "MarketType": "spot",
+      "SpotOptions": {
+       "InstanceInterruptionBehavior": "stop",
+       "SpotInstanceType": "one-time"
+      }
+     },
+     "InstanceType": "g5.xlarge",
+     "MetadataOptions": {
+      "HttpTokens": "required"
+     },
+     "SecurityGroupIds": [
+      {
+       "Fn::GetAtt": [
+        "AmiraLetterScoringSecurityGroup645D2D92",
+        "GroupId"
+       ]
+      }
+     ],
+     "TagSpecifications": [
+      {
+       "ResourceType": "instance",
+       "Tags": [
+        {
+         "Key": "Name",
+         "Value": "AmiraLetterScoringStack/GpuLaunchTemplateG5xlarge"
+        }
+       ]
+      },
+      {
+       "ResourceType": "volume",
+       "Tags": [
+        {
+         "Key": "Name",
+         "Value": "AmiraLetterScoringStack/GpuLaunchTemplateG5xlarge"
+        }
+       ]
+      }
+     ],
+     "UserData": {
+      "Fn::Base64": {
+       "Fn::Join": [
+        "",
+        [
+         "#!/bin/bash\necho ECS_CLUSTER=",
+         {
+          "Ref": "AmiraLetterScoringCluster5CE0BCC9"
+         },
+         " >> /etc/ecs/ecs.config\nsudo iptables --insert FORWARD 1 --in-interface docker+ --destination 169.254.169.254/32 --jump DROP\nsudo service iptables save\necho ECS_AWSVPC_BLOCK_IMDS=true >> /etc/ecs/ecs.config"
+        ]
+       ]
+      }
+     }
+    },
+    "TagSpecifications": [
+     {
+      "ResourceType": "launch-template",
+      "Tags": [
+       {
+        "Key": "Name",
+        "Value": "AmiraLetterScoringStack/GpuLaunchTemplateG5xlarge"
+       }
+      ]
+     }
+    ]
+   },
+   "DependsOn": [
+    "GpuInstanceRoleDefaultPolicyC5ED993F",
+    "GpuInstanceRole141744D4"
+   ],
+   "Metadata": {
+    "aws:cdk:path": "AmiraLetterScoringStack/GpuLaunchTemplateG5xlarge/Resource"
+   }
+  },
+  "GpuAsgG5xlargeASG242F426D": {
+   "Type": "AWS::AutoScaling::AutoScalingGroup",
+   "Properties": {
+    "CapacityRebalance": true,
+    "DesiredCapacity": "0",
+    "LaunchTemplate": {
+     "LaunchTemplateId": {
+      "Ref": "GpuLaunchTemplateG5xlarge139826E5"
+     },
+     "Version": {
+      "Fn::GetAtt": [
+       "GpuLaunchTemplateG5xlarge139826E5",
+       "LatestVersionNumber"
+      ]
+     }
+    },
+    "MaxSize": "10",
+    "MinSize": "0",
+    "NewInstancesProtectedFromScaleIn": true,
+    "VPCZoneIdentifier": [
+     {
+      "Ref": "AmiraLetterScoringVpcPrivateSubnet1SubnetAFBD66CD"
+     },
+     {
+      "Ref": "AmiraLetterScoringVpcPrivateSubnet2Subnet12E38A78"
+     }
+    ]
+   },
+   "UpdatePolicy": {
+    "AutoScalingScheduledAction": {
+     "IgnoreUnmodifiedGroupSizeProperties": true
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "AmiraLetterScoringStack/GpuAsgG5xlarge/ASG"
+   }
+  },
+  "GpuCapacityProviderG5xlargeD25A2496": {
+   "Type": "AWS::ECS::CapacityProvider",
+   "Properties": {
+    "AutoScalingGroupProvider": {
+     "AutoScalingGroupArn": {
+      "Ref": "GpuAsgG5xlargeASG242F426D"
+     },
+     "ManagedScaling": {
+      "Status": "ENABLED",
+      "TargetCapacity": 100
+     },
+     "ManagedTerminationProtection": "ENABLED"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "AmiraLetterScoringStack/GpuCapacityProviderG5xlarge/GpuCapacityProviderG5xlarge"
+   }
+  },
+  "GpuLaunchTemplateG52xlargeProfile7B3C640B": {
+   "Type": "AWS::IAM::InstanceProfile",
+   "Properties": {
+    "Roles": [
+     {
+      "Ref": "GpuInstanceRole141744D4"
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "AmiraLetterScoringStack/GpuLaunchTemplateG52xlarge/Profile"
+   }
+  },
+  "GpuLaunchTemplateG52xlarge93DE7D74": {
+   "Type": "AWS::EC2::LaunchTemplate",
+   "Properties": {
+    "LaunchTemplateData": {
+     "IamInstanceProfile": {
+      "Arn": {
+       "Fn::GetAtt": [
+        "GpuLaunchTemplateG52xlargeProfile7B3C640B",
+        "Arn"
+       ]
+      }
+     },
+     "ImageId": {
+      "Ref": "SsmParameterValueawsserviceecsoptimizedamiamazonlinux2gpurecommendedimageidC96584B6F00A464EAD1953AFF4B05118Parameter"
+     },
+     "InstanceMarketOptions": {
+      "MarketType": "spot",
+      "SpotOptions": {
+       "InstanceInterruptionBehavior": "stop",
+       "SpotInstanceType": "one-time"
+      }
+     },
+     "InstanceType": "g5.2xlarge",
+     "MetadataOptions": {
+      "HttpTokens": "required"
+     },
+     "SecurityGroupIds": [
+      {
+       "Fn::GetAtt": [
+        "AmiraLetterScoringSecurityGroup645D2D92",
+        "GroupId"
+       ]
+      }
+     ],
+     "TagSpecifications": [
+      {
+       "ResourceType": "instance",
+       "Tags": [
+        {
+         "Key": "Name",
+         "Value": "AmiraLetterScoringStack/GpuLaunchTemplateG52xlarge"
+        }
+       ]
+      },
+      {
+       "ResourceType": "volume",
+       "Tags": [
+        {
+         "Key": "Name",
+         "Value": "AmiraLetterScoringStack/GpuLaunchTemplateG52xlarge"
+        }
+       ]
+      }
+     ],
+     "UserData": {
+      "Fn::Base64": {
+       "Fn::Join": [
+        "",
+        [
+         "#!/bin/bash\necho ECS_CLUSTER=",
+         {
+          "Ref": "AmiraLetterScoringCluster5CE0BCC9"
+         },
+         " >> /etc/ecs/ecs.config\nsudo iptables --insert FORWARD 1 --in-interface docker+ --destination 169.254.169.254/32 --jump DROP\nsudo service iptables save\necho ECS_AWSVPC_BLOCK_IMDS=true >> /etc/ecs/ecs.config"
+        ]
+       ]
+      }
+     }
+    },
+    "TagSpecifications": [
+     {
+      "ResourceType": "launch-template",
+      "Tags": [
+       {
+        "Key": "Name",
+        "Value": "AmiraLetterScoringStack/GpuLaunchTemplateG52xlarge"
+       }
+      ]
+     }
+    ]
+   },
+   "DependsOn": [
+    "GpuInstanceRoleDefaultPolicyC5ED993F",
+    "GpuInstanceRole141744D4"
+   ],
+   "Metadata": {
+    "aws:cdk:path": "AmiraLetterScoringStack/GpuLaunchTemplateG52xlarge/Resource"
+   }
+  },
+  "GpuAsgG52xlargeASG1CBA2EF7": {
+   "Type": "AWS::AutoScaling::AutoScalingGroup",
+   "Properties": {
+    "CapacityRebalance": true,
+    "DesiredCapacity": "0",
+    "LaunchTemplate": {
+     "LaunchTemplateId": {
+      "Ref": "GpuLaunchTemplateG52xlarge93DE7D74"
+     },
+     "Version": {
+      "Fn::GetAtt": [
+       "GpuLaunchTemplateG52xlarge93DE7D74",
+       "LatestVersionNumber"
+      ]
+     }
+    },
+    "MaxSize": "10",
+    "MinSize": "0",
+    "NewInstancesProtectedFromScaleIn": true,
+    "VPCZoneIdentifier": [
+     {
+      "Ref": "AmiraLetterScoringVpcPrivateSubnet1SubnetAFBD66CD"
+     },
+     {
+      "Ref": "AmiraLetterScoringVpcPrivateSubnet2Subnet12E38A78"
+     }
+    ]
+   },
+   "UpdatePolicy": {
+    "AutoScalingScheduledAction": {
+     "IgnoreUnmodifiedGroupSizeProperties": true
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "AmiraLetterScoringStack/GpuAsgG52xlarge/ASG"
+   }
+  },
+  "GpuCapacityProviderG52xlarge96802DE0": {
+   "Type": "AWS::ECS::CapacityProvider",
+   "Properties": {
+    "AutoScalingGroupProvider": {
+     "AutoScalingGroupArn": {
+      "Ref": "GpuAsgG52xlargeASG1CBA2EF7"
+     },
+     "ManagedScaling": {
+      "Status": "ENABLED",
+      "TargetCapacity": 100
+     },
+     "ManagedTerminationProtection": "ENABLED"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "AmiraLetterScoringStack/GpuCapacityProviderG52xlarge/GpuCapacityProviderG52xlarge"
+   }
+  },
+  "AccessLogsBucket83982689": {
+   "Type": "AWS::S3::Bucket",
+   "Properties": {
+    "BucketEncryption": {
+     "ServerSideEncryptionConfiguration": [
+      {
+       "ServerSideEncryptionByDefault": {
+        "SSEAlgorithm": "AES256"
+       }
+      }
+     ]
+    },
+    "PublicAccessBlockConfiguration": {
+     "BlockPublicAcls": true,
+     "BlockPublicPolicy": true,
+     "IgnorePublicAcls": true,
+     "RestrictPublicBuckets": true
+    }
+   },
+   "UpdateReplacePolicy": "Retain",
+   "DeletionPolicy": "Retain",
+   "Metadata": {
+    "aws:cdk:path": "AmiraLetterScoringStack/AccessLogsBucket/Resource"
+   }
+  },
+  "AccessLogsBucketPolicy7F77476F": {
+   "Type": "AWS::S3::BucketPolicy",
+   "Properties": {
+    "Bucket": {
+     "Ref": "AccessLogsBucket83982689"
+    },
+    "PolicyDocument": {
+     "Statement": [
+      {
+       "Action": "s3:*",
+       "Condition": {
+        "Bool": {
+         "aws:SecureTransport": "false"
+        }
+       },
+       "Effect": "Deny",
+       "Principal": {
+        "AWS": "*"
+       },
+       "Resource": [
+        {
+         "Fn::GetAtt": [
+          "AccessLogsBucket83982689",
+          "Arn"
+         ]
+        },
+        {
+         "Fn::Join": [
+          "",
+          [
+           {
+            "Fn::GetAtt": [
+             "AccessLogsBucket83982689",
+             "Arn"
+            ]
+           },
+           "/*"
+          ]
+         ]
+        }
+       ]
+      },
+      {
+       "Action": "s3:PutObject",
+       "Condition": {
+        "ArnLike": {
+         "aws:SourceArn": {
+          "Fn::GetAtt": [
+           "ResultsBucketA95A2103",
+           "Arn"
+          ]
+         }
+        },
+        "StringEquals": {
+         "aws:SourceAccount": {
+          "Ref": "AWS::AccountId"
+         }
+        }
+       },
+       "Effect": "Allow",
+       "Principal": {
+        "Service": "logging.s3.amazonaws.com"
+       },
+       "Resource": {
+        "Fn::Join": [
+         "",
+         [
+          {
+           "Fn::GetAtt": [
+            "AccessLogsBucket83982689",
+            "Arn"
+           ]
+          },
+          "/s3-access-logs/*"
+         ]
+        ]
+       }
+      }
+     ],
+     "Version": "2012-10-17"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "AmiraLetterScoringStack/AccessLogsBucket/Policy/Resource"
+   }
+  },
+  "ResultsBucketKey884312E0": {
+   "Type": "AWS::KMS::Key",
+   "Properties": {
+    "EnableKeyRotation": true,
+    "KeyPolicy": {
+     "Statement": [
+      {
+       "Action": "kms:*",
+       "Effect": "Allow",
+       "Principal": {
+        "AWS": {
+         "Fn::Join": [
+          "",
+          [
+           "arn:aws:iam::",
+           {
+            "Ref": "AWS::AccountId"
+           },
+           ":root"
+          ]
+         ]
+        }
+       },
+       "Resource": "*"
+      }
+     ],
+     "Version": "2012-10-17"
+    }
+   },
+   "UpdateReplacePolicy": "Retain",
+   "DeletionPolicy": "Retain",
+   "Metadata": {
+    "aws:cdk:path": "AmiraLetterScoringStack/ResultsBucketKey/Resource"
+   }
+  },
+  "ResultsBucketKeyAlias5AE25ACF": {
+   "Type": "AWS::KMS::Alias",
+   "Properties": {
+    "AliasName": "alias/amira-letter-scoring-results",
+    "TargetKeyId": {
+     "Fn::GetAtt": [
+      "ResultsBucketKey884312E0",
+      "Arn"
+     ]
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "AmiraLetterScoringStack/ResultsBucketKey/Alias/Resource"
+   }
+  },
+  "ResultsBucketA95A2103": {
+   "Type": "AWS::S3::Bucket",
+   "Properties": {
+    "BucketEncryption": {
+     "ServerSideEncryptionConfiguration": [
+      {
+       "BucketKeyEnabled": true,
+       "ServerSideEncryptionByDefault": {
+        "KMSMasterKeyID": {
+         "Fn::GetAtt": [
+          "ResultsBucketKey884312E0",
+          "Arn"
+         ]
+        },
+        "SSEAlgorithm": "aws:kms"
+       }
+      }
+     ]
+    },
+    "LifecycleConfiguration": {
+     "Rules": [
+      {
+       "Id": "TransitionToIA",
+       "Status": "Enabled",
+       "Transitions": [
+        {
+         "StorageClass": "STANDARD_IA",
+         "TransitionInDays": 30
+        }
+       ]
+      },
+      {
+       "Id": "TransitionToGlacier",
+       "Status": "Enabled",
+       "Transitions": [
+        {
+         "StorageClass": "GLACIER_IR",
+         "TransitionInDays": 120
+        }
+       ]
+      }
+     ]
+    },
+    "LoggingConfiguration": {
+     "DestinationBucketName": {
+      "Ref": "AccessLogsBucket83982689"
+     },
+     "LogFilePrefix": "s3-access-logs/"
+    },
+    "PublicAccessBlockConfiguration": {
+     "BlockPublicAcls": true,
+     "BlockPublicPolicy": true,
+     "IgnorePublicAcls": true,
+     "RestrictPublicBuckets": true
+    }
+   },
+   "UpdateReplacePolicy": "Retain",
+   "DeletionPolicy": "Retain",
+   "Metadata": {
+    "aws:cdk:path": "AmiraLetterScoringStack/ResultsBucket/Resource"
+   }
+  },
+  "ResultsBucketPolicy5EF3AFA7": {
+   "Type": "AWS::S3::BucketPolicy",
+   "Properties": {
+    "Bucket": {
+     "Ref": "ResultsBucketA95A2103"
+    },
+    "PolicyDocument": {
+     "Statement": [
+      {
+       "Action": "s3:*",
+       "Condition": {
+        "Bool": {
+         "aws:SecureTransport": "false"
+        }
+       },
+       "Effect": "Deny",
+       "Principal": {
+        "AWS": "*"
+       },
+       "Resource": [
+        {
+         "Fn::GetAtt": [
+          "ResultsBucketA95A2103",
+          "Arn"
+         ]
+        },
+        {
+         "Fn::Join": [
+          "",
+          [
+           {
+            "Fn::GetAtt": [
+             "ResultsBucketA95A2103",
+             "Arn"
+            ]
+           },
+           "/*"
+          ]
+         ]
+        }
+       ]
+      }
+     ],
+     "Version": "2012-10-17"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "AmiraLetterScoringStack/ResultsBucket/Policy/Resource"
+   }
+  },
+  "JobsDLQB327C2F8": {
+   "Type": "AWS::SQS::Queue",
+   "Properties": {
+    "MessageRetentionPeriod": 1209600
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "AmiraLetterScoringStack/JobsDLQ/Resource"
+   }
+  },
+  "JobsDLQPolicy2EFDCC5D": {
+   "Type": "AWS::SQS::QueuePolicy",
+   "Properties": {
+    "PolicyDocument": {
+     "Statement": [
+      {
+       "Action": "sqs:*",
+       "Condition": {
+        "Bool": {
+         "aws:SecureTransport": "false"
+        }
+       },
+       "Effect": "Deny",
+       "Principal": {
+        "AWS": "*"
+       },
+       "Resource": {
+        "Fn::GetAtt": [
+         "JobsDLQB327C2F8",
+         "Arn"
+        ]
+       }
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "Queues": [
+     {
+      "Ref": "JobsDLQB327C2F8"
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "AmiraLetterScoringStack/JobsDLQ/Policy/Resource"
+   }
+  },
+  "JobsQueue86ED6666": {
+   "Type": "AWS::SQS::Queue",
+   "Properties": {
+    "RedrivePolicy": {
+     "deadLetterTargetArn": {
+      "Fn::GetAtt": [
+       "JobsDLQB327C2F8",
+       "Arn"
+      ]
+     },
+     "maxReceiveCount": 3
+    },
+    "VisibilityTimeout": 900
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "AmiraLetterScoringStack/JobsQueue/Resource"
+   }
+  },
+  "JobsQueuePolicy1731E6A2": {
+   "Type": "AWS::SQS::QueuePolicy",
+   "Properties": {
+    "PolicyDocument": {
+     "Statement": [
+      {
+       "Action": "sqs:*",
+       "Condition": {
+        "Bool": {
+         "aws:SecureTransport": "false"
+        }
+       },
+       "Effect": "Deny",
+       "Principal": {
+        "AWS": "*"
+       },
+       "Resource": {
+        "Fn::GetAtt": [
+         "JobsQueue86ED6666",
+         "Arn"
+        ]
+       }
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "Queues": [
+     {
+      "Ref": "JobsQueue86ED6666"
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "AmiraLetterScoringStack/JobsQueue/Policy/Resource"
+   }
+  },
+  "TaskExecutionRole250D2532": {
+   "Type": "AWS::IAM::Role",
+   "Properties": {
+    "AssumeRolePolicyDocument": {
+     "Statement": [
+      {
+       "Action": "sts:AssumeRole",
+       "Effect": "Allow",
+       "Principal": {
+        "Service": "ecs-tasks.amazonaws.com"
+       }
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "ManagedPolicyArns": [
+     {
+      "Fn::Join": [
+       "",
+       [
+        "arn:",
+        {
+         "Ref": "AWS::Partition"
+        },
+        ":iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
+       ]
+      ]
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "AmiraLetterScoringStack/TaskExecutionRole/Resource"
+   }
+  },
+  "TaskExecutionRoleDefaultPolicyA84DD1B0": {
+   "Type": "AWS::IAM::Policy",
+   "Properties": {
+    "PolicyDocument": {
+     "Statement": [
+      {
+       "Action": [
+        "ecr:BatchCheckLayerAvailability",
+        "ecr:BatchGetImage",
+        "ecr:GetDownloadUrlForLayer"
+       ],
+       "Effect": "Allow",
+       "Resource": [
+        {
+         "Fn::GetAtt": [
+          "AmiraLetterScoringRepo09CE897F",
+          "Arn"
+         ]
+        },
+        {
+         "Fn::GetAtt": [
+          "CloudWatchAgentRepo62FDA875",
+          "Arn"
+         ]
+        },
+        {
+         "Fn::GetAtt": [
+          "DcgmExporterRepo96FE0342",
+          "Arn"
+         ]
+        },
+        {
+         "Fn::GetAtt": [
+          "TritonServerRepoE954F487",
+          "Arn"
+         ]
+        }
+       ]
+      },
+      {
+       "Action": "ecr:GetAuthorizationToken",
+       "Effect": "Allow",
+       "Resource": "*"
+      },
+      {
+       "Action": [
+        "logs:CreateLogStream",
+        "logs:PutLogEvents"
+       ],
+       "Effect": "Allow",
+       "Resource": {
+        "Fn::GetAtt": [
+         "AmiraLetterScoringLogGroupE17F4A17",
+         "Arn"
+        ]
+       }
+      },
+      {
+       "Action": [
+        "ssm:DescribeParameters",
+        "ssm:GetParameter",
+        "ssm:GetParameterHistory",
+        "ssm:GetParameters"
+       ],
+       "Effect": "Allow",
+       "Resource": [
+        {
+         "Fn::Join": [
+          "",
+          [
+           "arn:aws:ssm:us-east-1:",
+           {
+            "Ref": "AWS::AccountId"
+           },
+           ":parameter",
+           {
+            "Ref": "SsmBatchSize08BE5FB9"
+           }
+          ]
+         ]
+        },
+        {
+         "Fn::Join": [
+          "",
+          [
+           "arn:aws:ssm:us-east-1:",
+           {
+            "Ref": "AWS::AccountId"
+           },
+           ":parameter",
+           {
+            "Ref": "SsmConfidenceThreshold02D9E23D"
+           }
+          ]
+         ]
+        },
+        {
+         "Fn::Join": [
+          "",
+          [
+           "arn:aws:ssm:us-east-1:",
+           {
+            "Ref": "AWS::AccountId"
+           },
+           ":parameter",
+           {
+            "Ref": "SsmIncludeConfidence2FFA6A79"
+           }
+          ]
+         ]
+        },
+        {
+         "Fn::Join": [
+          "",
+          [
+           "arn:aws:ssm:us-east-1:",
+           {
+            "Ref": "AWS::AccountId"
+           },
+           ":parameter",
+           {
+            "Ref": "SsmModelPathD64BC4E2"
+           }
+          ]
+         ]
+        },
+        {
+         "Fn::Join": [
+          "",
+          [
+           "arn:aws:ssm:us-east-1:",
+           {
+            "Ref": "AWS::AccountId"
+           },
+           ":parameter",
+           {
+            "Ref": "SsmResultsPrefixFC1C636A"
+           }
+          ]
+         ]
+        }
+       ]
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "PolicyName": "TaskExecutionRoleDefaultPolicyA84DD1B0",
+    "Roles": [
+     {
+      "Ref": "TaskExecutionRole250D2532"
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "AmiraLetterScoringStack/TaskExecutionRole/DefaultPolicy/Resource"
+   }
+  },
+  "TaskRole30FC0FBB": {
+   "Type": "AWS::IAM::Role",
+   "Properties": {
+    "AssumeRolePolicyDocument": {
+     "Statement": [
+      {
+       "Action": "sts:AssumeRole",
+       "Effect": "Allow",
+       "Principal": {
+        "Service": "ecs-tasks.amazonaws.com"
+       }
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "Policies": [
+     {
+      "PolicyDocument": {
+       "Statement": [
+        {
+         "Action": "s3:ListBucket",
+         "Effect": "Allow",
+         "Resource": {
+          "Fn::GetAtt": [
+           "ResultsBucketA95A2103",
+           "Arn"
+          ]
+         }
+        },
+        {
+         "Action": "s3:PutObject",
+         "Effect": "Allow",
+         "Resource": {
+          "Fn::Join": [
+           "",
+           [
+            {
+             "Fn::GetAtt": [
+              "ResultsBucketA95A2103",
+              "Arn"
+             ]
+            },
+            "/*"
+           ]
+          ]
+         }
+        }
+       ],
+       "Version": "2012-10-17"
+      },
+      "PolicyName": "S3Access"
+     },
+     {
+      "PolicyDocument": {
+       "Statement": [
+        {
+         "Action": [
+          "sqs:DeleteMessage",
+          "sqs:GetQueueAttributes",
+          "sqs:ReceiveMessage"
+         ],
+         "Effect": "Allow",
+         "Resource": {
+          "Fn::GetAtt": [
+           "JobsQueue86ED6666",
+           "Arn"
+          ]
+         }
+        }
+       ],
+       "Version": "2012-10-17"
+      },
+      "PolicyName": "SqsAccess"
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "AmiraLetterScoringStack/TaskRole/Resource"
+   }
+  },
+  "TaskRoleDefaultPolicy07FC53DE": {
+   "Type": "AWS::IAM::Policy",
+   "Properties": {
+    "PolicyDocument": {
+     "Statement": [
+      {
+       "Action": [
+        "kms:Decrypt",
+        "kms:Encrypt",
+        "kms:GenerateDataKey*",
+        "kms:ReEncrypt*"
+       ],
+       "Effect": "Allow",
+       "Resource": {
+        "Fn::GetAtt": [
+         "ResultsBucketKey884312E0",
+         "Arn"
+        ]
+       }
+      },
+      {
+       "Action": [
+        "ssm:DescribeParameters",
+        "ssm:GetParameter",
+        "ssm:GetParameterHistory",
+        "ssm:GetParameters"
+       ],
+       "Effect": "Allow",
+       "Resource": {
+        "Fn::Join": [
+         "",
+         [
+          "arn:aws:ssm:us-east-1:",
+          {
+           "Ref": "AWS::AccountId"
+          },
+          ":parameter",
+          {
+           "Ref": "SsmCwAgentConfig5985118E"
+          }
+         ]
+        ]
+       }
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "PolicyName": "TaskRoleDefaultPolicy07FC53DE",
+    "Roles": [
+     {
+      "Ref": "TaskRole30FC0FBB"
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "AmiraLetterScoringStack/TaskRole/DefaultPolicy/Resource"
+   }
+  },
+  "TaskRoleAudioReadPolicyB6B5E4C2": {
+   "Type": "AWS::IAM::Policy",
+   "Properties": {
+    "PolicyDocument": {
+     "Statement": [
+      {
+       "Action": "s3:ListBucket",
+       "Condition": {
+        "StringLike": {
+         "s3:prefix": [
+          {
+           "Ref": "AudioPrefix"
+          }
+         ]
+        }
+       },
+       "Effect": "Allow",
+       "Resource": {
+        "Fn::Join": [
+         "",
+         [
+          "arn:aws:s3:us-east-1:",
+          {
+           "Ref": "AWS::AccountId"
+          },
+          ":",
+          {
+           "Ref": "AudioBucketName"
+          }
+         ]
+        ]
+       }
+      },
+      {
+       "Action": "s3:GetObject",
+       "Effect": "Allow",
+       "Resource": {
+        "Fn::Join": [
+         "",
+         [
+          "arn:aws:s3:us-east-1:",
+          {
+           "Ref": "AWS::AccountId"
+          },
+          ":",
+          {
+           "Ref": "AudioBucketName"
+          },
+          "/",
+          {
+           "Ref": "AudioPrefix"
+          },
+          "*"
+         ]
+        ]
+       }
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "PolicyName": "TaskRoleAudioReadPolicyB6B5E4C2",
+    "Roles": [
+     {
+      "Ref": "TaskRole30FC0FBB"
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "AmiraLetterScoringStack/TaskRoleAudioReadPolicy/Resource"
+   },
+   "Condition": "AudioBucketProvided"
+  },
+  "AmiraLetterScoringLogGroupE17F4A17": {
+   "Type": "AWS::Logs::LogGroup",
+   "Properties": {
+    "LogGroupName": "/ecs/amira-letter-scoring",
+    "RetentionInDays": 7
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "AmiraLetterScoringStack/AmiraLetterScoringLogGroup/Resource"
+   }
+  },
+  "AmiraLetterScoringTaskDef0B418B7C": {
+   "Type": "AWS::ECS::TaskDefinition",
+   "Properties": {
+    "ContainerDefinitions": [
+     {
+      "Command": [
+       "python",
+       "-m",
+       "src.pipeline.sqs_worker"
+      ],
+      "Cpu": 2048,
+      "DependsOn": [
+       {
+        "Condition": "HEALTHY",
+        "ContainerName": "TritonServerContainer"
+       }
+      ],
+      "Environment": [
+       {
+        "Name": "PYTHONPATH",
+        "Value": "/app"
+       },
+       {
+        "Name": "RESULTS_BUCKET",
+        "Value": {
+         "Ref": "ResultsBucketA95A2103"
+        }
+       },
+       {
+        "Name": "JOBS_QUEUE_URL",
+        "Value": {
+         "Ref": "JobsQueue86ED6666"
+        }
+       },
+       {
+        "Name": "AUDIO_DIR",
+        "Value": {
+         "Ref": "AudioDir"
+        }
+       },
+       {
+        "Name": "USE_TRITON",
+        "Value": "true"
+       },
+       {
+        "Name": "TRITON_URL",
+        "Value": "http://127.0.0.1:8000"
+       },
+       {
+        "Name": "TRITON_MODEL",
+        "Value": "w2v2"
+       },
+       {
+        "Name": "AWS_REGION",
+        "Value": "us-east-1"
+       }
+      ],
+      "Essential": true,
+      "Image": {
+       "Fn::Join": [
+        "",
+        [
+         {
+          "Fn::Select": [
+           4,
+           {
+            "Fn::Split": [
+             ":",
+             {
+              "Fn::GetAtt": [
+               "AmiraLetterScoringRepo09CE897F",
+               "Arn"
+              ]
+             }
+            ]
+           }
+          ]
+         },
+         ".dkr.ecr.",
+         {
+          "Fn::Select": [
+           3,
+           {
+            "Fn::Split": [
+             ":",
+             {
+              "Fn::GetAtt": [
+               "AmiraLetterScoringRepo09CE897F",
+               "Arn"
+              ]
+             }
+            ]
+           }
+          ]
+         },
+         ".",
+         {
+          "Ref": "AWS::URLSuffix"
+         },
+         "/",
+         {
+          "Ref": "AmiraLetterScoringRepo09CE897F"
+         },
+         ":latest"
+        ]
+       ]
+      },
+      "LogConfiguration": {
+       "LogDriver": "awslogs",
+       "Options": {
+        "awslogs-group": {
+         "Ref": "AmiraLetterScoringLogGroupE17F4A17"
+        },
+        "awslogs-stream-prefix": "amira-letter-scoring",
+        "awslogs-region": "us-east-1"
+       }
+      },
+      "MemoryReservation": 8192,
+      "Name": "AmiraLetterScoringContainer",
+      "Secrets": [
+       {
+        "Name": "MODEL_PATH",
+        "ValueFrom": {
+         "Fn::Join": [
+          "",
+          [
+           "arn:aws:ssm:us-east-1:",
+           {
+            "Ref": "AWS::AccountId"
+           },
+           ":parameter",
+           {
+            "Ref": "SsmModelPathD64BC4E2"
+           }
+          ]
+         ]
+        }
+       },
+       {
+        "Name": "INCLUDE_CONFIDENCE",
+        "ValueFrom": {
+         "Fn::Join": [
+          "",
+          [
+           "arn:aws:ssm:us-east-1:",
+           {
+            "Ref": "AWS::AccountId"
+           },
+           ":parameter",
+           {
+            "Ref": "SsmIncludeConfidence2FFA6A79"
+           }
+          ]
+         ]
+        }
+       },
+       {
+        "Name": "RESULTS_PREFIX",
+        "ValueFrom": {
+         "Fn::Join": [
+          "",
+          [
+           "arn:aws:ssm:us-east-1:",
+           {
+            "Ref": "AWS::AccountId"
+           },
+           ":parameter",
+           {
+            "Ref": "SsmResultsPrefixFC1C636A"
+           }
+          ]
+         ]
+        }
+       },
+       {
+        "Name": "BATCH_SIZE",
+        "ValueFrom": {
+         "Fn::Join": [
+          "",
+          [
+           "arn:aws:ssm:us-east-1:",
+           {
+            "Ref": "AWS::AccountId"
+           },
+           ":parameter",
+           {
+            "Ref": "SsmBatchSize08BE5FB9"
+           }
+          ]
+         ]
+        }
+       },
+       {
+        "Name": "CONFIDENCE_THRESHOLD",
+        "ValueFrom": {
+         "Fn::Join": [
+          "",
+          [
+           "arn:aws:ssm:us-east-1:",
+           {
+            "Ref": "AWS::AccountId"
+           },
+           ":parameter",
+           {
+            "Ref": "SsmConfidenceThreshold02D9E23D"
+           }
+          ]
+         ]
+        }
+       }
+      ],
+      "Ulimits": [
+       {
+        "HardLimit": 65536,
+        "Name": "nofile",
+        "SoftLimit": 65536
+       }
+      ]
+     },
+     {
+      "Cpu": 1024,
+      "Environment": [
+       {
+        "Name": "AWS_REGION",
+        "Value": "us-east-1"
+       }
+      ],
+      "Essential": true,
+      "HealthCheck": {
+       "Command": [
+        "CMD-SHELL",
+        "curl -sf http://127.0.0.1:8000/v2/health/ready || exit 1"
+       ],
+       "Interval": 15,
+       "Retries": 3,
+       "StartPeriod": 30,
+       "Timeout": 5
+      },
+      "Image": {
+       "Fn::Join": [
+        "",
+        [
+         {
+          "Fn::Select": [
+           4,
+           {
+            "Fn::Split": [
+             ":",
+             {
+              "Fn::GetAtt": [
+               "TritonServerRepoE954F487",
+               "Arn"
+              ]
+             }
+            ]
+           }
+          ]
+         },
+         ".dkr.ecr.",
+         {
+          "Fn::Select": [
+           3,
+           {
+            "Fn::Split": [
+             ":",
+             {
+              "Fn::GetAtt": [
+               "TritonServerRepoE954F487",
+               "Arn"
+              ]
+             }
+            ]
+           }
+          ]
+         },
+         ".",
+         {
+          "Ref": "AWS::URLSuffix"
+         },
+         "/",
+         {
+          "Ref": "TritonServerRepoE954F487"
+         },
+         ":latest"
+        ]
+       ]
+      },
+      "LogConfiguration": {
+       "LogDriver": "awslogs",
+       "Options": {
+        "awslogs-group": {
+         "Ref": "AmiraLetterScoringLogGroupE17F4A17"
+        },
+        "awslogs-stream-prefix": "triton-server",
+        "awslogs-region": "us-east-1"
+       }
+      },
+      "MemoryReservation": 4096,
+      "Name": "TritonServerContainer",
+      "PortMappings": [
+       {
+        "ContainerPort": 8000,
+        "Protocol": "tcp"
+       },
+       {
+        "ContainerPort": 8002,
+        "Protocol": "tcp"
+       }
+      ],
+      "ResourceRequirements": [
+       {
+        "Type": "GPU",
+        "Value": "1"
+       }
+      ],
+      "Ulimits": [
+       {
+        "HardLimit": 65536,
+        "Name": "nofile",
+        "SoftLimit": 65536
+       }
+      ]
+     },
+     {
+      "Cpu": 128,
+      "Environment": [
+       {
+        "Name": "AWS_REGION",
+        "Value": "us-east-1"
+       }
+      ],
+      "Essential": true,
+      "Image": {
+       "Fn::Join": [
+        "",
+        [
+         {
+          "Fn::Select": [
+           4,
+           {
+            "Fn::Split": [
+             ":",
+             {
+              "Fn::GetAtt": [
+               "DcgmExporterRepo96FE0342",
+               "Arn"
+              ]
+             }
+            ]
+           }
+          ]
+         },
+         ".dkr.ecr.",
+         {
+          "Fn::Select": [
+           3,
+           {
+            "Fn::Split": [
+             ":",
+             {
+              "Fn::GetAtt": [
+               "DcgmExporterRepo96FE0342",
+               "Arn"
+              ]
+             }
+            ]
+           }
+          ]
+         },
+         ".",
+         {
+          "Ref": "AWS::URLSuffix"
+         },
+         "/",
+         {
+          "Ref": "DcgmExporterRepo96FE0342"
+         },
+         ":latest"
+        ]
+       ]
+      },
+      "LogConfiguration": {
+       "LogDriver": "awslogs",
+       "Options": {
+        "awslogs-group": {
+         "Ref": "AmiraLetterScoringLogGroupE17F4A17"
+        },
+        "awslogs-stream-prefix": "dcgm-exporter",
+        "awslogs-region": "us-east-1"
+       }
+      },
+      "MemoryReservation": 256,
+      "Name": "DcgmExporterContainer",
+      "PortMappings": [
+       {
+        "ContainerPort": 9400,
+        "Protocol": "tcp"
+       }
+      ]
+     },
+     {
+      "Command": [
+       "/opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent",
+       "-a",
+       "fetch-config",
+       "-m",
+       "ec2",
+       "-c",
+       {
+        "Fn::Join": [
+         "",
+         [
+          "ssm:",
+          {
+           "Ref": "SsmCwAgentConfig5985118E"
+          }
+         ]
+        ]
+       },
+       "-s"
+      ],
+      "Cpu": 128,
+      "Environment": [
+       {
+        "Name": "AWS_REGION",
+        "Value": "us-east-1"
+       }
+      ],
+      "Essential": true,
+      "Image": {
+       "Fn::Join": [
+        "",
+        [
+         {
+          "Fn::Select": [
+           4,
+           {
+            "Fn::Split": [
+             ":",
+             {
+              "Fn::GetAtt": [
+               "CloudWatchAgentRepo62FDA875",
+               "Arn"
+              ]
+             }
+            ]
+           }
+          ]
+         },
+         ".dkr.ecr.",
+         {
+          "Fn::Select": [
+           3,
+           {
+            "Fn::Split": [
+             ":",
+             {
+              "Fn::GetAtt": [
+               "CloudWatchAgentRepo62FDA875",
+               "Arn"
+              ]
+             }
+            ]
+           }
+          ]
+         },
+         ".",
+         {
+          "Ref": "AWS::URLSuffix"
+         },
+         "/",
+         {
+          "Ref": "CloudWatchAgentRepo62FDA875"
+         },
+         ":latest"
+        ]
+       ]
+      },
+      "LogConfiguration": {
+       "LogDriver": "awslogs",
+       "Options": {
+        "awslogs-group": {
+         "Ref": "AmiraLetterScoringLogGroupE17F4A17"
+        },
+        "awslogs-stream-prefix": "cloudwatch-agent",
+        "awslogs-region": "us-east-1"
+       }
+      },
+      "MemoryReservation": 256,
+      "Name": "CloudWatchAgentContainer"
+     }
+    ],
+    "ExecutionRoleArn": {
+     "Fn::GetAtt": [
+      "TaskExecutionRole250D2532",
+      "Arn"
+     ]
+    },
+    "Family": "amira-letter-scoring",
+    "NetworkMode": "awsvpc",
+    "RequiresCompatibilities": [
+     "EC2"
+    ],
+    "TaskRoleArn": {
+     "Fn::GetAtt": [
+      "TaskRole30FC0FBB",
+      "Arn"
+     ]
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "AmiraLetterScoringStack/AmiraLetterScoringTaskDef/Resource"
+   }
+  },
+  "SsmModelPathD64BC4E2": {
+   "Type": "AWS::SSM::Parameter",
+   "Properties": {
+    "Name": "/amira/model_path",
+    "Type": "String",
+    "Value": {
+     "Ref": "ModelPath"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "AmiraLetterScoringStack/SsmModelPath/Resource"
+   }
+  },
+  "SsmIncludeConfidence2FFA6A79": {
+   "Type": "AWS::SSM::Parameter",
+   "Properties": {
+    "Name": "/amira/include_confidence",
+    "Type": "String",
+    "Value": {
+     "Ref": "IncludeConfidence"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "AmiraLetterScoringStack/SsmIncludeConfidence/Resource"
+   }
+  },
+  "SsmResultsPrefixFC1C636A": {
+   "Type": "AWS::SSM::Parameter",
+   "Properties": {
+    "Name": "/amira/results_prefix",
+    "Type": "String",
+    "Value": {
+     "Ref": "ResultsPrefix"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "AmiraLetterScoringStack/SsmResultsPrefix/Resource"
+   }
+  },
+  "SsmBatchSize08BE5FB9": {
+   "Type": "AWS::SSM::Parameter",
+   "Properties": {
+    "Name": "/amira/batch_size",
+    "Type": "String",
+    "Value": "16"
+   },
+   "Metadata": {
+    "aws:cdk:path": "AmiraLetterScoringStack/SsmBatchSize/Resource"
+   }
+  },
+  "SsmConfidenceThreshold02D9E23D": {
+   "Type": "AWS::SSM::Parameter",
+   "Properties": {
+    "Name": "/amira/confidence_threshold",
+    "Type": "String",
+    "Value": "0.6"
+   },
+   "Metadata": {
+    "aws:cdk:path": "AmiraLetterScoringStack/SsmConfidenceThreshold/Resource"
+   }
+  },
+  "SsmCwAgentConfig5985118E": {
+   "Type": "AWS::SSM::Parameter",
+   "Properties": {
+    "Name": "/amira/cwagent_config",
+    "Type": "String",
+    "Value": "{\"agent\":{\"debug\":false},\"metrics\":{\"namespace\":\"CWAgent\",\"metrics_collected\":{\"prometheus\":{\"emf_processor\":{\"metric_declaration\":[{\"source_labels\":[\"__name__\"],\"label_matcher\":\"^DCGM_FI_DEV_GPU_UTIL$\",\"dimensions\":[[\"gpu\"]],\"metric_selectors\":[\"^DCGM_FI_DEV_GPU_UTIL$\"]},{\"source_labels\":[\"__name__\"],\"label_matcher\":\"^DCGM_FI_DEV_FB_USED$\",\"dimensions\":[[\"gpu\"]],\"metric_selectors\":[\"^DCGM_FI_DEV_FB_USED$\"]},{\"source_labels\":[\"__name__\"],\"label_matcher\":\"^DCGM_FI_DEV_FB_TOTAL$\",\"dimensions\":[[\"gpu\"]],\"metric_selectors\":[\"^DCGM_FI_DEV_FB_TOTAL$\"]},{\"source_labels\":[\"__name__\",\"quantile\"],\"label_matcher\":\"^nv_inference_request_duration_us;0.95$\",\"dimensions\":[[\"model\"]],\"metric_selectors\":[\"^nv_inference_request_duration_us$\"]},{\"source_labels\":[\"__name__\",\"quantile\"],\"label_matcher\":\"^nv_inference_queue_duration_us;0.95$\",\"dimensions\":[[\"model\"]],\"metric_selectors\":[\"^nv_inference_queue_duration_us$\"]},{\"source_labels\":[\"__name__\"],\"label_matcher\":\"^nv_inference_count$\",\"dimensions\":[[\"model\"]],\"metric_selectors\":[\"^nv_inference_count$\"]},{\"source_labels\":[\"__name__\"],\"label_matcher\":\"^nv_inference_fail$\",\"dimensions\":[[\"model\"]],\"metric_selectors\":[\"^nv_inference_fail$\"]}]},\"metrics_declaration\":[],\"scrape_interval\":\"15s\",\"static_targets\":[{\"targets\":[\"127.0.0.1:9400\",\"127.0.0.1:8002\"]}]}}}}"
+   },
+   "Metadata": {
+    "aws:cdk:path": "AmiraLetterScoringStack/SsmCwAgentConfig/Resource"
+   }
+  },
+  "AmiraLetterScoringService1F7D59D0": {
+   "Type": "AWS::ECS::Service",
+   "Properties": {
+    "CapacityProviderStrategy": [
+     {
+      "CapacityProvider": {
+       "Ref": "GpuCapacityProvider4F6714BE"
+      },
+      "Weight": 1
+     },
+     {
+      "CapacityProvider": {
+       "Ref": "GpuCapacityProviderG5xlargeD25A2496"
+      },
+      "Weight": 1
+     },
+     {
+      "CapacityProvider": {
+       "Ref": "GpuCapacityProviderG52xlarge96802DE0"
+      },
+      "Weight": 1
+     }
+    ],
+    "Cluster": {
+     "Ref": "AmiraLetterScoringCluster5CE0BCC9"
+    },
+    "DeploymentConfiguration": {
+     "Alarms": {
+      "AlarmNames": [],
+      "Enable": false,
+      "Rollback": false
+     },
+     "MaximumPercent": 200,
+     "MinimumHealthyPercent": 100
+    },
+    "DesiredCount": 0,
+    "EnableECSManagedTags": false,
+    "NetworkConfiguration": {
+     "AwsvpcConfiguration": {
+      "AssignPublicIp": "DISABLED",
+      "SecurityGroups": [
+       {
+        "Fn::GetAtt": [
+         "AmiraLetterScoringSecurityGroup645D2D92",
+         "GroupId"
+        ]
+       }
+      ],
+      "Subnets": [
+       {
+        "Ref": "AmiraLetterScoringVpcPrivateSubnet1SubnetAFBD66CD"
+       },
+       {
+        "Ref": "AmiraLetterScoringVpcPrivateSubnet2Subnet12E38A78"
+       }
+      ]
+     }
+    },
+    "PlacementStrategies": [
+     {
+      "Field": "instanceId",
+      "Type": "spread"
+     }
+    ],
+    "SchedulingStrategy": "REPLICA",
+    "ServiceName": "amira-letter-scoring-service",
+    "TaskDefinition": {
+     "Ref": "AmiraLetterScoringTaskDef0B418B7C"
+    }
+   },
+   "DependsOn": [
+    "TaskRoleDefaultPolicy07FC53DE",
+    "TaskRole30FC0FBB"
+   ],
+   "Metadata": {
+    "aws:cdk:path": "AmiraLetterScoringStack/AmiraLetterScoringService/Service"
+   }
+  },
+  "ServiceScalableTargetRole431DE458": {
+   "Type": "AWS::IAM::Role",
+   "Properties": {
+    "AssumeRolePolicyDocument": {
+     "Statement": [
+      {
+       "Action": "sts:AssumeRole",
+       "Effect": "Allow",
+       "Principal": {
+        "Service": "application-autoscaling.amazonaws.com"
+       }
+      }
+     ],
+     "Version": "2012-10-17"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "AmiraLetterScoringStack/ServiceScalableTarget/Role/Resource"
+   }
+  },
+  "ServiceScalableTarget2D63BDF8": {
+   "Type": "AWS::ApplicationAutoScaling::ScalableTarget",
+   "Properties": {
+    "MaxCapacity": 50,
+    "MinCapacity": 0,
+    "ResourceId": {
+     "Fn::Join": [
+      "",
+      [
+       "service/",
+       {
+        "Ref": "AmiraLetterScoringCluster5CE0BCC9"
+       },
+       "/",
+       {
+        "Fn::GetAtt": [
+         "AmiraLetterScoringService1F7D59D0",
+         "Name"
+        ]
+       }
+      ]
+     ]
+    },
+    "RoleARN": {
+     "Fn::GetAtt": [
+      "ServiceScalableTargetRole431DE458",
+      "Arn"
+     ]
+    },
+    "ScalableDimension": "ecs:service:DesiredCount",
+    "ServiceNamespace": "ecs"
+   },
+   "Metadata": {
+    "aws:cdk:path": "AmiraLetterScoringStack/ServiceScalableTarget/Resource"
+   }
+  },
+  "ScaleOutOnQueueDepthUpperPolicyD06055FC": {
+   "Type": "AWS::ApplicationAutoScaling::ScalingPolicy",
+   "Properties": {
+    "PolicyName": "AmiraLetterScoringStackScaleOutOnQueueDepthUpperPolicy47EB0C82",
+    "PolicyType": "StepScaling",
+    "ScalingTargetId": {
+     "Ref": "ServiceScalableTarget2D63BDF8"
+    },
+    "StepScalingPolicyConfiguration": {
+     "AdjustmentType": "ChangeInCapacity",
+     "Cooldown": 120,
+     "MetricAggregationType": "Average",
+     "StepAdjustments": [
+      {
+       "MetricIntervalLowerBound": 0,
+       "MetricIntervalUpperBound": 990,
+       "ScalingAdjustment": 5
+      },
+      {
+       "MetricIntervalLowerBound": 990,
+       "ScalingAdjustment": 10
+      }
+     ]
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "AmiraLetterScoringStack/ScaleOutOnQueueDepth/UpperPolicy/Resource"
+   }
+  },
+  "ScaleOutOnQueueDepthUpperAlarmDDD40EEA": {
+   "Type": "AWS::CloudWatch::Alarm",
+   "Properties": {
+    "AlarmActions": [
+     {
+      "Ref": "ScaleOutOnQueueDepthUpperPolicyD06055FC"
+     }
+    ],
+    "AlarmDescription": "Upper threshold scaling alarm",
+    "ComparisonOperator": "GreaterThanOrEqualToThreshold",
+    "Dimensions": [
+     {
+      "Name": "QueueName",
+      "Value": {
+       "Fn::GetAtt": [
+        "JobsQueue86ED6666",
+        "QueueName"
+       ]
+      }
+     }
+    ],
+    "EvaluationPeriods": 1,
+    "MetricName": "ApproximateNumberOfMessagesVisible",
+    "Namespace": "AWS/SQS",
+    "Period": 60,
+    "Statistic": "Average",
+    "Threshold": 10
+   },
+   "Metadata": {
+    "aws:cdk:path": "AmiraLetterScoringStack/ScaleOutOnQueueDepth/UpperAlarm/Resource"
+   }
+  },
+  "ScaleInOnQueueDepthLowerPolicyF63295ED": {
+   "Type": "AWS::ApplicationAutoScaling::ScalingPolicy",
+   "Properties": {
+    "PolicyName": "AmiraLetterScoringStackScaleInOnQueueDepthLowerPolicy67B6E3DF",
+    "PolicyType": "StepScaling",
+    "ScalingTargetId": {
+     "Ref": "ServiceScalableTarget2D63BDF8"
+    },
+    "StepScalingPolicyConfiguration": {
+     "AdjustmentType": "ChangeInCapacity",
+     "Cooldown": 300,
+     "MetricAggregationType": "Average",
+     "StepAdjustments": [
+      {
+       "MetricIntervalLowerBound": -4,
+       "MetricIntervalUpperBound": 0,
+       "ScalingAdjustment": -2
+      },
+      {
+       "MetricIntervalUpperBound": -4,
+       "ScalingAdjustment": -3
+      }
+     ]
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "AmiraLetterScoringStack/ScaleInOnQueueDepth/LowerPolicy/Resource"
+   }
+  },
+  "ScaleInOnQueueDepthLowerAlarm2A3D24AA": {
+   "Type": "AWS::CloudWatch::Alarm",
+   "Properties": {
+    "AlarmActions": [
+     {
+      "Ref": "ScaleInOnQueueDepthLowerPolicyF63295ED"
+     }
+    ],
+    "AlarmDescription": "Lower threshold scaling alarm",
+    "ComparisonOperator": "LessThanOrEqualToThreshold",
+    "Dimensions": [
+     {
+      "Name": "QueueName",
+      "Value": {
+       "Fn::GetAtt": [
+        "JobsQueue86ED6666",
+        "QueueName"
+       ]
+      }
+     }
+    ],
+    "EvaluationPeriods": 1,
+    "MetricName": "ApproximateNumberOfMessagesVisible",
+    "Namespace": "AWS/SQS",
+    "Period": 60,
+    "Statistic": "Average",
+    "Threshold": 5
+   },
+   "Metadata": {
+    "aws:cdk:path": "AmiraLetterScoringStack/ScaleInOnQueueDepth/LowerAlarm/Resource"
+   }
+  },
+  "ScaleOutOnOldestAgeUpperPolicy16B1CFBB": {
+   "Type": "AWS::ApplicationAutoScaling::ScalingPolicy",
+   "Properties": {
+    "PolicyName": "AmiraLetterScoringStackScaleOutOnOldestAgeUpperPolicy30D4BBB9",
+    "PolicyType": "StepScaling",
+    "ScalingTargetId": {
+     "Ref": "ServiceScalableTarget2D63BDF8"
+    },
+    "StepScalingPolicyConfiguration": {
+     "AdjustmentType": "ChangeInCapacity",
+     "Cooldown": 60,
+     "MetricAggregationType": "Average",
+     "StepAdjustments": [
+      {
+       "MetricIntervalLowerBound": 0,
+       "MetricIntervalUpperBound": 600,
+       "ScalingAdjustment": 5
+      },
+      {
+       "MetricIntervalLowerBound": 600,
+       "ScalingAdjustment": 10
+      }
+     ]
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "AmiraLetterScoringStack/ScaleOutOnOldestAge/UpperPolicy/Resource"
+   }
+  },
+  "ScaleOutOnOldestAgeUpperAlarmC0606534": {
+   "Type": "AWS::CloudWatch::Alarm",
+   "Properties": {
+    "AlarmActions": [
+     {
+      "Ref": "ScaleOutOnOldestAgeUpperPolicy16B1CFBB"
+     }
+    ],
+    "AlarmDescription": "Upper threshold scaling alarm",
+    "ComparisonOperator": "GreaterThanOrEqualToThreshold",
+    "Dimensions": [
+     {
+      "Name": "QueueName",
+      "Value": {
+       "Fn::GetAtt": [
+        "JobsQueue86ED6666",
+        "QueueName"
+       ]
+      }
+     }
+    ],
+    "EvaluationPeriods": 1,
+    "MetricName": "ApproximateAgeOfOldestMessage",
+    "Namespace": "AWS/SQS",
+    "Period": 60,
+    "Statistic": "Average",
+    "Threshold": 300
+   },
+   "Metadata": {
+    "aws:cdk:path": "AmiraLetterScoringStack/ScaleOutOnOldestAge/UpperAlarm/Resource"
+   }
+  },
+  "EnqueueJobsFunctionServiceRole7BD4867E": {
+   "Type": "AWS::IAM::Role",
+   "Properties": {
+    "AssumeRolePolicyDocument": {
+     "Statement": [
+      {
+       "Action": "sts:AssumeRole",
+       "Effect": "Allow",
+       "Principal": {
+        "Service": "lambda.amazonaws.com"
+       }
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "ManagedPolicyArns": [
+     {
+      "Fn::Join": [
+       "",
+       [
+        "arn:",
+        {
+         "Ref": "AWS::Partition"
+        },
+        ":iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+       ]
+      ]
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "AmiraLetterScoringStack/EnqueueJobsFunction/ServiceRole/Resource"
+   }
+  },
+  "EnqueueJobsFunctionServiceRoleDefaultPolicy05D31F48": {
+   "Type": "AWS::IAM::Policy",
+   "Properties": {
+    "PolicyDocument": {
+     "Statement": [
+      {
+       "Action": [
+        "athena:GetQueryExecution",
+        "athena:GetQueryResults",
+        "athena:StartQueryExecution"
+       ],
+       "Effect": "Allow",
+       "Resource": {
+        "Fn::Join": [
+         "",
+         [
+          "arn:aws:athena:us-east-1:",
+          {
+           "Ref": "AWS::AccountId"
+          },
+          ":workgroup/primary"
+         ]
+        ]
+       }
+      },
+      {
+       "Action": "glue:GetDatabase",
+       "Effect": "Allow",
+       "Resource": {
+        "Fn::Join": [
+         "",
+         [
+          "arn:aws:glue:us-east-1:",
+          {
+           "Ref": "AWS::AccountId"
+          },
+          ":database/",
+          {
+           "Ref": "AthenaDatabase"
+          }
+         ]
+        ]
+       }
+      },
+      {
+       "Action": "glue:GetTable",
+       "Effect": "Allow",
+       "Resource": {
+        "Fn::Join": [
+         "",
+         [
+          "arn:aws:glue:us-east-1:",
+          {
+           "Ref": "AWS::AccountId"
+          },
+          ":table/",
+          {
+           "Ref": "AthenaDatabase"
+          },
+          "/*"
+         ]
+        ]
+       }
+      },
+      {
+       "Action": "s3:ListBucket",
+       "Effect": "Allow",
+       "Resource": {
+        "Fn::Join": [
+         "",
+         [
+          "arn:aws:s3:us-east-1:",
+          {
+           "Ref": "AWS::AccountId"
+          },
+          ":",
+          {
+           "Fn::Select": [
+            2,
+            {
+             "Fn::Split": [
+              "/",
+              {
+               "Ref": "AthenaOutput"
+              }
+             ]
+            }
+           ]
+          }
+         ]
+        ]
+       }
+      },
+      {
+       "Action": [
+        "s3:GetObject",
+        "s3:PutObject"
+       ],
+       "Effect": "Allow",
+       "Resource": {
+        "Fn::Join": [
+         "",
+         [
+          "arn:aws:s3:us-east-1:",
+          {
+           "Ref": "AWS::AccountId"
+          },
+          ":",
+          {
+           "Fn::Select": [
+            2,
+            {
+             "Fn::Split": [
+              "/",
+              {
+               "Ref": "AthenaOutput"
+              }
+             ]
+            }
+           ]
+          },
+          "/",
+          {
+           "Fn::Join": [
+            "/",
+            [
+             {
+              "Fn::Select": [
+               3,
+               {
+                "Fn::Split": [
+                 "/",
+                 {
+                  "Ref": "AthenaOutput"
+                 }
+                ]
+               }
+              ]
+             },
+             {
+              "Fn::Select": [
+               4,
+               {
+                "Fn::Split": [
+                 "/",
+                 {
+                  "Ref": "AthenaOutput"
+                 }
+                ]
+               }
+              ]
+             }
+            ]
+           ]
+          },
+          "/*"
+         ]
+        ]
+       }
+      },
+      {
+       "Action": [
+        "sqs:GetQueueAttributes",
+        "sqs:GetQueueUrl",
+        "sqs:SendMessage"
+       ],
+       "Effect": "Allow",
+       "Resource": {
+        "Fn::GetAtt": [
+         "JobsQueue86ED6666",
+         "Arn"
+        ]
+       }
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "PolicyName": "EnqueueJobsFunctionServiceRoleDefaultPolicy05D31F48",
+    "Roles": [
+     {
+      "Ref": "EnqueueJobsFunctionServiceRole7BD4867E"
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "AmiraLetterScoringStack/EnqueueJobsFunction/ServiceRole/DefaultPolicy/Resource"
+   }
+  },
+  "EnqueueJobsFunction32F0B2E2": {
+   "Type": "AWS::Lambda::Function",
+   "Properties": {
+    "Code": {
+     "S3Bucket": {
+      "Fn::Sub": "cdk-hnb659fds-assets-${AWS::AccountId}-us-east-1"
+     },
+     "S3Key": "a6ce06348d9dcb5f2b3aa8b4b39a92cc276f0dbf1313a61ea2fbfabc3284f887.zip"
+    },
+    "Environment": {
+     "Variables": {
+      "JOBS_QUEUE_URL": {
+       "Ref": "JobsQueue86ED6666"
+      },
+      "ATHENA_DATABASE": {
+       "Ref": "AthenaDatabase"
+      },
+      "ATHENA_OUTPUT": {
+       "Ref": "AthenaOutput"
+      },
+      "ATHENA_QUERY": {
+       "Ref": "AthenaQuery"
+      }
+     }
+    },
+    "Handler": "index.handler",
+    "Role": {
+     "Fn::GetAtt": [
+      "EnqueueJobsFunctionServiceRole7BD4867E",
+      "Arn"
+     ]
+    },
+    "Runtime": "python3.12",
+    "Timeout": 300
+   },
+   "DependsOn": [
+    "EnqueueJobsFunctionServiceRoleDefaultPolicy05D31F48",
+    "EnqueueJobsFunctionServiceRole7BD4867E"
+   ],
+   "Metadata": {
+    "aws:cdk:path": "AmiraLetterScoringStack/EnqueueJobsFunction/Resource",
+    "aws:asset:path": "asset.a6ce06348d9dcb5f2b3aa8b4b39a92cc276f0dbf1313a61ea2fbfabc3284f887",
+    "aws:asset:is-bundled": false,
+    "aws:asset:property": "Code"
+   }
+  },
+  "NightlyScheduleRule901B3B59": {
+   "Type": "AWS::Events::Rule",
+   "Properties": {
+    "Description": "Enqueue nightly jobs at 2 AM UTC",
+    "ScheduleExpression": "cron(0 2 * * ? *)",
+    "State": "ENABLED",
+    "Targets": [
+     {
+      "Arn": {
+       "Fn::GetAtt": [
+        "EnqueueJobsFunction32F0B2E2",
+        "Arn"
+       ]
+      },
+      "Id": "Target0"
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "AmiraLetterScoringStack/NightlyScheduleRule/Resource"
+   }
+  },
+  "NightlyScheduleRuleAllowEventRuleAmiraLetterScoringStackEnqueueJobsFunction2B4ACB2A48841558": {
+   "Type": "AWS::Lambda::Permission",
+   "Properties": {
+    "Action": "lambda:InvokeFunction",
+    "FunctionName": {
+     "Fn::GetAtt": [
+      "EnqueueJobsFunction32F0B2E2",
+      "Arn"
+     ]
+    },
+    "Principal": "events.amazonaws.com",
+    "SourceArn": {
+     "Fn::GetAtt": [
+      "NightlyScheduleRule901B3B59",
+      "Arn"
+     ]
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "AmiraLetterScoringStack/NightlyScheduleRule/AllowEventRuleAmiraLetterScoringStackEnqueueJobsFunction2B4ACB2A"
+   }
+  },
+  "PrescaleMain": {
+   "Type": "AWS::AutoScaling::ScheduledAction",
+   "Properties": {
+    "AutoScalingGroupName": {
+     "Ref": "GpuAutoScalingGroupASG98F60F09"
+    },
+    "DesiredCapacity": 1,
+    "Recurrence": "55 1 * * *"
+   },
+   "Metadata": {
+    "aws:cdk:path": "AmiraLetterScoringStack/PrescaleMain"
+   }
+  },
+  "PrescaleG5x": {
+   "Type": "AWS::AutoScaling::ScheduledAction",
+   "Properties": {
+    "AutoScalingGroupName": {
+     "Ref": "GpuAsgG5xlargeASG242F426D"
+    },
+    "DesiredCapacity": 1,
+    "Recurrence": "55 1 * * *"
+   },
+   "Metadata": {
+    "aws:cdk:path": "AmiraLetterScoringStack/PrescaleG5x"
+   }
+  },
+  "PrescaleG52x": {
+   "Type": "AWS::AutoScaling::ScheduledAction",
+   "Properties": {
+    "AutoScalingGroupName": {
+     "Ref": "GpuAsgG52xlargeASG1CBA2EF7"
+    },
+    "DesiredCapacity": 1,
+    "Recurrence": "55 1 * * *"
+   },
+   "Metadata": {
+    "aws:cdk:path": "AmiraLetterScoringStack/PrescaleG52x"
+   }
+  },
+  "ScaleDownMain": {
+   "Type": "AWS::AutoScaling::ScheduledAction",
+   "Properties": {
+    "AutoScalingGroupName": {
+     "Ref": "GpuAutoScalingGroupASG98F60F09"
+    },
+    "DesiredCapacity": 0,
+    "Recurrence": "30 3 * * *"
+   },
+   "Metadata": {
+    "aws:cdk:path": "AmiraLetterScoringStack/ScaleDownMain"
+   }
+  },
+  "ScaleDownG5x": {
+   "Type": "AWS::AutoScaling::ScheduledAction",
+   "Properties": {
+    "AutoScalingGroupName": {
+     "Ref": "GpuAsgG5xlargeASG242F426D"
+    },
+    "DesiredCapacity": 0,
+    "Recurrence": "30 3 * * *"
+   },
+   "Metadata": {
+    "aws:cdk:path": "AmiraLetterScoringStack/ScaleDownG5x"
+   }
+  },
+  "ScaleDownG52x": {
+   "Type": "AWS::AutoScaling::ScheduledAction",
+   "Properties": {
+    "AutoScalingGroupName": {
+     "Ref": "GpuAsgG52xlargeASG1CBA2EF7"
+    },
+    "DesiredCapacity": 0,
+    "Recurrence": "30 3 * * *"
+   },
+   "Metadata": {
+    "aws:cdk:path": "AmiraLetterScoringStack/ScaleDownG52x"
+   }
+  },
+  "QueueOldestAgeAlarm3C55A24A": {
+   "Type": "AWS::CloudWatch::Alarm",
+   "Properties": {
+    "AlarmActions": [
+     {
+      "Ref": "OpsAlarmTopic795165FB"
+     }
+    ],
+    "ComparisonOperator": "GreaterThanThreshold",
+    "Dimensions": [
+     {
+      "Name": "QueueName",
+      "Value": {
+       "Fn::GetAtt": [
+        "JobsQueue86ED6666",
+        "QueueName"
+       ]
+      }
+     }
+    ],
+    "EvaluationPeriods": 3,
+    "MetricName": "ApproximateAgeOfOldestMessage",
+    "Namespace": "AWS/SQS",
+    "Period": 60,
+    "Statistic": "Average",
+    "Threshold": 900
+   },
+   "Metadata": {
+    "aws:cdk:path": "AmiraLetterScoringStack/QueueOldestAgeAlarm/Resource"
+   }
+  },
+  "DLQDepthAlarm5F8E21B8": {
+   "Type": "AWS::CloudWatch::Alarm",
+   "Properties": {
+    "AlarmActions": [
+     {
+      "Ref": "OpsAlarmTopic795165FB"
+     }
+    ],
+    "ComparisonOperator": "GreaterThanOrEqualToThreshold",
+    "Dimensions": [
+     {
+      "Name": "QueueName",
+      "Value": {
+       "Fn::GetAtt": [
+        "JobsDLQB327C2F8",
+        "QueueName"
+       ]
+      }
+     }
+    ],
+    "EvaluationPeriods": 1,
+    "MetricName": "ApproximateNumberOfMessagesVisible",
+    "Namespace": "AWS/SQS",
+    "Period": 60,
+    "Statistic": "Sum",
+    "Threshold": 1
+   },
+   "Metadata": {
+    "aws:cdk:path": "AmiraLetterScoringStack/DLQDepthAlarm/Resource"
+   }
+  },
+  "OpsAlarmTopic795165FB": {
+   "Type": "AWS::SNS::Topic",
+   "Properties": {
+    "DisplayName": "Amira Letter Scoring Alarms"
+   },
+   "Metadata": {
+    "aws:cdk:path": "AmiraLetterScoringStack/OpsAlarmTopic/Resource"
+   }
+  },
+  "OpsAlarmEmailSubscription": {
+   "Type": "AWS::SNS::Subscription",
+   "Properties": {
+    "Endpoint": {
+     "Ref": "AlarmEmail"
+    },
+    "Protocol": "email",
+    "TopicArn": {
+     "Ref": "OpsAlarmTopic795165FB"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "AmiraLetterScoringStack/OpsAlarmEmailSubscription"
+   },
+   "Condition": "AlarmEmailProvided"
+  },
+  "ManualEnqueueFunctionServiceRole52A6FC21": {
+   "Type": "AWS::IAM::Role",
+   "Properties": {
+    "AssumeRolePolicyDocument": {
+     "Statement": [
+      {
+       "Action": "sts:AssumeRole",
+       "Effect": "Allow",
+       "Principal": {
+        "Service": "lambda.amazonaws.com"
+       }
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "ManagedPolicyArns": [
+     {
+      "Fn::Join": [
+       "",
+       [
+        "arn:",
+        {
+         "Ref": "AWS::Partition"
+        },
+        ":iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+       ]
+      ]
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "AmiraLetterScoringStack/ManualEnqueueFunction/ServiceRole/Resource"
+   }
+  },
+  "ManualEnqueueFunctionServiceRoleDefaultPolicyD2620B86": {
+   "Type": "AWS::IAM::Policy",
+   "Properties": {
+    "PolicyDocument": {
+     "Statement": [
+      {
+       "Action": [
+        "sqs:GetQueueAttributes",
+        "sqs:GetQueueUrl",
+        "sqs:SendMessage"
+       ],
+       "Effect": "Allow",
+       "Resource": {
+        "Fn::GetAtt": [
+         "JobsQueue86ED6666",
+         "Arn"
+        ]
+       }
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "PolicyName": "ManualEnqueueFunctionServiceRoleDefaultPolicyD2620B86",
+    "Roles": [
+     {
+      "Ref": "ManualEnqueueFunctionServiceRole52A6FC21"
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "AmiraLetterScoringStack/ManualEnqueueFunction/ServiceRole/DefaultPolicy/Resource"
+   }
+  },
+  "ManualEnqueueFunction7DB3F605": {
+   "Type": "AWS::Lambda::Function",
+   "Properties": {
+    "Code": {
+     "S3Bucket": {
+      "Fn::Sub": "cdk-hnb659fds-assets-${AWS::AccountId}-us-east-1"
+     },
+     "S3Key": "29697d8de172de721e9c4fb119739539966b20f001868ff346d3804c9d31b677.zip"
+    },
+    "Environment": {
+     "Variables": {
+      "JOBS_QUEUE_URL": {
+       "Ref": "JobsQueue86ED6666"
+      }
+     }
+    },
+    "Handler": "index.handler",
+    "Role": {
+     "Fn::GetAtt": [
+      "ManualEnqueueFunctionServiceRole52A6FC21",
+      "Arn"
+     ]
+    },
+    "Runtime": "python3.12",
+    "Timeout": 60
+   },
+   "DependsOn": [
+    "ManualEnqueueFunctionServiceRoleDefaultPolicyD2620B86",
+    "ManualEnqueueFunctionServiceRole52A6FC21"
+   ],
+   "Metadata": {
+    "aws:cdk:path": "AmiraLetterScoringStack/ManualEnqueueFunction/Resource",
+    "aws:asset:path": "asset.29697d8de172de721e9c4fb119739539966b20f001868ff346d3804c9d31b677",
+    "aws:asset:is-bundled": false,
+    "aws:asset:property": "Code"
+   }
+  },
+  "ManualEnqueueFunctionFunctionUrl508CC192": {
+   "Type": "AWS::Lambda::Url",
+   "Properties": {
+    "AuthType": "AWS_IAM",
+    "Cors": {
+     "AllowMethods": [
+      "POST",
+      "OPTIONS"
+     ],
+     "AllowOrigins": [
+      "*"
+     ]
+    },
+    "TargetFunctionArn": {
+     "Fn::GetAtt": [
+      "ManualEnqueueFunction7DB3F605",
+      "Arn"
+     ]
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "AmiraLetterScoringStack/ManualEnqueueFunction/FunctionUrl/Resource"
+   }
+  },
+  "GpuUtilLowB6856694": {
+   "Type": "AWS::CloudWatch::Alarm",
+   "Properties": {
+    "AlarmActions": [
+     {
+      "Ref": "OpsAlarmTopic795165FB"
+     }
+    ],
+    "ComparisonOperator": "LessThanThreshold",
+    "EvaluationPeriods": 5,
+    "MetricName": "DCGM_FI_DEV_GPU_UTIL",
+    "Namespace": "CWAgent",
+    "Period": 60,
+    "Statistic": "Average",
+    "Threshold": 20
+   },
+   "Metadata": {
+    "aws:cdk:path": "AmiraLetterScoringStack/GpuUtilLow/Resource"
+   }
+  },
+  "GpuUtilHigh5C489A78": {
+   "Type": "AWS::CloudWatch::Alarm",
+   "Properties": {
+    "AlarmActions": [
+     {
+      "Ref": "OpsAlarmTopic795165FB"
+     }
+    ],
+    "ComparisonOperator": "GreaterThanThreshold",
+    "EvaluationPeriods": 3,
+    "MetricName": "DCGM_FI_DEV_GPU_UTIL",
+    "Namespace": "CWAgent",
+    "Period": 60,
+    "Statistic": "Average",
+    "Threshold": 95
+   },
+   "Metadata": {
+    "aws:cdk:path": "AmiraLetterScoringStack/GpuUtilHigh/Resource"
+   }
+  },
+  "TritonLatencyHigh0C9BF551": {
+   "Type": "AWS::CloudWatch::Alarm",
+   "Properties": {
+    "AlarmActions": [
+     {
+      "Ref": "OpsAlarmTopic795165FB"
+     }
+    ],
+    "ComparisonOperator": "GreaterThanThreshold",
+    "EvaluationPeriods": 5,
+    "ExtendedStatistic": "p95",
+    "MetricName": "nv_inference_request_duration_us",
+    "Namespace": "CWAgent",
+    "Period": 60,
+    "Threshold": 500000
+   },
+   "Metadata": {
+    "aws:cdk:path": "AmiraLetterScoringStack/TritonLatencyHigh/Resource"
+   }
+  },
+  "TritonQueueLatencyHighC7CC2687": {
+   "Type": "AWS::CloudWatch::Alarm",
+   "Properties": {
+    "AlarmActions": [
+     {
+      "Ref": "OpsAlarmTopic795165FB"
+     }
+    ],
+    "ComparisonOperator": "GreaterThanThreshold",
+    "EvaluationPeriods": 5,
+    "ExtendedStatistic": "p95",
+    "MetricName": "nv_inference_queue_duration_us",
+    "Namespace": "CWAgent",
+    "Period": 60,
+    "Threshold": 200000
+   },
+   "Metadata": {
+    "aws:cdk:path": "AmiraLetterScoringStack/TritonQueueLatencyHigh/Resource"
+   }
+  },
+  "TritonFailuresHigh5BD4F265": {
+   "Type": "AWS::CloudWatch::Alarm",
+   "Properties": {
+    "AlarmActions": [
+     {
+      "Ref": "OpsAlarmTopic795165FB"
+     }
+    ],
+    "ComparisonOperator": "GreaterThanOrEqualToThreshold",
+    "EvaluationPeriods": 1,
+    "MetricName": "nv_inference_fail",
+    "Namespace": "CWAgent",
+    "Period": 60,
+    "Statistic": "Sum",
+    "Threshold": 1
+   },
+   "Metadata": {
+    "aws:cdk:path": "AmiraLetterScoringStack/TritonFailuresHigh/Resource"
+   }
+  },
+  "AmiraGpuTritonDashboard60540966": {
+   "Type": "AWS::CloudWatch::Dashboard",
+   "Properties": {
+    "DashboardBody": {
+     "Fn::Join": [
+      "",
+      [
+       "{\"widgets\":[{\"type\":\"metric\",\"width\":12,\"height\":6,\"x\":0,\"y\":0,\"properties\":{\"view\":\"timeSeries\",\"title\":\"GPU Utilization\",\"region\":\"",
+       {
+        "Ref": "AWS::Region"
+       },
+       "\",\"metrics\":[[\"CWAgent\",\"DCGM_FI_DEV_GPU_UTIL\",{\"period\":60}]],\"yAxis\":{}}},{\"type\":\"metric\",\"width\":12,\"height\":6,\"x\":12,\"y\":0,\"properties\":{\"view\":\"timeSeries\",\"title\":\"Triton p95 Latency (us)\",\"region\":\"",
+       {
+        "Ref": "AWS::Region"
+       },
+       "\",\"metrics\":[[\"CWAgent\",\"nv_inference_request_duration_us\",{\"period\":60,\"stat\":\"p95\"}]],\"yAxis\":{}}},{\"type\":\"metric\",\"width\":12,\"height\":6,\"x\":0,\"y\":6,\"properties\":{\"view\":\"timeSeries\",\"title\":\"GPU Memory (bytes)\",\"region\":\"",
+       {
+        "Ref": "AWS::Region"
+       },
+       "\",\"metrics\":[[\"CWAgent\",\"DCGM_FI_DEV_FB_USED\",{\"period\":60}],[\"CWAgent\",\"DCGM_FI_DEV_FB_TOTAL\",{\"period\":60}]],\"yAxis\":{}}},{\"type\":\"metric\",\"width\":12,\"height\":6,\"x\":12,\"y\":6,\"properties\":{\"view\":\"timeSeries\",\"title\":\"Triton Queue p95 (us)\",\"region\":\"",
+       {
+        "Ref": "AWS::Region"
+       },
+       "\",\"metrics\":[[\"CWAgent\",\"nv_inference_queue_duration_us\",{\"period\":60,\"stat\":\"p95\"}]],\"yAxis\":{}}},{\"type\":\"metric\",\"width\":24,\"height\":6,\"x\":0,\"y\":12,\"properties\":{\"view\":\"timeSeries\",\"title\":\"Triton Throughput (req/min) & Failures\",\"region\":\"",
+       {
+        "Ref": "AWS::Region"
+       },
+       "\",\"metrics\":[[\"CWAgent\",\"nv_inference_count\",{\"period\":60,\"stat\":\"Sum\"}],[\"CWAgent\",\"nv_inference_fail\",{\"period\":60,\"stat\":\"Sum\",\"yAxis\":\"right\"}]],\"yAxis\":{}}}]}"
+      ]
+     ]
+    },
+    "DashboardName": "AmiraGpuTriton"
+   },
+   "Metadata": {
+    "aws:cdk:path": "AmiraLetterScoringStack/AmiraGpuTritonDashboard/Resource"
+   }
+  },
+  "EcsDrainOnSpotFnServiceRole040F4323": {
+   "Type": "AWS::IAM::Role",
+   "Properties": {
+    "AssumeRolePolicyDocument": {
+     "Statement": [
+      {
+       "Action": "sts:AssumeRole",
+       "Effect": "Allow",
+       "Principal": {
+        "Service": "lambda.amazonaws.com"
+       }
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "ManagedPolicyArns": [
+     {
+      "Fn::Join": [
+       "",
+       [
+        "arn:",
+        {
+         "Ref": "AWS::Partition"
+        },
+        ":iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+       ]
+      ]
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "AmiraLetterScoringStack/EcsDrainOnSpotFn/ServiceRole/Resource"
+   }
+  },
+  "EcsDrainOnSpotFnServiceRoleDefaultPolicyD890DE6B": {
+   "Type": "AWS::IAM::Policy",
+   "Properties": {
+    "PolicyDocument": {
+     "Statement": [
+      {
+       "Action": [
+        "ecs:DescribeContainerInstances",
+        "ecs:ListContainerInstances",
+        "ecs:UpdateContainerInstancesState"
+       ],
+       "Effect": "Allow",
+       "Resource": [
+        {
+         "Fn::GetAtt": [
+          "AmiraLetterScoringCluster5CE0BCC9",
+          "Arn"
+         ]
+        },
+        {
+         "Fn::Join": [
+          "",
+          [
+           {
+            "Fn::GetAtt": [
+             "AmiraLetterScoringCluster5CE0BCC9",
+             "Arn"
+            ]
+           },
+           "/*"
+          ]
+         ]
+        }
+       ]
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "PolicyName": "EcsDrainOnSpotFnServiceRoleDefaultPolicyD890DE6B",
+    "Roles": [
+     {
+      "Ref": "EcsDrainOnSpotFnServiceRole040F4323"
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "AmiraLetterScoringStack/EcsDrainOnSpotFn/ServiceRole/DefaultPolicy/Resource"
+   }
+  },
+  "EcsDrainOnSpotFn176764FB": {
+   "Type": "AWS::Lambda::Function",
+   "Properties": {
+    "Code": {
+     "ZipFile": "import os\nimport boto3\n\necs = boto3.client('ecs')\ncluster_arn = os.environ.get('CLUSTER_ARN')\n\ndef handler(event, context):\n    detail = event.get('detail', {})\n    instance_id = detail.get('instance-id') or detail.get('EC2InstanceId')\n    if not instance_id:\n        return {'status': 'no-instance-id'}\n    next_token = None\n    container_instance_arn = None\n    while True:\n        kwargs = {'cluster': cluster_arn}\n        if next_token:\n            kwargs['nextToken'] = next_token\n        resp = ecs.list_container_instances(**kwargs)\n        if not resp.get('containerInstanceArns'):\n            break\n        desc = ecs.describe_container_instances(cluster=cluster_arn, containerInstances=resp['containerInstanceArns'])\n        for ci in desc.get('containerInstances', []):\n            if ci.get('ec2InstanceId') == instance_id:\n                container_instance_arn = ci.get('containerInstanceArn')\n                break\n        if container_instance_arn:\n            break\n        next_token = resp.get('nextToken')\n        if not next_token:\n            break\n    if not container_instance_arn:\n        return {'status': 'no-container-instance'}\n    ecs.update_container_instances_state(cluster=cluster_arn, containerInstances=[container_instance_arn], status='DRAINING')\n    return {'status': 'draining', 'containerInstanceArn': container_instance_arn}\n"
+    },
+    "Environment": {
+     "Variables": {
+      "CLUSTER_ARN": {
+       "Fn::GetAtt": [
+        "AmiraLetterScoringCluster5CE0BCC9",
+        "Arn"
+       ]
+      }
+     }
+    },
+    "Handler": "index.handler",
+    "Role": {
+     "Fn::GetAtt": [
+      "EcsDrainOnSpotFnServiceRole040F4323",
+      "Arn"
+     ]
+    },
+    "Runtime": "python3.12",
+    "Timeout": 60
+   },
+   "DependsOn": [
+    "EcsDrainOnSpotFnServiceRoleDefaultPolicyD890DE6B",
+    "EcsDrainOnSpotFnServiceRole040F4323"
+   ],
+   "Metadata": {
+    "aws:cdk:path": "AmiraLetterScoringStack/EcsDrainOnSpotFn/Resource"
+   }
+  },
+  "SpotInterruptionDrainRule9F64F2D1": {
+   "Type": "AWS::Events::Rule",
+   "Properties": {
+    "Description": "Drain ECS container instances on Spot interruption warnings",
+    "EventPattern": {
+     "source": [
+      "aws.ec2"
+     ],
+     "detail-type": [
+      "EC2 Spot Instance Interruption Warning",
+      "EC2 Instance Rebalance Recommendation"
+     ]
+    },
+    "State": "ENABLED",
+    "Targets": [
+     {
+      "Arn": {
+       "Fn::GetAtt": [
+        "EcsDrainOnSpotFn176764FB",
+        "Arn"
+       ]
+      },
+      "Id": "Target0"
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "AmiraLetterScoringStack/SpotInterruptionDrainRule/Resource"
+   }
+  },
+  "SpotInterruptionDrainRuleAllowEventRuleAmiraLetterScoringStackEcsDrainOnSpotFn6C2F515E82D5D117": {
+   "Type": "AWS::Lambda::Permission",
+   "Properties": {
+    "Action": "lambda:InvokeFunction",
+    "FunctionName": {
+     "Fn::GetAtt": [
+      "EcsDrainOnSpotFn176764FB",
+      "Arn"
+     ]
+    },
+    "Principal": "events.amazonaws.com",
+    "SourceArn": {
+     "Fn::GetAtt": [
+      "SpotInterruptionDrainRule9F64F2D1",
+      "Arn"
+     ]
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "AmiraLetterScoringStack/SpotInterruptionDrainRule/AllowEventRuleAmiraLetterScoringStackEcsDrainOnSpotFn6C2F515E"
+   }
+  },
+  "CDKMetadata": {
+   "Type": "AWS::CDK::Metadata",
+   "Properties": {
+    "Analytics": "v2:deflate64:H4sIAAAAAAAA/21UwW7bMAz9lt5Vbc36A266FcUKzIuzXgtGZhI1suSJUorC8L+Pkh076Xox+R4lmnoUtZCLm4X8egVvdK3qw7XRG9lVAdRBMPXSofKyW2HrSAfn38Vya2fUC1QL2T23KvHP5VKUcWO0quLGYkjc7K1cDLiGjcGZn7mCyCkNQTs7LRal10cIOOd4tAE9+w/MvsH7+NMRFYGr3jdogxgZruu7rVunbRiXTjBn2oLC8zUVquh1eH/wLra5ygviCaJV+zU2reH8KX7JJDVIdksTiZOn+P/uElpQnLH07qhr9GfnJlHQ7mM8b/3IfVeLNdDhHrfa6pNkHxlnA2iL/ozjfRX6o1ZDCwa3FxoabrEbGpNt6biJWd7Ze7QUwCrkKrba8DaIwZECo+1OdgWDagCTep9xldpjHQ3WhUol9YK+ye4uqsPQ4NEbzPzvCzyAOyCu4dCw4D8xL0qmMBoo/zs5nP0vx39HjPlsg5O/c+4z2Avjdrzhyc0Fn3zORU2aDM/HKcFDg2NnJ8CStC3nyd28UCepkG75GvxunItLpgrYjlKNlZ0xg1SnXdOSXijjYv0GQe25AQZ8M5w8OfdA+40DXydqAnxAaDY1yO4HX9xT1nO/RN9oooRO9B9vUoRN6tYLEGEgWSQj8Mjjxoqt4nh7YroZZJlau1bnZ2FyeI5Jed3mxvcX0okVkos+XUweE9fMMD03n4ZO05AugsjV8Ku1Y3XyyDhbT5PxK4Y2hl5YV6N8pS/Hxa28lTdXr6T1tY826AblarD/AAfNQ4MPBQAA"
+   },
+   "Metadata": {
+    "aws:cdk:path": "AmiraLetterScoringStack/CDKMetadata/Default"
+   }
+  }
+ },
+ "Parameters": {
+  "ModelPath": {
+   "Type": "String",
+   "Default": "facebook/wav2vec2-base-960h",
+   "Description": "HF model path for Wav2Vec2"
+  },
+  "IncludeConfidence": {
+   "Type": "String",
+   "Default": "true",
+   "AllowedValues": [
+    "true",
+    "false"
+   ],
+   "Description": "Whether to compute confidence in worker"
+  },
+  "AudioDir": {
+   "Type": "String",
+   "Default": "/tmp/audio",
+   "Description": "Local audio working directory inside container"
+  },
+  "ResultsPrefix": {
+   "Type": "String",
+   "Default": "results/",
+   "Description": "S3 key prefix for results writes"
+  },
+  "NatGatewayCount": {
+   "Type": "Number",
+   "Default": 1,
+   "Description": "Number of NAT Gateways to create (set 0 to save cost with VPC endpoints)"
+  },
+  "AthenaDatabase": {
+   "Type": "String",
+   "Default": "default",
+   "Description": "Athena database name"
+  },
+  "AthenaOutput": {
+   "Type": "String",
+   "Default": "s3://athena-query-results/",
+   "Description": "Athena query output S3 path"
+  },
+  "AthenaQuery": {
+   "Type": "String",
+   "Default": "SELECT activity_id FROM activities WHERE process_flag = 1",
+   "Description": "Athena SQL to produce activity IDs"
+  },
+  "AudioBucketName": {
+   "Type": "String",
+   "Default": "",
+   "Description": "Optional S3 bucket name for input audio (read-only). Leave blank to skip."
+  },
+  "AudioPrefix": {
+   "Type": "String",
+   "Default": "",
+   "Description": "Optional S3 key prefix within the audio bucket."
+  },
+  "SsmParameterValueawsserviceecsoptimizedamiamazonlinux2gpurecommendedimageidC96584B6F00A464EAD1953AFF4B05118Parameter": {
+   "Type": "AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>",
+   "Default": "/aws/service/ecs/optimized-ami/amazon-linux-2/gpu/recommended/image_id"
+  },
+  "AlarmEmail": {
+   "Type": "String",
+   "Default": "",
+   "Description": "Optional email to subscribe to Ops alarms"
+  },
+  "BootstrapVersion": {
+   "Type": "AWS::SSM::Parameter::Value<String>",
+   "Default": "/cdk-bootstrap/hnb659fds/version",
+   "Description": "Version of the CDK Bootstrap resources in this environment, automatically retrieved from SSM Parameter Store. [cdk:skip]"
+  }
+ },
+ "Conditions": {
+  "AudioBucketProvided": {
+   "Fn::Not": [
+    {
+     "Fn::Equals": [
+      {
+       "Ref": "AudioBucketName"
+      },
+      ""
+     ]
+    }
+   ]
+  },
+  "AlarmEmailProvided": {
+   "Fn::Not": [
+    {
+     "Fn::Equals": [
+      {
+       "Ref": "AlarmEmail"
+      },
+      ""
+     ]
+    }
+   ]
+  }
+ },
+ "Outputs": {
+  "RepositoryUri": {
+   "Description": "ECR Repository URI",
+   "Value": {
+    "Fn::Join": [
+     "",
+     [
+      {
+       "Fn::Select": [
+        4,
+        {
+         "Fn::Split": [
+          ":",
+          {
+           "Fn::GetAtt": [
+            "AmiraLetterScoringRepo09CE897F",
+            "Arn"
+           ]
+          }
+         ]
+        }
+       ]
+      },
+      ".dkr.ecr.",
+      {
+       "Fn::Select": [
+        3,
+        {
+         "Fn::Split": [
+          ":",
+          {
+           "Fn::GetAtt": [
+            "AmiraLetterScoringRepo09CE897F",
+            "Arn"
+           ]
+          }
+         ]
+        }
+       ]
+      },
+      ".",
+      {
+       "Ref": "AWS::URLSuffix"
+      },
+      "/",
+      {
+       "Ref": "AmiraLetterScoringRepo09CE897F"
+      }
+     ]
+    ]
+   }
+  },
+  "ClusterName": {
+   "Description": "ECS Cluster Name",
+   "Value": {
+    "Ref": "AmiraLetterScoringCluster5CE0BCC9"
+   }
+  },
+  "ServiceName": {
+   "Description": "ECS Service Name",
+   "Value": {
+    "Fn::GetAtt": [
+     "AmiraLetterScoringService1F7D59D0",
+     "Name"
+    ]
+   }
+  },
+  "JobsQueueUrl": {
+   "Description": "SQS Jobs Queue URL",
+   "Value": {
+    "Ref": "JobsQueue86ED6666"
+   }
+  },
+  "ResultsBucketName": {
+   "Description": "S3 Results Bucket",
+   "Value": {
+    "Ref": "ResultsBucketA95A2103"
+   }
+  }
+ },
+ "Rules": {
+  "CheckBootstrapVersion": {
+   "Assertions": [
+    {
+     "Assert": {
+      "Fn::Not": [
+       {
+        "Fn::Contains": [
+         [
+          "1",
+          "2",
+          "3",
+          "4",
+          "5"
+         ],
+         {
+          "Ref": "BootstrapVersion"
+         }
+        ]
+       }
+      ]
+     },
+     "AssertDescription": "CDK bootstrap stack version 6 required. Please run 'cdk bootstrap' with a recent version of the CDK CLI."
+    }
+   ]
+  }
+ }
+}
