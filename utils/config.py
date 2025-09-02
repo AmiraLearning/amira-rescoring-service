@@ -1,5 +1,5 @@
 from typing import Final, Any
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, validator, root_validator
 from pathlib import Path
 import yaml
 from loguru import logger
@@ -11,6 +11,11 @@ from src.pipeline.inference.models import W2VConfig
 DEFAULT_CONFIG_PATH: Final[str] = "config_parallel.yaml"
 DEFAULT_RESULT_DIR: Final[str] = "2025_letter_sound_scoring"
 LOG_FORMAT: Final[str] = "{time:YYYY-MM-DD HH:mm:ss} | {level} | {message}"
+
+# S3 Audio Configuration Constants
+S3_SPEECH_ROOT_PROD: Final[str] = "amira-speech-stream"
+S3_SPEECH_ROOT_STAGE: Final[str] = "amira-speech-stream-stage"
+RECONSTITUTED_PHRASE_AUDIO: Final[str] = "reconstituted_phrase_audio"
 
 
 if os.getenv("ENABLE_FILE_LOG", "0") == "1":
@@ -48,6 +53,13 @@ class AudioConfig(BaseModel):
     padded_seconds: int = 3
     use_complete_audio: bool = True
 
+    @validator("padded_seconds")
+    def validate_padded_seconds(cls, v):
+        """Validate padded_seconds is within reasonable range."""
+        if v < 0 or v > 30:
+            raise ValueError("padded_seconds must be between 0 and 30")
+        return v
+
 
 class QueueSizesConfig(BaseModel):
     """Queue sizes configuration."""
@@ -55,6 +67,13 @@ class QueueSizesConfig(BaseModel):
     audio_queue: int = 100
     transcription_queue: int = 80
     status_updates_queue: int = 400
+
+    @validator("audio_queue", "transcription_queue", "status_updates_queue")
+    def validate_positive_queue_size(cls, v):
+        """Validate queue sizes are positive."""
+        if v <= 0:
+            raise ValueError("Queue sizes must be positive integers")
+        return v
 
 
 class TimeoutsConfig(BaseModel):
@@ -89,6 +108,52 @@ class PipelineConfig(BaseModel):
     aws: AwsConfig = Field(default_factory=AwsConfig)
     phrase_to_align: list[int] = Field(default_factory=lambda: [4, 11])
 
+    @root_validator(pre=False, skip_on_failure=True)
+    def validate_config_consistency(cls, values):
+        """Validate configuration consistency across fields."""
+        metadata = values.get("metadata")
+        if (
+            metadata
+            and hasattr(metadata, "processing_start_time")
+            and hasattr(metadata, "processing_end_time")
+        ):
+            if metadata.processing_start_time >= metadata.processing_end_time:
+                raise ValueError(
+                    "processing_start_time must be before processing_end_time"
+                )
+
+        return values
+
+    def validate_runtime_requirements(self) -> None:
+        """Validate runtime requirements and dependencies.
+
+        This method should be called after configuration is loaded
+        to ensure all required directories and dependencies are available.
+
+        Raises:
+            ValueError: If validation fails
+        """
+        # Validate audio directory exists or can be created
+        try:
+            self.audio.audio_dir.mkdir(parents=True, exist_ok=True)
+        except Exception as e:
+            raise ValueError(
+                f"Cannot create audio directory {self.audio.audio_dir}: {e}"
+            )
+
+        # Validate story phrase file exists if specified
+        if not self.cached.story_phrase_path.exists():
+            logger.warning(
+                f"Story phrase file not found: {self.cached.story_phrase_path}"
+            )
+
+        # Validate Triton configuration if enabled
+        if self.w2v2.use_triton:
+            if not self.w2v2.triton_url or not self.w2v2.triton_url.strip():
+                raise ValueError("triton_url is required when use_triton is True")
+
+        logger.debug("Configuration runtime validation passed")
+
 
 def load_config(*, config_path: str | None = None) -> PipelineConfig:
     """Load configuration from YAML file.
@@ -104,22 +169,39 @@ def load_config(*, config_path: str | None = None) -> PipelineConfig:
         yaml.YAMLError: If YAML parsing fails.
     """
     if config_path is None:
-        return PipelineConfig()
+        config = PipelineConfig()
+    else:
+        config_file: Path = Path(config_path)
+        if not config_file.exists():
+            raise FileNotFoundError(f"Config file not found: {config_path}")
 
-    config_file: Path = Path(config_path)
-    if not config_file.exists():
-        raise FileNotFoundError(f"Config file not found: {config_path}")
+        try:
+            with config_file.open("r") as file:
+                raw_config: dict[str, Any] = yaml.safe_load(file)
+        except yaml.YAMLError as e:
+            raise yaml.YAMLError(f"Failed to parse YAML config: {e}") from e
 
+        try:
+            config = PipelineConfig(**raw_config)
+        except Exception as e:
+            raise ValueError(f"Invalid configuration: {e}") from e
+
+        logger.info(f"Config loaded from {config_path}")
+
+    # Override with environment variables if present (for containerized deployment)
+    if os.getenv("USE_TRITON"):
+        config.w2v2.use_triton = os.getenv("USE_TRITON", "false").lower() == "true"
+    if os.getenv("TRITON_URL"):
+        config.w2v2.triton_url = os.getenv("TRITON_URL", config.w2v2.triton_url)
+    if os.getenv("TRITON_MODEL"):
+        config.w2v2.triton_model = os.getenv("TRITON_MODEL", config.w2v2.triton_model)
+    if os.getenv("MODEL_PATH"):
+        config.w2v2.model_path = os.getenv("MODEL_PATH", config.w2v2.model_path)
+
+    # Validate runtime requirements
     try:
-        with config_file.open("r") as file:
-            raw_config: dict[str, Any] = yaml.safe_load(file)
-    except yaml.YAMLError as e:
-        raise yaml.YAMLError(f"Failed to parse YAML config: {e}") from e
-
-    try:
-        config: PipelineConfig = PipelineConfig(**raw_config)
+        config.validate_runtime_requirements()
     except Exception as e:
-        raise ValueError(f"Invalid configuration: {e}") from e
+        logger.warning(f"Configuration validation failed: {e}")
 
-    logger.info(f"Config loaded from {config_path}")
     return config

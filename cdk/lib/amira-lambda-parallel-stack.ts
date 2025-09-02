@@ -55,6 +55,11 @@ export class AmiraLambdaParallelStack extends cdk.Stack {
       description: 'Slack webhook URL for job completion and error notifications',
       noEcho: true
     });
+    const tritonClusterUrlParam = new cdk.CfnParameter(this, 'TritonClusterUrl', {
+      type: 'String',
+      default: '',
+      description: 'Optional Triton GPU cluster URL for remote inference. Leave blank for CPU-only mode.'
+    });
 
     // KMS key for encryption
     const kmsKey = new kms.Key(this, 'AmiraParallelKey', {
@@ -120,7 +125,11 @@ export class AmiraLambdaParallelStack extends cdk.Stack {
         SLACK_WEBHOOK_URL: slackWebhookParam.valueAsString,
         USE_FLOAT16: 'true',
         INCLUDE_CONFIDENCE: 'true',
-        TEST_MODE: 'false'
+        TEST_MODE: 'false',
+        // Triton configuration for remote GPU inference
+        USE_TRITON: cdk.Fn.conditionIf(tritonUrlProvided.logicalId, 'true', 'false').toString(),
+        TRITON_URL: tritonClusterUrlParam.valueAsString,
+        TRITON_MODEL: 'w2v2'
       }
     });
 
@@ -133,9 +142,12 @@ export class AmiraLambdaParallelStack extends cdk.Stack {
     });
     processingLambda.addEventSource(eventSource);
 
-    // IAM permissions for processing Lambda
+    // Conditions
     const audioProvided = new cdk.CfnCondition(this, 'AudioBucketProvided', {
       expression: cdk.Fn.conditionNot(cdk.Fn.conditionEquals(audioBucketNameParam.valueAsString, ''))
+    });
+    const tritonUrlProvided = new cdk.CfnCondition(this, 'TritonUrlProvided', {
+      expression: cdk.Fn.conditionNot(cdk.Fn.conditionEquals(tritonClusterUrlParam.valueAsString, ''))
     });
     
     const audioPolicyDoc = new iam.PolicyDocument({

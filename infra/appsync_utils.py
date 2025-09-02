@@ -3,6 +3,8 @@ from pydantic import BaseModel
 from typing import Any, Final
 from utils.config import AwsConfig  # TODO rename to AWSConfig
 from gql.transport.requests import RequestsHTTPTransport
+import requests
+from loguru import logger
 
 _GRAPHQL_ENDPOINT_URL: Final[str] = (
     "https://4tsmcay4pnbhtmpxq7o24wktgy.appsync-api.us-east-1.amazonaws.com/graphql"
@@ -157,14 +159,8 @@ def set_activity_fields(
         )
     except Exception as e:
         # For testing purposes, return a mock response if GraphQL fails
-        print(f"GraphQL update failed (this is expected in test mode): {e}")
-        response = {
-            "data": {
-                "updateActivity": {
-                    "activityId": activity_id
-                }
-            }
-        }
+        logger.info(f"GraphQL update failed (this is expected in test mode): {e}")
+        response = {"data": {"updateActivity": {"activityId": activity_id}}}
 
     return response
 
@@ -221,19 +217,35 @@ def get_activity(*, activity_id: str) -> dict[str, Any]:
     Returns:
         The response data from the AppSync API.
     """
+    import time
+    from requests.adapters import HTTPAdapter
+    from urllib3.util.retry import Retry
+
     variables = {"activityId": [activity_id]}
 
-    client: Client = Client(
-        transport=RequestsHTTPTransport(
-            url=_GRAPHQL_ENDPOINT_URL, headers={"x-api-key": _GRAPHQL_ENDPOINT_KEY}
-        )
+    transport = RequestsHTTPTransport(
+        url=_GRAPHQL_ENDPOINT_URL,
+        headers={"x-api-key": _GRAPHQL_ENDPOINT_KEY},
+        timeout=60,
     )
 
-    response: dict[str, Any] = client.execute(
-        GET_ACTIVITY_QUERY, variable_values=variables
-    )
+    client: Client = Client(transport=transport)
 
-    return response
+    # Retry logic for connection issues
+    for attempt in range(3):
+        try:
+            response: dict[str, Any] = client.execute(
+                GET_ACTIVITY_QUERY, variable_values=variables
+            )
+            return response
+        except Exception as e:
+            if attempt == 2:  # Last attempt
+                raise
+            logger.warning(f"GraphQL attempt {attempt + 1} failed, retrying: {e}")
+            time.sleep(2**attempt)  # Exponential backoff
+
+    # This should never be reached due to the raise in the loop, but satisfies mypy
+    raise RuntimeError("Failed to get activity after all retry attempts")
 
 
 def load_activity_from_graphql(*, activity_id: str) -> dict[str, Any]:
@@ -245,7 +257,6 @@ def load_activity_from_graphql(*, activity_id: str) -> dict[str, Any]:
     Returns:
         Dictionary containing activity data in the same format as Athena queries.
     """
-    import polars as pl
 
     response = get_activity(activity_id=activity_id)
 

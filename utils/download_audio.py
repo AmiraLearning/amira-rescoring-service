@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """S3 helpers for downloading and preparing tutor-style phrase audio.
 
 This module provides small, focused utilities with clear typing and
@@ -16,18 +14,23 @@ from loguru import logger
 
 from infra.s3_client import ProductionS3Client
 from utils.phrase_slicing import PhraseSlicer, s3_find
-
-# TODO double check logic
-# TODO move config to config
-
-
-_S3_SPEECH_ROOT_PROD: Final[str] = "amira-speech-stream"
-_S3_SPEECH_ROOT_STAGE: Final[str] = "amira-speech-stream-stage"
-RECONSTITUTED_PHRASE_AUDIO: Final[str] = "reconstituted_phrase_audio"
+from utils.config import (
+    S3_SPEECH_ROOT_PROD,
+    S3_SPEECH_ROOT_STAGE,
+    RECONSTITUTED_PHRASE_AUDIO,
+)
 
 
 def resolve_bucket(stage_source: bool) -> str:
-    return _S3_SPEECH_ROOT_STAGE if stage_source else _S3_SPEECH_ROOT_PROD
+    """Resolve S3 bucket name based on environment.
+
+    Args:
+        stage_source: True for staging environment, False for production
+
+    Returns:
+        S3 bucket name string
+    """
+    return S3_SPEECH_ROOT_STAGE if stage_source else S3_SPEECH_ROOT_PROD
 
 
 class DatasetLayout(BaseModel):
@@ -54,7 +57,9 @@ def resolve_dataset_layout(
         The resolved dataset layout
     """
     if RECONSTITUTED_PHRASE_AUDIO in str(audio_path):
-        resolved_root_dir: Path = Path(str(audio_path).split(RECONSTITUTED_PHRASE_AUDIO)[0])
+        resolved_root_dir: Path = Path(
+            str(audio_path).split(RECONSTITUTED_PHRASE_AUDIO)[0]
+        )
         resolved_dataset_suffix = (
             str(audio_path).split(RECONSTITUTED_PHRASE_AUDIO)[-1].strip("/")
         )
@@ -68,7 +73,9 @@ def resolve_dataset_layout(
         else resolved_root_dir / RECONSTITUTED_PHRASE_AUDIO / resolved_dataset_suffix
     )
     return DatasetLayout(
-        root_dir=resolved_root_dir, dataset_dir=dataset_dir, dataset_suffix=resolved_dataset_suffix
+        root_dir=resolved_root_dir,
+        dataset_dir=dataset_dir,
+        dataset_suffix=resolved_dataset_suffix,
     )
 
 
@@ -99,7 +106,9 @@ async def get_segment_file_names(
     """
     keys: list[str] = []
     bucket: str = resolve_bucket(stage_source)
-    for obj in await s3_find(bucket=bucket, prefix=f"{activity_id}/", s3_client=s3_client):
+    for obj in await s3_find(
+        bucket=bucket, prefix=f"{activity_id}/", s3_client=s3_client
+    ):
         if ".wav" in obj.key and "complete" not in obj.key:
             keys.append(obj.key)
         else:
@@ -211,9 +220,7 @@ async def _upload_sliced_audio_to_s3(
 
     upload_operations = []
     for wav_file in iter_wav_files(directory=activity_dir):
-        base_path: str = parsed_url.path.strip("/").split(
-            RECONSTITUTED_PHRASE_AUDIO
-        )[0]
+        base_path: str = parsed_url.path.strip("/").split(RECONSTITUTED_PHRASE_AUDIO)[0]
         s3_path: Path = (
             Path(base_path)
             / RECONSTITUTED_PHRASE_AUDIO
@@ -221,9 +228,9 @@ async def _upload_sliced_audio_to_s3(
             / effective_activity_id
             / wav_file.name
         )
-        
+
         upload_operations.append((str(wav_file), bucket_name, str(s3_path)))
-    
+
     if upload_operations:
         try:
             results = await s3_client.upload_files_batch(upload_operations)
@@ -232,5 +239,3 @@ async def _upload_sliced_audio_to_s3(
                     logger.warning(f"Failed to upload: {result.error}")
         except Exception as e:
             logger.warning(f"Batch upload failed: {e}")
-
-

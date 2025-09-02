@@ -92,7 +92,7 @@ def run(
         if activity_id:
             config_obj.metadata.activity_id = activity_id
             typer.echo(f"Processing specific activity ID: {activity_id}")
-            
+
         if use_complete_audio:
             config_obj.audio.use_complete_audio = use_complete_audio
             typer.echo("Using complete.wav audio method")

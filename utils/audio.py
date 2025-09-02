@@ -1,4 +1,3 @@
-import logging
 from pathlib import Path
 from typing import Final
 from functools import lru_cache
@@ -13,9 +12,7 @@ import threading
 import warnings
 
 # Suppress noisy torchaudio deprecation warnings globally
-warnings.filterwarnings(
-    "ignore", category=UserWarning, module=r"torchaudio(\..*)?"
-)
+warnings.filterwarnings("ignore", category=UserWarning, module=r"torchaudio(\..*)?")
 
 # Use the recommended torchaudio loading function
 try:
@@ -170,7 +167,9 @@ class AudioSegmentRequest(BaseModel):
 class PaddedAudioSaveRequest(BaseModel):
     """Request model for saving padded audio."""
 
-    padded_path: Path = Field(..., description="Path where padded audio should be saved")
+    padded_path: Path = Field(
+        ..., description="Path where padded audio should be saved"
+    )
     processed_speech: torch.Tensor = Field(
         ..., description="Processed audio tensor to save"
     )
@@ -221,10 +220,10 @@ async def download_tutor_style_audio(
             use_audio_dir_as_activities_root=False,
         )
     except FileNotFoundError as e:
-        logging.warning(f"Failed to find files for activity {activity_id}: {e}")
+        logger.warning(f"Failed to find files for activity {activity_id}: {e}")
         return False
     except Exception as e:
-        logging.error(f"Error processing activity {activity_id}: {e}")
+        logger.error(f"Error processing activity {activity_id}: {e}")
         return False
 
 
@@ -257,7 +256,7 @@ def _load_audio_segment(*, request: AudioSegmentRequest) -> torch.Tensor | None:
             else resampled_seg[:num_samples]
         )
     except Exception as e:
-        logging.warning(f"Failed to load audio segment from {request.file_path}: {e}")
+        logger.warning(f"Failed to load audio segment from {request.file_path}: {e}")
         return None
 
 
@@ -282,7 +281,7 @@ def _save_padded_audio(*, request: PaddedAudioSaveRequest) -> None:
             bits_per_sample=AUDIO_BITS_PER_SAMPLE,
         )
     except Exception as e:
-        logging.warning(
+        logger.warning(
             f"Failed to save padded audio for {request.activity_id}/{request.phrase_index}: {e}"
         )
 
@@ -360,7 +359,7 @@ def pad_audio_in_memory(*, request: PadAudioRequest) -> np.ndarray | None:
             )
         return processed_speech.numpy()
     except Exception as e:
-        logging.error(
+        logger.error(
             f"Failed to pad audio for {request.activity_id}/{request.phrase_index}: {e}"
         )
         return None
@@ -522,7 +521,10 @@ def prefetch_activity_phrase_audio(*, audio_dir: str, activity_id: str) -> None:
     """
     try:
         phrase_dir = (
-            Path(audio_dir) / RECONSTITUTED_AUDIO_SUBDIR / DEFAULT_AUDIO_SUBDIR / activity_id
+            Path(audio_dir)
+            / RECONSTITUTED_AUDIO_SUBDIR
+            / DEFAULT_AUDIO_SUBDIR
+            / activity_id
         )
         if not phrase_dir.exists():
             return

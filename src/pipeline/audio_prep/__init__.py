@@ -20,10 +20,12 @@ async def cpu_download_worker(
     activity_input: ActivityInput = ActivityInput(
         activityId=activity_id, phrases=phrases_input
     )
-    
+
     # Choose audio preparation method based on config flag
     if config.audio.use_complete_audio:
-        return await engine.prepare_activity_audio_with_complete(activity_input=activity_input)
+        return await engine.prepare_activity_audio_with_complete(
+            activity_input=activity_input
+        )
     else:
         return await engine.prepare_activity_audio(activity_input=activity_input)
 

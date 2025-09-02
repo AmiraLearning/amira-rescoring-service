@@ -104,11 +104,13 @@ async def load_activity_data(*, config: PipelineConfig) -> pl.DataFrame:
             activity_df = pl.read_csv(config.metadata.activity_file)
     else:
         logger.info("Fetching activities from data lake")
-        query_start_time = config.metadata.processing_start_time.strftime("%Y-%m-%d %H:%M:%S")
-        query_end_time = config.metadata.processing_end_time.strftime("%Y-%m-%d %H:%M:%S")
-        logger.info(
-            f"Using time range: {query_start_time} to {query_end_time}"
+        query_start_time = config.metadata.processing_start_time.strftime(
+            "%Y-%m-%d %H:%M:%S"
         )
+        query_end_time = config.metadata.processing_end_time.strftime(
+            "%Y-%m-%d %H:%M:%S"
+        )
+        logger.info(f"Using time range: {query_start_time} to {query_end_time}")
 
         activity_df = await query_athena(
             query=ACTIVITY_QUERY.format(

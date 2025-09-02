@@ -22,6 +22,7 @@ from src.pipeline.query import (
     load_story_phrase_data,
     merge_activities_with_phrases,
 )
+
 warnings.filterwarnings("ignore", category=UserWarning, module=r"torchaudio(\..*)?")
 from utils.config import PipelineConfig
 from src.pipeline.audio_prep import cpu_download_worker, ActivityOutput, PhraseInput
@@ -92,10 +93,12 @@ class PreparedData:
     Attributes:
         activity_df: DataFrame containing activity data
         phrase_df: DataFrame containing phrase data
+        engine: Pre-loaded inference engine (optional)
     """
 
     activity_df: pl.DataFrame
     phrase_df: pl.DataFrame
+    engine: Any = None
 
 
 async def load_and_prepare_data(*, config: PipelineConfig) -> PreparedData:
@@ -106,8 +109,17 @@ async def load_and_prepare_data(*, config: PipelineConfig) -> PreparedData:
         config: Pipeline configuration parameters
 
     Returns:
-        Tuple containing activity dataframe and merged phrase dataframe
+        PreparedData containing activity dataframe and merged phrase dataframe
+
+    Raises:
+        ValueError: If config is None or invalid
+        Exception: If data loading fails
     """
+    if config is None:
+        raise ValueError("Config parameter is required")
+
+    if not hasattr(config, "w2v2") or config.w2v2 is None:
+        raise ValueError("Config must contain valid w2v2 configuration")
     # Kick off async preload of inference engine while we load data
     preload_task = asyncio.create_task(
         preload_inference_engine_async(w2v_config=config.w2v2, warmup=True)
@@ -132,11 +144,12 @@ async def load_and_prepare_data(*, config: PipelineConfig) -> PreparedData:
     )
 
     try:
-        await asyncio.gather(preload_task, s3_preload_task)
+        engine, _ = await asyncio.gather(preload_task, s3_preload_task)
     except Exception as e:
         logger.warning(f"Preload failed (continuing): {e}")
+        engine = None
 
-    return PreparedData(activity_df=activity_df, phrase_df=phrase_df)
+    return PreparedData(activity_df=activity_df, phrase_df=phrase_df, engine=engine)
 
 
 def group_activities_by_id(*, phrase_df: pl.DataFrame) -> dict[str, list[Any]]:
@@ -185,7 +198,11 @@ class ProcessedActivity:
 
 
 async def process_activity(
-    *, activity_id: str, phrases_input: list[PhraseInput], config: PipelineConfig
+    *,
+    activity_id: str,
+    phrases_input: list[PhraseInput],
+    config: PipelineConfig,
+    engine: Any = None,
 ) -> ProcessedActivity:
     """
     Process a single activity through CPU and GPU stages.
@@ -194,32 +211,55 @@ async def process_activity(
         activity_id: ID of the activity to process
         phrases_input: Input phrases for the activity
         config: Pipeline configuration parameters
+        engine: Pre-loaded inference engine (optional)
 
     Returns:
-        Tuple containing activity output and inference result
+        ProcessedActivity containing activity output and phonetic transcript
+
+    Raises:
+        ValueError: If required parameters are None or invalid
+        Exception: If processing fails
     """
+    if not activity_id or not activity_id.strip():
+        raise ValueError("Activity ID cannot be empty")
+
+    if not phrases_input:
+        raise ValueError("Phrases input cannot be empty")
+
+    if config is None:
+        raise ValueError("Config parameter is required")
     phrase_inputs: list[PhraseInput] = phrases_input
     activity_outputs: ActivityOutput = await cpu_download_worker(
         phrases_input=phrase_inputs, activity_id=activity_id, config=config
     )
 
-    audio_arrays = [
-        phrase.speech
-        for phrase in activity_outputs.phrases
-        if phrase.speech is not None and len(phrase.speech) > 0
-    ]
-    if audio_arrays:
-        concatenated_audio = np.concatenate(audio_arrays, axis=0)
-    else:
-        raise ValueError("No audio arrays found")
+    # Process each phrase individually instead of concatenating
+    all_elements = []
+    all_confidences = []
 
-    inference_output: GPUInferenceResult = perform_single_audio_inference(
-        audio_array=concatenated_audio, w2v_config=config.w2v2
+    for phrase in activity_outputs.phrases:
+        if phrase.speech is not None and len(phrase.speech) > 0:
+            inference_output: GPUInferenceResult = perform_single_audio_inference(
+                audio_array=phrase.speech,
+                w2v_config=config.w2v2,
+                inference_id=f"{activity_id}_phrase_{phrase.phraseIndex}",
+                engine=engine,
+            )
+
+            if inference_output.success and inference_output.phonetic_transcript:
+                all_elements.extend(inference_output.phonetic_transcript.elements)
+                all_confidences.extend(inference_output.phonetic_transcript.confidences)
+
+    # Create combined phonetic transcript
+    from src.pipeline.inference.models import PhoneticTranscript
+
+    combined_transcript = PhoneticTranscript(
+        elements=all_elements, confidences=all_confidences
     )
 
     return ProcessedActivity(
         activity_outputs=activity_outputs,
-        phonetic_transcript=inference_output.phonetic_transcript,
+        phonetic_transcript=combined_transcript,
     )
 
 
@@ -235,49 +275,81 @@ def perform_alignment(
 
     Returns:
         Dictionary containing alignment errors nested by phrase
+
+    Raises:
+        ValueError: If required parameters are None or invalid
+        Exception: If alignment processing fails
     """
+    if activity_outputs is None:
+        raise ValueError("Activity outputs parameter is required")
+
+    if phonetic_transcript is None:
+        raise ValueError("Phonetic transcript parameter is required")
+
+    if not hasattr(activity_outputs, "phrases") or not activity_outputs.phrases:
+        logger.warning("No phrases found in activity outputs")
+        return {
+            "alignment_errors": [],
+            "error_count": 0,
+            "total_alignments": 0,
+            "alignment_accuracy": 0.0,
+        }
     # Process alignment for each phrase individually, maintaining nested structure
     phrase_errors_nested = []
-    
+
     for phrase in activity_outputs.phrases:
-        expected_text: list[str] = phrase.expected_text if isinstance(phrase.expected_text, list) else [phrase.expected_text]
-        reference_phonemes: list[str] = phrase.reference_phonemes if isinstance(phrase.reference_phonemes, list) else [phrase.reference_phonemes]
-        
+        expected_text: list[str] = (
+            phrase.expected_text
+            if isinstance(phrase.expected_text, list)
+            else [phrase.expected_text]
+        )
+        reference_phonemes: list[str] = (
+            phrase.reference_phonemes
+            if isinstance(phrase.reference_phonemes, list)
+            else [phrase.reference_phonemes]
+        )
+
         try:
             _, phrase_errors, _ = word_level_alignment(
                 expected_items=expected_text,
                 ref_phons=reference_phonemes,
                 hyp_phons=phonetic_transcript.elements,
-                confidences=phonetic_transcript.confidences
+                confidences=phonetic_transcript.confidences,
             )
             phrase_errors_nested.append(phrase_errors)
         except Exception as e:
             logger.error(f"Alignment failed for phrase {phrase}: {e}")
             # Add errors for all expected items in this phrase
             phrase_errors_nested.append([True] * len(expected_text))
-    
+
     # Flatten for summary statistics but keep nested structure for main output
-    flattened_errors = [error for phrase_errors in phrase_errors_nested for error in phrase_errors]
+    flattened_errors = [
+        error for phrase_errors in phrase_errors_nested for error in phrase_errors
+    ]
 
     logger.info(f"Alignment errors by phrase: {phrase_errors_nested}")
-    
+
     # Convert alignment errors to proper field values format
     error_count = sum(flattened_errors) if flattened_errors else 0
     total_count = len(flattened_errors) if flattened_errors else 0
     accuracy = (total_count - error_count) / total_count if total_count > 0 else 0.0
-    
+
     field_values = {
         "alignment_errors": phrase_errors_nested,
         "error_count": error_count,
         "total_alignments": total_count,
-        "alignment_accuracy": accuracy
+        "alignment_accuracy": accuracy,
     }
-    
+
     return field_values
 
 
 async def process_single_activity(
-    *, activity_id: str, phrases_input: list[PhraseInput], config: PipelineConfig
+    *,
+    activity_id: str,
+    phrases_input: list[PhraseInput],
+    config: PipelineConfig,
+    engine: Any = None,
 ) -> dict[str, Any]:
     """
     Process a single activity through CPU and GPU stages.
@@ -286,6 +358,7 @@ async def process_single_activity(
         activity_id=activity_id,
         phrases_input=phrases_input,
         config=config,
+        engine=engine,
     )
 
     errors: Any = perform_alignment(
@@ -311,10 +384,9 @@ async def run_activity_pipeline(*, config: PipelineConfig) -> list[dict[str, Any
         bool: True if pipeline executed successfully
     """
     prepared_data: PreparedData = await load_and_prepare_data(config=config)
+    engine = prepared_data.engine
 
-    activity_groups = group_activities_by_id(
-        phrase_df=prepared_data.phrase_df
-    )
+    activity_groups = group_activities_by_id(phrase_df=prepared_data.phrase_df)
     activity_ids = activity_groups.get(ActivityFields.ACTIVITY_ID, [])
 
     if not activity_ids:
@@ -322,9 +394,7 @@ async def run_activity_pipeline(*, config: PipelineConfig) -> list[dict[str, Any
         return []
 
     activity_responses: list[dict[str, Any]] = []
-    records_list = activity_groups.get(
-        ActivityFields.RECORDS, []
-    )
+    records_list = activity_groups.get(ActivityFields.RECORDS, [])
 
     logger.debug(f"Processing {len(activity_ids)} activities")
     logger.debug(f"Records list length: {len(records_list)}")
@@ -334,16 +404,16 @@ async def run_activity_pipeline(*, config: PipelineConfig) -> list[dict[str, Any
                 activity_id=activity_id,
                 phrases_input=records_list[idx],
                 config=config,
+                engine=engine,
             )
             activity_responses.append(activity_response)
         else:
             logger.warning(f"No records found for activity {activity_id}")
-    # Best-effort close of S3 sessions used by the audio prep engine
+    # Best-effort close of global S3 sessions
     try:
-        # cpu_download_worker constructs and closes its own S3 clients internally in many cases,
-        # but if an engine is used externally, expose a close hook.
-        engine = AudioPreparationEngine(config=config)
-        await engine.close()
+        from infra.s3_client import close_global_s3_clients_async
+
+        await close_global_s3_clients_async()
     except Exception as e:
         logger.warning(f"S3 cleanup skipped: {e}")
 

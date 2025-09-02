@@ -44,4 +44,5 @@ dev = [
     "boto3-stubs>=1.40.21",
     "types-aioboto3>=15.1.0",
     "scipy-stubs>=1.16.1.1",
+    "types-requests>=2.32.4.20250809",
 ]

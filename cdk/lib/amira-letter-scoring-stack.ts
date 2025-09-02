@@ -17,6 +17,7 @@ import * as kms from 'aws-cdk-lib/aws-kms';
 import * as sns from 'aws-cdk-lib/aws-sns';
 import * as ssm from 'aws-cdk-lib/aws-ssm';
 import * as cw_dash from 'aws-cdk-lib/aws-cloudwatch';
+import * as elbv2 from 'aws-cdk-lib/aws-elasticloadbalancingv2';
 import { Construct } from 'constructs';
 import cwAgentConfig = require('./cw-agent-config.json');
 
@@ -63,6 +64,8 @@ export class AmiraLetterScoringStack extends cdk.Stack {
         description: 'Keep only 10 most recent images'
       }]
     });
+
+    // ECR repositories for Triton GPU cluster (conditional)
     const tritonRepository = new ecr.Repository(this, 'TritonServerRepo', {
       repositoryName: 'triton-server',
       imageScanOnPush: true,
@@ -164,11 +167,26 @@ export class AmiraLetterScoringStack extends cdk.Stack {
       description: 'Optional columns to select for dynamic query'
     });
 
+    // Triton inference feature flag
+    const useTritonParam = new cdk.CfnParameter(this, 'UseTriton', {
+      type: 'String',
+      default: 'false',
+      allowedValues: ['true', 'false'],
+      description: 'Whether to enable Triton inference server with GPU resources'
+    });
+
     // Optional Audio bucket for read-only access
     const audioBucketNameParam = new cdk.CfnParameter(this, 'AudioBucketName', {
       type: 'String',
       default: '',
       description: 'Optional S3 bucket name for input audio (read-only). Leave blank to skip.'
+    });
+
+    // Triton URL parameter for remote inference (when UseTriton=false but want to call external Triton)
+    const tritonServerUrlParam = new cdk.CfnParameter(this, 'TritonServerUrl', {
+      type: 'String',
+      default: '',
+      description: 'Optional external Triton server URL for remote inference. Leave blank for local sidecar.'
     });
     const audioBucketPrefixParam = new cdk.CfnParameter(this, 'AudioPrefix', {
       type: 'String',
@@ -404,9 +422,12 @@ export class AmiraLetterScoringStack extends cdk.Stack {
       }
     });
 
-    // Optional Audio bucket read policy (conditional)
+    // Conditions for conditional resources
     const audioProvided = new cdk.CfnCondition(this, 'AudioBucketProvided', {
       expression: cdk.Fn.conditionNot(cdk.Fn.conditionEquals(audioBucketNameParam.valueAsString, ''))
+    });
+    const useTritonCondition = new cdk.CfnCondition(this, 'UseTritonCondition', {
+      expression: cdk.Fn.conditionEquals(useTritonParam.valueAsString, 'true')
     });
     const audioPolicyDoc = new iam.PolicyDocument({
       statements: [
@@ -449,64 +470,14 @@ export class AmiraLetterScoringStack extends cdk.Stack {
       networkMode: ecs.NetworkMode.AWS_VPC
     });
 
-    // Container definition
-    const container = taskDefinition.addContainer('AmiraLetterScoringContainer', {
-      image: ecs.ContainerImage.fromEcrRepository(repository, appImageTagParam.valueAsString),
-      memoryReservationMiB: 8192,
-      cpu: 2048,
-      // gpuCount assigned to Triton sidecar when enabled
-      logging: ecs.LogDriver.awsLogs({
-        logGroup,
-        streamPrefix: 'amira-letter-scoring'
-      }),
-      environment: {
-        PYTHONPATH: '/app',
-        RESULTS_BUCKET: resultsBucket.bucketName,
-        JOBS_QUEUE_URL: jobsQueue.queueUrl,
-        AUDIO_DIR: audioDirParam.valueAsString,
-        USE_TRITON: 'true',
-        TRITON_URL: 'http://127.0.0.1:8000',
-        TRITON_MODEL: 'w2v2'
-      },
-      command: ['python', '-m', 'src.pipeline.sqs_worker']
-    });
-
-    // SSM parameters for runtime knobs
-    const ssmModelPath = new ssm.StringParameter(this, 'SsmModelPath', {
-      parameterName: '/amira/model_path',
-      stringValue: modelPathParam.valueAsString
-    });
-    const ssmIncludeConfidence = new ssm.StringParameter(this, 'SsmIncludeConfidence', {
-      parameterName: '/amira/include_confidence',
-      stringValue: includeConfidenceParam.valueAsString
-    });
-    const ssmResultsPrefix = new ssm.StringParameter(this, 'SsmResultsPrefix', {
-      parameterName: '/amira/results_prefix',
-      stringValue: resultsPrefixParam.valueAsString
-    });
-    const ssmBatchSize = new ssm.StringParameter(this, 'SsmBatchSize', {
-      parameterName: '/amira/batch_size',
-      stringValue: '16'
-    });
-    const ssmConfidenceThreshold = new ssm.StringParameter(this, 'SsmConfidenceThreshold', {
-      parameterName: '/amira/confidence_threshold',
-      stringValue: '0.6'
-    });
-
-    container.addSecret('MODEL_PATH', ecs.Secret.fromSsmParameter(ssmModelPath));
-    container.addSecret('INCLUDE_CONFIDENCE', ecs.Secret.fromSsmParameter(ssmIncludeConfidence));
-    container.addSecret('RESULTS_PREFIX', ecs.Secret.fromSsmParameter(ssmResultsPrefix));
-    container.addSecret('BATCH_SIZE', ecs.Secret.fromSsmParameter(ssmBatchSize));
-    container.addSecret('CONFIDENCE_THRESHOLD', ecs.Secret.fromSsmParameter(ssmConfidenceThreshold));
-
-    // Triton sidecar container (serves model on localhost:8000)
+    // Triton GPU inference server container
     const tritonContainer = taskDefinition.addContainer('TritonServerContainer', {
       image: ecs.ContainerImage.fromEcrRepository(tritonRepository, tritonImageTagParam.valueAsString),
       memoryReservationMiB: 4096,
       cpu: 1024,
       gpuCount: 1,
       logging: ecs.LogDriver.awsLogs({ logGroup, streamPrefix: 'triton-server' }),
-      portMappings: [{ containerPort: 8000 }],
+      portMappings: [{ containerPort: 8000 }, { containerPort: 8001 }, { containerPort: 8002 }],
       healthCheck: {
         command: ['CMD-SHELL', 'curl -sf http://127.0.0.1:8000/v2/health/ready || exit 1'],
         interval: cdk.Duration.seconds(15),
@@ -515,9 +486,8 @@ export class AmiraLetterScoringStack extends cdk.Stack {
         startPeriod: cdk.Duration.seconds(30)
       }
     });
-    // Triton Prometheus metrics (port 8002)
-    tritonContainer.addPortMappings({ containerPort: 8002 });
-    // DCGM exporter sidecar (expects image to be pushed to ECR repo)
+
+    // DCGM exporter for GPU metrics
     const dcgmContainer = taskDefinition.addContainer('DcgmExporterContainer', {
       image: ecs.ContainerImage.fromEcrRepository(dcgmExporterRepository, dcgmImageTagParam.valueAsString),
       memoryReservationMiB: 256,
@@ -526,7 +496,7 @@ export class AmiraLetterScoringStack extends cdk.Stack {
       portMappings: [{ containerPort: 9400 }],
     });
 
-    // CloudWatch Agent sidecar to scrape DCGM metrics (config in SSM)
+    // CloudWatch Agent to scrape DCGM metrics
     const cwAgentConfigString: string = JSON.stringify(cwAgentConfig);
     const cwAgentConfigParam = new ssm.StringParameter(this, 'SsmCwAgentConfig', {
       parameterName: '/amira/cwagent_config',
@@ -544,22 +514,43 @@ export class AmiraLetterScoringStack extends cdk.Stack {
     // Grant CW Agent access to read its SSM config
     cwAgentConfigParam.grantRead(taskRole);
 
-    // Ensure worker starts after Triton is healthy
-    container.addContainerDependencies({
-      container: tritonContainer,
-      condition: ecs.ContainerDependencyCondition.HEALTHY
+    // Increase nofile limits for containers
+    tritonContainer.addUlimits({ name: ecs.UlimitName.NOFILE, softLimit: 65536, hardLimit: 65536 });
+
+    // Application Load Balancer for Triton GPU cluster
+    const tritonAlb = new elbv2.ApplicationLoadBalancer(this, 'TritonLoadBalancer', {
+      vpc,
+      internetFacing: false, // Internal ALB since Lambda will call it
+      securityGroup
     });
 
-    // Increase nofile limits for Triton and worker
-    tritonContainer.addUlimits({ name: ecs.UlimitName.NOFILE, softLimit: 65536, hardLimit: 65536 });
-    container.addUlimits({ name: ecs.UlimitName.NOFILE, softLimit: 65536, hardLimit: 65536 });
+    const tritonTargetGroup = new elbv2.ApplicationTargetGroup(this, 'TritonTargetGroup', {
+      vpc,
+      port: 8000,
+      protocol: elbv2.ApplicationProtocol.HTTP,
+      targetType: elbv2.TargetType.IP,
+      healthCheck: {
+        path: '/v2/health/ready',
+        protocol: elbv2.Protocol.HTTP,
+        healthyThresholdCount: 2,
+        unhealthyThresholdCount: 3,
+        timeout: cdk.Duration.seconds(10),
+        interval: cdk.Duration.seconds(15)
+      }
+    });
 
-    // ECS service (kept at 0 by default; scales by SQS depth)
-    const service = new ecs.Ec2Service(this, 'AmiraLetterScoringService', {
+    const tritonListener = tritonAlb.addListener('TritonListener', {
+      port: 80,
+      protocol: elbv2.ApplicationProtocol.HTTP,
+      defaultTargetGroups: [tritonTargetGroup]
+    });
+
+    // ECS service for Triton GPU inference (scales based on demand)
+    const service = new ecs.Ec2Service(this, 'TritonInferenceService', {
       cluster,
       taskDefinition,
-      serviceName: 'amira-letter-scoring-service',
-      desiredCount: 0, // Start with 0, scale up via EventBridge
+      serviceName: 'triton-inference-service',
+      desiredCount: 0, // Start with 0, scale up based on ALB requests
       securityGroups: [securityGroup],
       vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
       capacityProviderStrategies: [{
@@ -580,189 +571,49 @@ export class AmiraLetterScoringStack extends cdk.Stack {
       enableExecuteCommand: true
     });
 
-    // Autoscale ECS service based on SQS queue depth
-    const scalableTarget = new appscaling.ScalableTarget(this, 'ServiceScalableTarget', {
+    // Attach ECS service to ALB target group
+    service.attachToApplicationTargetGroup(tritonTargetGroup);
+
+    // Autoscale Triton service based on ALB request metrics
+    const scalableTarget = new appscaling.ScalableTarget(this, 'TritonScalableTarget', {
       serviceNamespace: appscaling.ServiceNamespace.ECS,
-      maxCapacity: 50,
+      maxCapacity: 10,
       minCapacity: 0,
       resourceId: `service/${cluster.clusterName}/${service.serviceName}`,
       scalableDimension: 'ecs:service:DesiredCount'
     });
-    const visibleMetric = new cw.Metric({
-      namespace: 'AWS/SQS',
-      metricName: 'ApproximateNumberOfMessagesVisible',
-      dimensionsMap: { QueueName: jobsQueue.queueName },
-      statistic: 'Average',
+
+    // Scale based on ALB request count per target
+    const albRequestMetric = new cw.Metric({
+      namespace: 'AWS/ApplicationELB',
+      metricName: 'RequestCountPerTarget',
+      dimensionsMap: { 
+        LoadBalancer: tritonAlb.loadBalancerFullName,
+        TargetGroup: tritonTargetGroup.targetGroupFullName 
+      },
+      statistic: 'Sum',
       period: cdk.Duration.minutes(1)
     });
-    scalableTarget.scaleToTrackMetric('QueueBacklogTargetTracking', {
-      customMetric: new cw.MathExpression({
-        expression: 'm1 / max(m2, 1)',
-        usingMetrics: {
-          m1: visibleMetric,
-          m2: new cw.Metric({
-            namespace: 'ECS/ContainerInsights',
-            metricName: 'ServiceDesiredCount',
-            dimensionsMap: { ClusterName: cluster.clusterName, ServiceName: 'amira-letter-scoring-service' },
-            statistic: 'Average',
-            period: cdk.Duration.minutes(1)
-          })
-        }
-      }),
-      targetValue: 10,
+
+    scalableTarget.scaleToTrackMetric('TritonRequestTracking', {
+      customMetric: albRequestMetric,
+      targetValue: 100, // 100 requests per minute per target
       scaleInCooldown: cdk.Duration.minutes(5),
       scaleOutCooldown: cdk.Duration.minutes(2)
     });
 
-    // Additional policy on age of oldest message for faster reaction
-    const scaleOutOnAge = new appscaling.StepScalingPolicy(this, 'ScaleOutOnOldestAge', {
-      scalingTarget: scalableTarget,
-      metric: new cw.Metric({
-        namespace: 'AWS/SQS',
-        metricName: 'ApproximateAgeOfOldestMessage',
-        dimensionsMap: { QueueName: jobsQueue.queueName },
-        statistic: 'Average',
-        period: cdk.Duration.minutes(1)
-      }),
-      adjustmentType: appscaling.AdjustmentType.CHANGE_IN_CAPACITY,
-      scalingSteps: [
-        { lower: 300, upper: 900, change: +5 },
-        { lower: 900, change: +10 }
-      ],
-      cooldown: cdk.Duration.minutes(1)
+    // Add output for Triton cluster URL
+    new cdk.CfnOutput(this, 'TritonClusterUrl', {
+      value: `http://${tritonAlb.loadBalancerDnsName}`,
+      description: 'URL for Triton GPU inference cluster',
+      condition: useTritonCondition
     });
 
-    // Nightly enqueuer Lambda (queries Athena and enqueues jobs)
-    const enqueueFn = new lambda.Function(this, 'EnqueueJobsFunction', {
-      runtime: lambda.Runtime.PYTHON_3_12,
-      handler: 'index.handler',
-      code: lambda.Code.fromAsset('../lambda/enqueue_jobs'),
-      timeout: cdk.Duration.minutes(5),
-      tracing: lambda.Tracing.ACTIVE,
-      environment: {
-        JOBS_QUEUE_URL: jobsQueue.queueUrl,
-        ATHENA_DATABASE: athenaDbParam.valueAsString,
-        ATHENA_OUTPUT: athenaOutputParam.valueAsString,
-        ATHENA_QUERY: athenaQueryParam.valueAsString,
-        ATHENA_TABLE: athenaTableParam.valueAsString,
-        ATHENA_WHERE: athenaWhereParam.valueAsString,
-        ATHENA_LIMIT: athenaLimitParam.valueAsString,
-        ATHENA_COLUMNS: athenaColumnsParam.valueAsString
-      }
-    });
-    // IAM scoping for enqueuer Lambda
-    const athenaWorkgroupArn = cdk.Arn.format({
-      service: 'athena',
-      resource: 'workgroup',
-      resourceName: 'primary'
-    }, this);
-    const glueDbArn = cdk.Arn.format({
-      service: 'glue',
-      resource: 'database',
-      resourceName: athenaDbParam.valueAsString
-    }, this);
-    const glueTableWildcardArn = cdk.Arn.format({
-      service: 'glue',
-      resource: 'table',
-      resourceName: `${athenaDbParam.valueAsString}/*`
-    }, this);
-    const athenaOutputParsed = cdk.Fn.split('/', athenaOutputParam.valueAsString);
-    // Expect s3://bucket/prefix
-    const athenaOutputBucket = cdk.Fn.select(2, athenaOutputParsed);
-    const athenaOutputPrefix = cdk.Fn.join('/', [
-      cdk.Fn.select(3, athenaOutputParsed),
-      cdk.Fn.select(4, athenaOutputParsed)
-    ]);
-    enqueueFn.addToRolePolicy(new iam.PolicyStatement({
-      actions: ['athena:StartQueryExecution', 'athena:GetQueryExecution', 'athena:GetQueryResults'],
-      resources: [athenaWorkgroupArn]
-    }));
-    enqueueFn.addToRolePolicy(new iam.PolicyStatement({
-      actions: ['glue:GetDatabase'],
-      resources: [glueDbArn]
-    }));
-    enqueueFn.addToRolePolicy(new iam.PolicyStatement({
-      actions: ['glue:GetTable'],
-      resources: [glueTableWildcardArn]
-    }));
-    enqueueFn.addToRolePolicy(new iam.PolicyStatement({
-      actions: ['s3:ListBucket'],
-      resources: [cdk.Arn.format({ service: 's3', resource: athenaOutputBucket }, this)]
-    }));
-    enqueueFn.addToRolePolicy(new iam.PolicyStatement({
-      actions: ['s3:GetObject', 's3:PutObject'],
-      resources: [cdk.Arn.format({ service: 's3', resource: `${athenaOutputBucket}/${athenaOutputPrefix}/*` }, this)]
-    }));
-    jobsQueue.grantSendMessages(enqueueFn);
-
-    const nightlyRule = new events.Rule(this, 'NightlyScheduleRule', {
-      description: 'Enqueue nightly jobs at 2 AM UTC',
-      schedule: events.Schedule.cron({ minute: '0', hour: '2' })
-    });
-    nightlyRule.addTarget(new targets.LambdaFunction(enqueueFn));
-    enqueueFn.addEnvironment('AWS_XRAY_TRACING_NAME', 'EnqueueJobsFunction');
-    enqueueFn.addEnvironment('AWS_XRAY_DAEMON_ADDRESS', '169.254.79.2:2000');
-    enqueueFn.addEnvironment('AWS_XRAY_SDK_ENABLED', 'true');
-
-    autoScalingGroup.scaleOnSchedule('PrescaleMain', {
-      schedule: autoscaling.Schedule.cron({ minute: '55', hour: '1' }),
-      desiredCapacity: 1
-    });
-    asgG5xlarge.scaleOnSchedule('PrescaleG5x', {
-      schedule: autoscaling.Schedule.cron({ minute: '55', hour: '1' }),
-      desiredCapacity: 1
-    });
-    asgG52xlarge.scaleOnSchedule('PrescaleG52x', {
-      schedule: autoscaling.Schedule.cron({ minute: '55', hour: '1' }),
-      desiredCapacity: 1
-    });
-
-    autoScalingGroup.scaleOnSchedule('ScaleDownMain', {
-      schedule: autoscaling.Schedule.cron({ minute: '30', hour: '3' }),
-      desiredCapacity: 0
-    });
-    asgG5xlarge.scaleOnSchedule('ScaleDownG5x', {
-      schedule: autoscaling.Schedule.cron({ minute: '30', hour: '3' }),
-      desiredCapacity: 0
-    });
-    asgG52xlarge.scaleOnSchedule('ScaleDownG52x', {
-      schedule: autoscaling.Schedule.cron({ minute: '30', hour: '3' }),
-      desiredCapacity: 0
-    });
-
-    // CloudWatch alarms for SQS
-    const oldestAge = new cw.Metric({
-      namespace: 'AWS/SQS',
-      metricName: 'ApproximateAgeOfOldestMessage',
-      dimensionsMap: { QueueName: jobsQueue.queueName },
-      statistic: 'Average',
-      period: cdk.Duration.minutes(1)
-    });
-    const ageAlarm = new cw.Alarm(this, 'QueueOldestAgeAlarm', {
-      metric: oldestAge,
-      threshold: 900, // 15 minutes
-      evaluationPeriods: 3,
-      comparisonOperator: cw.ComparisonOperator.GREATER_THAN_THRESHOLD
-    });
-    const dlqMetric = new cw.Metric({
-      namespace: 'AWS/SQS',
-      metricName: 'ApproximateNumberOfMessagesVisible',
-      dimensionsMap: { QueueName: dlq.queueName },
-      statistic: 'Sum',
-      period: cdk.Duration.minutes(1)
-    });
-    const dlqAlarm = new cw.Alarm(this, 'DLQDepthAlarm', {
-      metric: dlqMetric,
-      threshold: 1,
-      evaluationPeriods: 1,
-      comparisonOperator: cw.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD
-    });
+    // GPU cluster monitoring and alarms
 
     // SNS notifications for alarms
-    const alarmTopic = new sns.Topic(this, 'OpsAlarmTopic', { displayName: 'Amira Letter Scoring Alarms' });
+    const alarmTopic = new sns.Topic(this, 'OpsAlarmTopic', { displayName: 'Triton GPU Cluster Alarms' });
     const alarmAction = new cwactions.SnsAction(alarmTopic);
-    ageAlarm.addAlarmAction(alarmAction);
-    dlqAlarm.addAlarmAction(alarmAction);
 
     // Optional email subscription parameter
     const alarmEmailParam = new cdk.CfnParameter(this, 'AlarmEmail', {
@@ -950,30 +801,23 @@ export class AmiraLetterScoringStack extends cdk.Stack {
       targets: [new targets.LambdaFunction(drainFn)]
     });
 
-    // Outputs
-    new cdk.CfnOutput(this, 'RepositoryUri', {
-      value: repository.repositoryUri,
-      description: 'ECR Repository URI'
+    // Outputs for GPU cluster
+    new cdk.CfnOutput(this, 'TritonRepositoryUri', {
+      value: tritonRepository.repositoryUri,
+      description: 'Triton ECR Repository URI',
+      condition: useTritonCondition
     });
 
-    new cdk.CfnOutput(this, 'ClusterName', {
+    new cdk.CfnOutput(this, 'GpuClusterName', {
       value: cluster.clusterName,
-      description: 'ECS Cluster Name'
+      description: 'GPU ECS Cluster Name',
+      condition: useTritonCondition
     });
 
-    new cdk.CfnOutput(this, 'ServiceName', {
+    new cdk.CfnOutput(this, 'TritonServiceName', {
       value: service.serviceName,
-      description: 'ECS Service Name'
-    });
-
-    new cdk.CfnOutput(this, 'JobsQueueUrl', {
-      value: jobsQueue.queueUrl,
-      description: 'SQS Jobs Queue URL'
-    });
-
-    new cdk.CfnOutput(this, 'ResultsBucketName', {
-      value: resultsBucket.bucketName,
-      description: 'S3 Results Bucket'
+      description: 'Triton ECS Service Name',
+      condition: useTritonCondition
     });
   }
 }

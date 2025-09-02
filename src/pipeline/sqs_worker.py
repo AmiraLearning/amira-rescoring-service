@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import asyncio
 import json
 import os
@@ -61,7 +59,6 @@ class SQSMessage(BaseModel):
         return v
 
 
-# TODO coordinate this with the pipeline config
 class WorkerConfig(BaseModel):
     """Worker configuration.
 
@@ -118,27 +115,28 @@ class WorkerConfig(BaseModel):
         return v
 
     def to_pipeline_config(self) -> Any:
-        """Convert WorkerConfig to PipelineConfig."""
-        from utils.config import PipelineConfig
-        config_dict = {
-            'aws': {
-                'aws_profile': 'default',
-                'aws_region': self.aws_region
-            },
-            'w2v2': {
-                'model_path': self.model_path,
-                'include_confidence': self.include_confidence
-            },
-            's3': {
-                'audio_bucket': '',
-                'results_bucket': self.results_bucket,
-                'results_prefix': self.results_prefix
-            }
-        }
-        from utils.config import AwsConfig, W2VConfig
+        """Convert WorkerConfig to PipelineConfig.
+
+        Note: This maintains compatibility between SQS worker configuration
+        and the main pipeline configuration system.
+
+        Returns:
+            PipelineConfig: Properly configured pipeline config instance
+        """
+        from utils.config import PipelineConfig, AwsConfig, AudioConfig
+        from src.pipeline.inference.models import W2VConfig as InferenceW2VConfig
+
+        # Create coordinated configuration that matches main pipeline structure
         return PipelineConfig(
-            aws=AwsConfig(aws_profile='default', aws_region=self.aws_region),
-            w2v2=W2VConfig(model_path=self.model_path, include_confidence=self.include_confidence),
+            aws=AwsConfig(
+                aws_profile="default",
+                aws_region=self.aws_region,
+                region=self.aws_region,  # Ensure consistency
+            ),
+            w2v2=InferenceW2VConfig(
+                model_path=self.model_path, include_confidence=self.include_confidence
+            ),
+            audio=AudioConfig(audio_dir=Path(self.audio_dir)),
         )
 
     @field_validator("audio_dir")

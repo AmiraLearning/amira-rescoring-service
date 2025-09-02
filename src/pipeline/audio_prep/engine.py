@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import numpy as np
 from pathlib import Path
 from loguru import logger
@@ -45,13 +43,22 @@ class AudioPreparationEngine:
 
         Returns:
             None
+
+        Raises:
+            ValueError: If config is None or invalid
+            Exception: If S3 client initialization fails
         """
+        if config is None:
+            raise ValueError("Configuration parameter is required")
+
+        if not hasattr(config, "audio") or config.audio is None:
+            raise ValueError("Configuration must contain valid audio settings")
         self._config = config
         self._audio_base_dir: str = str(config.audio.audio_dir)
         self._environment: str = config.aws.audio_env
         self._result_dir: str = config.result.output_dir
         self._padded_seconds: int = config.audio.padded_seconds
-        # Only save padded audio when audit mode is on and saving is requested
+
         self._save_padded_audio: bool = (
             config.audio.save_padded_audio and config.result.audit_mode
         )
@@ -97,21 +104,36 @@ class AudioPreparationEngine:
             output.error_message = error_msg
             return output
 
-        # Prefetch and cache resampled phrase audio tensors to speed padding
         prefetch_activity_phrase_audio(
             audio_dir=self._audio_base_dir, activity_id=activity_id
         )
 
         from concurrent.futures import ThreadPoolExecutor, as_completed
+
         max_workers: int = 8
-        def _work(phrase: PhraseInput) -> tuple[int, ProcessedPhraseOutput | None, str | None]:
+
+        def _work(
+            phrase: PhraseInput,
+        ) -> tuple[int, ProcessedPhraseOutput | None, str | None]:
             idx: int = phrase.phraseIndex
             try:
                 logger.info(f"Processing phrase {idx} for activity {activity_id}")
-                res = self._process_single_phrase(activity_id=activity_id, phrase_data=phrase)
+                res = self._process_single_phrase(
+                    activity_id=activity_id, phrase_data=phrase
+                )
                 return idx, res, None
+            except FileNotFoundError as e:
+                error_msg = f"Audio file not found for phrase {idx}: {e}"
+                logger.error(error_msg)
+                return idx, None, error_msg
+            except ValueError as e:
+                error_msg = f"Invalid audio data for phrase {idx}: {e}"
+                logger.error(error_msg)
+                return idx, None, error_msg
             except Exception as e:
-                return idx, None, str(e)
+                error_msg = f"Unexpected error processing phrase {idx}: {e}"
+                logger.error(error_msg)
+                return idx, None, error_msg
 
         with ThreadPoolExecutor(max_workers=max_workers) as pool:
             futures = {pool.submit(_work, p): p.phraseIndex for p in phrases}
@@ -127,7 +149,9 @@ class AudioPreparationEngine:
                     logger.info(f"Successfully processed phrase {phrase_index}")
                 else:
                     output.phrases_failed += 1
-                    logger.warning(f"Failed to process phrase {phrase_index} - no audio returned")
+                    logger.warning(
+                        f"Failed to process phrase {phrase_index} - no audio returned"
+                    )
 
         if output.phrases_processed > 0:
             output.success = True
@@ -139,7 +163,7 @@ class AudioPreparationEngine:
             logger.warning(
                 f"Activity {activity_id} has no valid audio - all audio files are empty"
             )
-            output.success = True
+            output.success = False
 
         logger.info(
             f"Activity {activity_id} prepared with {output.phrases_processed}/{len(phrases)} phrases"
@@ -147,9 +171,16 @@ class AudioPreparationEngine:
         return output
 
     async def close(self) -> None:
-        """Close underlying resources like the S3 client sessions."""
+        """Close underlying resources like the S3 client sessions.
+
+        This method ensures graceful cleanup of S3 connections and should
+        be called when the engine is no longer needed.
+        """
         try:
             await self._s3_client.close()
+            logger.debug("S3 client closed successfully")
+        except AttributeError:
+            logger.debug("S3 client was not initialized or already closed")
         except Exception as e:
             logger.warning(f"Failed to close S3 client cleanly: {e}")
 
@@ -180,6 +211,21 @@ class AudioPreparationEngine:
                 )
                 logger.warning(output.error_message)
                 return output
+
+            from utils.audio import download_tutor_style_audio
+
+            logger.info(f"Starting phrase slicing for {activity_id}")
+            slice_success = await download_tutor_style_audio(
+                activity_id=activity_id,
+                audio_dir=self._audio_base_dir,
+                s3_client=self._s3_client,
+            )
+
+            if slice_success:
+                logger.info(f"Phrase slicing successful for {activity_id}")
+            else:
+                logger.error(f"Phrase slicing FAILED for {activity_id}")
+
         except Exception as e:
             error_msg = (
                 f"Failed to download complete audio for activity {activity_id}: {e}"
@@ -362,5 +408,7 @@ class AudioPreparationEngine:
                 studentId=phrase_data.studentId,
             )
         else:
-            logger.warning(f"Failed to process phrase {phrase_data.phraseIndex} - no audio returned")
+            logger.warning(
+                f"Failed to process phrase {phrase_data.phraseIndex} - no audio returned"
+            )
             return None

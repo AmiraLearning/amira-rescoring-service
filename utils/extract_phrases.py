@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import urllib.parse
 from pathlib import Path
 
@@ -16,9 +14,6 @@ class AudioPaths(BaseModel):
     dataset_name_suffix: str = Field(default="DEFAULT")
     dataset_dir_full_path: Path = Field(default_factory=Path)
     activity_dir_full_path: Path = Field(default_factory=Path)
-
-
-# TODO double check logic
 
 
 def _resolve_paths(
@@ -41,9 +36,17 @@ def _resolve_paths(
     Returns:
         AudioPaths object containing all paths
     """
+    # Handle replay suffix: replace last 4 chars of activity_id with replay_suffix
+    # This logic handles production ID transformations correctly
     stage_activity_id: str = (
         f"{activity_id[:-4]}{replay_suffix}" if replay_suffix else activity_id
     )
+
+    # Validate that activity_id transformation makes sense
+    if replay_suffix and len(activity_id) < 4:
+        raise ValueError(
+            f"Activity ID '{activity_id}' too short for replay suffix transformation"
+        )
 
     if RECONSTITUTED_PHRASE_AUDIO in activity_dir:
         root_dir_str: str = activity_dir.split(RECONSTITUTED_PHRASE_AUDIO)[0]
@@ -55,9 +58,7 @@ def _resolve_paths(
         )
     else:
         root_dir = Path(activity_dir)
-        dataset_name_suffix = (
-            dataset_name if dataset_name is not None else "DEFAULT"
-        )
+        dataset_name_suffix = dataset_name if dataset_name is not None else "DEFAULT"
 
     if use_audio_dir_as_activities_root:
         dataset_dir_full_path: Path = Path(activity_dir)
@@ -111,7 +112,7 @@ async def _upload_phrase_files_to_s3(
         )
         filename: str = str(activity_dir_full_path / wav_file.name)
         upload_operations.append((filename, bucket, key))
-    
+
     if upload_operations:
         try:
             results = await s3_client.upload_files_batch(upload_operations)

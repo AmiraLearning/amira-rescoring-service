@@ -32,7 +32,9 @@ async def _find_container_instance_arn(
         if not container_instance_arns:
             return None
 
-        describe_response: dict[str, Any] = await ecs_client.describe_container_instances(
+        describe_response: dict[
+            str, Any
+        ] = await ecs_client.describe_container_instances(
             cluster=cluster_arn, containerInstances=container_instance_arns
         )
         container_instances: list[dict[str, Any]] = describe_response.get(

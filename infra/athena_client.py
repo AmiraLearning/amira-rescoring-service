@@ -236,7 +236,9 @@ class LogMessages(StrEnum):
     STATE_CHANGED = "Athena query state changed, execution_id={execution_id}, old_state={old_state}, new_state={new_state}"
     STATUS_CHECK_FAILED = "Failed to check query status - execution_id={}, error={}"
     CLEANUP_SUCCESS = "Cleaned up {file_count} S3 staging files from {prefix}"
-    CLEANUP_LIST_FAILED = "Could not list staging files for cleanup from {prefix}: {error}"
+    CLEANUP_LIST_FAILED = (
+        "Could not list staging files for cleanup from {prefix}: {error}"
+    )
     CLEANUP_DELETE_FAILED = "Failed to delete S3 staging files from {prefix}: {error}"
     CLEANUP_ERROR = "Failed to clean up S3 staging files for {filename}: {error}"
     QUERY_CANCELLED = "Query cancellation requested - execution_id={execution_id}"
@@ -262,7 +264,7 @@ class ProductionAthenaClient:
             config: Client configuration settings.
         """
         self._config: AthenaClientConfig = config
-        self._logger = logger  # TODO remove this
+        # Use module-level logger instead of instance variable
         self._session: aioboto3.Session | None = None
         self._athena_client: Any | None = None
 
@@ -611,7 +613,9 @@ class ProductionAthenaClient:
             )
             if not results or not results[0].success:
                 error_msg: str = (
-                    results[0].error or "Unknown S3 download error" if results else "Unknown S3 download error"
+                    results[0].error or "Unknown S3 download error"
+                    if results
+                    else "Unknown S3 download error"
                 )
                 raise AthenaClientError(f"Failed to load results from S3: {error_msg}")
 
@@ -632,7 +636,9 @@ class ProductionAthenaClient:
                 [(bucket, prefix)]
             )
             if not list_results or not list_results[0].success:
-                error_msg: str = list_results[0].error or "Unknown" if list_results else "Unknown"
+                error_msg: str = (
+                    list_results[0].error or "Unknown" if list_results else "Unknown"
+                )
                 logger.warning(
                     LogMessages.CLEANUP_LIST_FAILED.format(
                         prefix=prefix,
@@ -663,7 +669,9 @@ class ProductionAthenaClient:
                     )
                 )
             else:
-                delete_error: str = delete_result[0].error or "Unknown" if delete_result else "Unknown"
+                delete_error: str = (
+                    delete_result[0].error or "Unknown" if delete_result else "Unknown"
+                )
                 logger.warning(
                     LogMessages.CLEANUP_DELETE_FAILED.format(
                         prefix=prefix,
@@ -786,7 +794,12 @@ async def query_athena(
     """
     enable_reuse_env: str | None = os.environ.get("ATHENA_CACHE_ENABLED", "true")
     max_age_env: str | None = os.environ.get("ATHENA_CACHE_MAX_AGE_MINUTES", "1000")
-    enable_reuse: bool = (enable_reuse_env or "false").lower() in {"1", "true", "yes", "on"}
+    enable_reuse: bool = (enable_reuse_env or "false").lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
     try:
         max_age_minutes: int = max(1, min(1440, int(max_age_env or "60")))
     except Exception:
@@ -826,7 +839,9 @@ async def query_athena(
 
     client: ProductionAthenaClient = ProductionAthenaClient(config=config)
     try:
-        result = await client.execute_query(query=query, database=database, return_dataframe=True)
+        result = await client.execute_query(
+            query=query, database=database, return_dataframe=True
+        )
         assert isinstance(result, pl.DataFrame)
         return result
     finally:

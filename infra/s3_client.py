@@ -920,7 +920,19 @@ def get_global_s3_client(*, config: HighPerformanceS3Config) -> ProductionS3Clie
     return _GLOBAL_S3_CLIENTS[key]
 
 
-async def preload_s3_client_async(*, config: HighPerformanceS3Config, num_clients: int = 2) -> None:
+async def preload_s3_client_async(
+    *, config: HighPerformanceS3Config, num_clients: int = 2
+) -> None:
     """Asynchronously preload the S3 client and create clients in pool."""
     client = get_global_s3_client(config=config)
     await client.warm_up(num_clients=num_clients)
+
+
+async def close_global_s3_clients_async() -> None:
+    """Close and clear all global S3 clients."""
+    for client in list(_GLOBAL_S3_CLIENTS.values()):
+        try:
+            await client.close()
+        except Exception as e:
+            logger.warning(f"Failed to close global S3 client: {e}")
+    _GLOBAL_S3_CLIENTS.clear()
