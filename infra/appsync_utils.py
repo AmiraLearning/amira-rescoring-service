@@ -9,7 +9,7 @@ _GRAPHQL_ENDPOINT_URL: Final[str] = (
 )
 _GRAPHQL_ENDPOINT_KEY: Final[str] = "da2-6bolf4d5sfbdzmulnjazxmjuza"
 
-UPDATE_ACTIVITY_FIELDS_MUTATION: Final[str] = gql(
+UPDATE_ACTIVITY_FIELDS_MUTATION = gql(
     """
     mutation UpdateActivityFields($activityId: ID!, $fieldValues: AWSJSON!) {
         updateActivity(activityId: $activityId, fieldValues: $fieldValues) {
@@ -19,7 +19,7 @@ UPDATE_ACTIVITY_FIELDS_MUTATION: Final[str] = gql(
     """
 )
 
-ACTIVITIES_WITH_FILTER_QUERY: Final[str] = gql(
+ACTIVITIES_WITH_FILTER_QUERY = gql(
     """
     query ActivitiesWithFilter($filter: ActivityFilter!, $limit: Int) {
         activities(filter: $filter, limit: $limit) {
@@ -41,7 +41,7 @@ ACTIVITIES_WITH_FILTER_QUERY: Final[str] = gql(
     """
 )
 
-INTROSPECTION_QUERY: Final[str] = gql(
+INTROSPECTION_QUERY = gql(
     """
     query IntrospectionQuery {
         __schema {
@@ -93,7 +93,7 @@ INTROSPECTION_QUERY: Final[str] = gql(
     """
 )
 
-GET_ACTIVITY_QUERY: Final[str] = gql(
+GET_ACTIVITY_QUERY = gql(
     """
     query GetActivity($activityId: [String]!) {
         getActivity(activityId: $activityId) {
@@ -265,7 +265,4 @@ def load_activity_from_graphql(*, activity_id: str) -> dict[str, Any]:
         "displayStatus": "completed",  # Default display status
     }
 
-    # Create a DataFrame with a single row
-    df = pl.DataFrame([activity_row])
-
-    return df
+    return activity_row

@@ -11,8 +11,8 @@ from typing import Any
 
 import aioboto3
 from loguru import logger
-import pyarrow as pa
-import pyarrow.parquet as pq
+import pyarrow as pa  # type: ignore
+import pyarrow.parquet as pq  # type: ignore
 from pydantic import BaseModel, Field, field_validator
 
 from utils.extract_phrases import extract_phrase_slices_tutor_style
@@ -117,6 +117,30 @@ class WorkerConfig(BaseModel):
             raise ValueError("Invalid S3 bucket name format")
         return v
 
+    def to_pipeline_config(self) -> Any:
+        """Convert WorkerConfig to PipelineConfig."""
+        from utils.config import PipelineConfig
+        config_dict = {
+            'aws': {
+                'aws_profile': 'default',
+                'aws_region': self.aws_region
+            },
+            'w2v2': {
+                'model_path': self.model_path,
+                'include_confidence': self.include_confidence
+            },
+            's3': {
+                'audio_bucket': '',
+                'results_bucket': self.results_bucket,
+                'results_prefix': self.results_prefix
+            }
+        }
+        from utils.config import AwsConfig, W2VConfig
+        return PipelineConfig(
+            aws=AwsConfig(aws_profile='default', aws_region=self.aws_region),
+            w2v2=W2VConfig(model_path=self.model_path, include_confidence=self.include_confidence),
+        )
+
     @field_validator("audio_dir")
     @classmethod
     def validate_audio_dir(cls, v):
@@ -154,6 +178,12 @@ class WorkerConfig(BaseModel):
             == "true",
             audio_dir=os.getenv("AUDIO_DIR", "/tmp/audio"),
             results_prefix=os.getenv("RESULTS_PREFIX", "results/"),
+            visibility_timeout=int(os.getenv("VISIBILITY_TIMEOUT", "900")),
+            max_messages=int(os.getenv("MAX_MESSAGES", "5")),
+            wait_time=int(os.getenv("WAIT_TIME", "10")),
+            aws_region=os.getenv("AWS_REGION", "us-east-1"),
+            max_processing_time=int(os.getenv("MAX_PROCESSING_TIME", "600")),
+            retry_attempts=int(os.getenv("RETRY_ATTEMPTS", "3")),
         )
 
 
@@ -172,7 +202,7 @@ def get_required_env(name: str) -> str:
     return value
 
 
-def extract_audio_phrases(
+async def extract_audio_phrases(
     *,
     activity_id: str,
     audio_dir: str,
@@ -189,13 +219,13 @@ def extract_audio_phrases(
         replay_suffix: The replay suffix.
         s3_client: The S3 client.
     """
-    extract_phrase_slices_tutor_style(
+    await extract_phrase_slices_tutor_style(
         activity_id=activity_id,
         activity_dir=audio_dir,
         dataset_name=dataset_name,
         replay_suffix=replay_suffix,
         audio_s3_root=None,
-        s3=s3_client,
+        s3_client=s3_client,
         stage_source=False,
         use_audio_dir_as_activities_root=False,
     )
@@ -244,10 +274,10 @@ async def process_message(
             return
 
     try:
-        process_single_activity(
+        await process_single_activity(
             activity_id=msg.activityId,
             phrases_input=[],
-            config=config,
+            config=config.to_pipeline_config(),
         )
 
         processing_time = time.time() - start_time

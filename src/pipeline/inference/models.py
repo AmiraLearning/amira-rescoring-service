@@ -8,8 +8,22 @@ from .constants import DeviceType
 
 
 class W2VConfig(BaseModel):
-    model_path: str
+    """Wav2Vec2 configuration."""
+
+    model_path: str = "models/wav2vec2-ft-large-eng-phoneme-amirabet_2025-04-24"
+    device: DeviceType = DeviceType.CPU
     include_confidence: bool = False
+    
+    # Compilation optimizations
+    use_torch_compile: bool = True
+    compile_mode: str = "default"  # "default", "reduce-overhead", "max-autotune"
+    use_torch_jit: bool = False  # Fallback for torch.compile
+    use_mixed_precision: bool = False
+    use_flash_attention: bool = False
+    
+    # Performance optimizations
+    use_float16: bool = True  # Lambda-style Float16 precision for 2x speed
+    batch_all_phrases: bool = True  # Lambda-style single inference call
 
 
 class PreprocessResult(BaseModel):

@@ -7,7 +7,7 @@ import wave
 
 import numpy as np
 import torch
-import torchaudio
+import torchaudio  # type: ignore
 from pydantic import BaseModel, Field
 import threading
 import warnings
@@ -271,7 +271,7 @@ def _save_padded_audio(*, request: PaddedAudioSaveRequest) -> None:
         Exception: For file system or audio saving errors.
     """
     try:
-        activity_dir: str = Path(request.padded_path).parent
+        activity_dir: Path = Path(request.padded_path).parent
         activity_dir.mkdir(parents=True, exist_ok=True)
 
         torchaudio.save(

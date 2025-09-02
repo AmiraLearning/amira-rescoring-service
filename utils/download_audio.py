@@ -6,6 +6,7 @@ This module provides small, focused utilities with clear typing and
 keyword-only arguments for safer, more readable usage.
 """
 
+import urllib.parse
 from pathlib import Path
 from typing import Final
 from botocore.client import BaseClient as BotoClient
@@ -13,6 +14,7 @@ from pydantic import BaseModel
 
 from loguru import logger
 
+from infra.s3_client import ProductionS3Client
 from utils.phrase_slicing import PhraseSlicer, s3_find
 
 # TODO double check logic
@@ -52,21 +54,21 @@ def resolve_dataset_layout(
         The resolved dataset layout
     """
     if RECONSTITUTED_PHRASE_AUDIO in str(audio_path):
-        root_dir: Path = Path(str(audio_path).split(RECONSTITUTED_PHRASE_AUDIO)[0])
-        dataset_suffix = (
+        resolved_root_dir: Path = Path(str(audio_path).split(RECONSTITUTED_PHRASE_AUDIO)[0])
+        resolved_dataset_suffix = (
             str(audio_path).split(RECONSTITUTED_PHRASE_AUDIO)[-1].strip("/")
         )
     else:
-        root_dir: Path = audio_path
-        dataset_suffix: str = dataset_name
+        resolved_root_dir = audio_path
+        resolved_dataset_suffix = dataset_name
 
     dataset_dir: Path = (
         audio_path
         if use_audio_dir_as_root
-        else root_dir / RECONSTITUTED_PHRASE_AUDIO / dataset_suffix
+        else resolved_root_dir / RECONSTITUTED_PHRASE_AUDIO / resolved_dataset_suffix
     )
     return DatasetLayout(
-        root_dir=root_dir, dataset_dir=dataset_dir, dataset_suffix=dataset_suffix
+        root_dir=resolved_root_dir, dataset_dir=dataset_dir, dataset_suffix=resolved_dataset_suffix
     )
 
 
@@ -82,8 +84,8 @@ def iter_wav_files(*, directory: Path) -> list[Path]:
     return [f for f in directory.iterdir() if f.is_file() and f.suffix == ".wav"]
 
 
-def get_segment_file_names(
-    *, activity_id: str, s3_client: BotoClient, stage_source: bool = False
+async def get_segment_file_names(
+    *, activity_id: str, s3_client: ProductionS3Client, stage_source: bool = False
 ) -> list[str]:
     """Get the file names of all the audio segments for an activity
 
@@ -97,7 +99,7 @@ def get_segment_file_names(
     """
     keys: list[str] = []
     bucket: str = resolve_bucket(stage_source)
-    for obj in s3_find(bucket=bucket, prefix=f"{activity_id}/", s3_client=s3_client):
+    for obj in await s3_find(bucket=bucket, prefix=f"{activity_id}/", s3_client=s3_client):
         if ".wav" in obj.key and "complete" not in obj.key:
             keys.append(obj.key)
         else:
@@ -107,11 +109,11 @@ def get_segment_file_names(
     return keys
 
 
-def download_tutor_style_audio(
+async def download_tutor_style_audio(
     *,
     activity_id: str,
     audio_path: Path,
-    s3_client: BotoClient,
+    s3_client: ProductionS3Client,
     dataset_name: str,
     audio_s3_root: Path,
     replay_suffix: str | None = None,
@@ -162,7 +164,7 @@ def download_tutor_style_audio(
                 Path(layout.dataset_dir, eff_act_id)
             )
         else:
-            PhraseSlicer(
+            await PhraseSlicer(
                 destination_path=str(layout.dataset_dir),
                 s3_client=s3_client,
                 stage_source=stage_source,
@@ -173,7 +175,7 @@ def download_tutor_style_audio(
             )
 
             if audio_s3_root:
-                _upload_sliced_audio_to_s3(
+                await _upload_sliced_audio_to_s3(
                     audio_s3_root=audio_s3_root,
                     activity_dir=activity_dir,
                     dataset_suffix=layout.dataset_suffix,
@@ -184,13 +186,13 @@ def download_tutor_style_audio(
     return True
 
 
-def _upload_sliced_audio_to_s3(
+async def _upload_sliced_audio_to_s3(
     *,
     audio_s3_root: Path,
     activity_dir: Path,
     dataset_suffix: str,
     effective_activity_id: str,
-    s3_client: BotoClient,
+    s3_client: ProductionS3Client,
 ) -> None:
     """
     Uploads sliced audio files to S3.
@@ -202,12 +204,14 @@ def _upload_sliced_audio_to_s3(
         effective_activity_id: Activity ID to use for the S3 path
         s3_client: S3 client to use for uploads
     """
-    bucket_name: str = audio_s3_root.netloc
+    parsed_url = urllib.parse.urlparse(str(audio_s3_root))
+    bucket_name: str = parsed_url.netloc
 
     activity_dir.mkdir(parents=True, exist_ok=True)
 
+    upload_operations = []
     for wav_file in iter_wav_files(directory=activity_dir):
-        base_path: str = audio_s3_root.path.strip("/").split(
+        base_path: str = parsed_url.path.strip("/").split(
             RECONSTITUTED_PHRASE_AUDIO
         )[0]
         s3_path: Path = (
@@ -217,43 +221,16 @@ def _upload_sliced_audio_to_s3(
             / effective_activity_id
             / wav_file.name
         )
+        
+        upload_operations.append((str(wav_file), bucket_name, str(s3_path)))
+    
+    if upload_operations:
+        try:
+            results = await s3_client.upload_files_batch(upload_operations)
+            for result in results:
+                if not result.success:
+                    logger.warning(f"Failed to upload: {result.error}")
+        except Exception as e:
+            logger.warning(f"Batch upload failed: {e}")
 
-        _try_upload_or_warn(
-            bucket=bucket_name,
-            key=str(s3_path),
-            file_path=wav_file,
-            s3_client=s3_client,
-            fallback_prefix=audio_s3_root.path.strip("/"),
-            effective_activity_id=effective_activity_id,
-        )
 
-
-def _try_upload_or_warn(
-    *,
-    bucket: str,
-    key: str,
-    file_path: Path,
-    s3_client: BotoClient,
-    fallback_prefix: str,
-    effective_activity_id: str,
-) -> None:
-    """
-    Uploads a file to S3 or warns if upload fails.
-
-    Args:
-        bucket: S3 bucket name
-        key: S3 key for the file
-        file_path: Path to the local file to upload
-        s3_client: S3 client to use
-        fallback_prefix: Prefix to use if upload fails
-        effective_activity_id: Activity ID to use for the S3 path
-    """
-    try:
-        s3_client.upload_file(Filename=str(file_path), Bucket=bucket, Key=key)
-    except Exception as e:
-        s3_filepath: Path = (
-            Path(bucket) / fallback_prefix / effective_activity_id / file_path.name
-        )
-        logger.warning(
-            f"Could not upload file {file_path} to S3 location {s3_filepath}: {e}"
-        )

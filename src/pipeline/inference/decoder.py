@@ -108,13 +108,13 @@ class PhonemeDecoder:
         current_confidences: list[float] = []
 
         if segment.confidences is not None and len(segment.confidences) > 0:
-            current_confidences.append(segment.confidences[0])
+            current_confidences.append(float(segment.confidences[0].item()))
 
         for index in range(1, len(segment.tokens)):
             next_token: str = segment.tokens[index]
             if current_token == next_token:
                 if segment.confidences is not None and len(segment.confidences) > index:
-                    current_confidences.append(segment.confidences[index])
+                    current_confidences.append(float(segment.confidences[index].item()))
             else:
                 grouped_tokens.append(current_token)
                 if segment.confidences is not None and len(current_confidences) > 0:
@@ -124,7 +124,7 @@ class PhonemeDecoder:
                 current_token = next_token
                 current_confidences = []
                 if segment.confidences is not None and len(segment.confidences) > index:
-                    current_confidences.append(segment.confidences[index])
+                    current_confidences.append(float(segment.confidences[index].item()))
 
         grouped_tokens.append(current_token)
         if segment.confidences is not None and len(current_confidences) > 0:

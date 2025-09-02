@@ -84,7 +84,6 @@ def run(
     typer.echo("Scoring Pipeline Runner\n========================")
     typer.echo("This script runs the scoring pipeline for letter names and sounds.\n")
 
-    config_obj: PipelineConfig | None = None
     success: bool = False
 
     try:

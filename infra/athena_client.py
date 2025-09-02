@@ -4,8 +4,6 @@ This module provides a robust AWS Athena client implementation following
 Expert Python Engineering Principles for Production Systems.
 """
 
-from __future__ import annotations
-
 import asyncio
 import re
 import time
@@ -13,7 +11,7 @@ from dataclasses import dataclass
 import os
 import hashlib
 import json
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from enum import StrEnum
 from pathlib import Path
 from typing import Any, Final
@@ -211,7 +209,7 @@ class LocalResultCache:
                 meta: dict[str, str] = json.load(f)
             ts_str: str = meta.get("timestamp", "")
             ts: datetime = datetime.fromisoformat(ts_str) if ts_str else datetime.min
-            if datetime.utcnow() - ts > self._ttl:
+            if datetime.now(timezone.utc) - ts > self._ttl:
                 return None
             return pl.read_parquet(df_path)
         except Exception:
@@ -221,7 +219,7 @@ class LocalResultCache:
         key: str = self._key(query=query, database=database, region=region)
         df_path, meta_path = self._paths(key=key)
         df.write_parquet(df_path)
-        meta: dict[str, str] = {"timestamp": datetime.utcnow().isoformat()}
+        meta: dict[str, str] = {"timestamp": datetime.now(timezone.utc).isoformat()}
         with meta_path.open("w", encoding="utf-8") as f:
             json.dump(meta, f)
 
@@ -237,11 +235,11 @@ class LogMessages(StrEnum):
     )
     STATE_CHANGED = "Athena query state changed, execution_id={execution_id}, old_state={old_state}, new_state={new_state}"
     STATUS_CHECK_FAILED = "Failed to check query status - execution_id={}, error={}"
-    CLEANUP_SUCCESS = "Cleaned up S3 staging files"
-    CLEANUP_LIST_FAILED = "Could not list staging files for cleanup"
-    CLEANUP_DELETE_FAILED = "Failed to delete S3 staging files"
-    CLEANUP_ERROR = "Failed to clean up S3 staging files"
-    QUERY_CANCELLED = "Query cancellation requested - execution_id={}"
+    CLEANUP_SUCCESS = "Cleaned up {file_count} S3 staging files from {prefix}"
+    CLEANUP_LIST_FAILED = "Could not list staging files for cleanup from {prefix}: {error}"
+    CLEANUP_DELETE_FAILED = "Failed to delete S3 staging files from {prefix}: {error}"
+    CLEANUP_ERROR = "Failed to clean up S3 staging files for {filename}: {error}"
+    QUERY_CANCELLED = "Query cancellation requested - execution_id={execution_id}"
     RESOURCES_CLOSED = "Athena client resources closed"
 
 
@@ -285,6 +283,7 @@ class ProductionAthenaClient:
     async def _get_athena_client(self) -> Any:
         """Get async Athena client - create fresh client each time."""
         await self._ensure_session()
+        assert self._session is not None
         return self._session.client("athena", region_name=self._config.aws_region)
 
     async def _get_s3_client(self) -> ProductionS3Client:
@@ -612,7 +611,7 @@ class ProductionAthenaClient:
             )
             if not results or not results[0].success:
                 error_msg: str = (
-                    results[0].error if results else "Unknown S3 download error"
+                    results[0].error or "Unknown S3 download error" if results else "Unknown S3 download error"
                 )
                 raise AthenaClientError(f"Failed to load results from S3: {error_msg}")
 
@@ -633,11 +632,11 @@ class ProductionAthenaClient:
                 [(bucket, prefix)]
             )
             if not list_results or not list_results[0].success:
-                error: str = list_results[0].error if list_results else "Unknown"
+                error_msg: str = list_results[0].error or "Unknown" if list_results else "Unknown"
                 logger.warning(
                     LogMessages.CLEANUP_LIST_FAILED.format(
                         prefix=prefix,
-                        error=error,
+                        error=error_msg,
                     )
                 )
                 return
@@ -664,11 +663,11 @@ class ProductionAthenaClient:
                     )
                 )
             else:
-                error: str = delete_result[0].error if delete_result else "Unknown"
+                delete_error: str = delete_result[0].error or "Unknown" if delete_result else "Unknown"
                 logger.warning(
                     LogMessages.CLEANUP_DELETE_FAILED.format(
                         prefix=prefix,
-                        error=error,
+                        error=delete_error,
                     )
                 )
 
@@ -787,9 +786,9 @@ async def query_athena(
     """
     enable_reuse_env: str | None = os.environ.get("ATHENA_CACHE_ENABLED", "true")
     max_age_env: str | None = os.environ.get("ATHENA_CACHE_MAX_AGE_MINUTES", "1000")
-    enable_reuse: bool = enable_reuse_env.lower() in {"1", "true", "yes", "on"}
+    enable_reuse: bool = (enable_reuse_env or "false").lower() in {"1", "true", "yes", "on"}
     try:
-        max_age_minutes: int = max(1, min(1440, int(max_age_env)))
+        max_age_minutes: int = max(1, min(1440, int(max_age_env or "60")))
     except Exception:
         max_age_minutes = 60
 
@@ -800,14 +799,14 @@ async def query_athena(
         "ATHENA_LOCAL_CACHE_TTL_MINUTES", "60"
     )
     local_cache_dir_env: str | None = os.environ.get("ATHENA_LOCAL_CACHE_DIR")
-    local_cache_enabled: bool = local_cache_enabled_env.lower() in {
+    local_cache_enabled: bool = (local_cache_enabled_env or "false").lower() in {
         "1",
         "true",
         "yes",
         "on",
     }
     try:
-        local_cache_ttl: int = max(1, min(10080, int(local_cache_ttl_env)))
+        local_cache_ttl: int = max(1, min(10080, int(local_cache_ttl_env or "60")))
     except Exception:
         local_cache_ttl = 60
 
@@ -827,6 +826,8 @@ async def query_athena(
 
     client: ProductionAthenaClient = ProductionAthenaClient(config=config)
     try:
-        return await client.execute_query(query=query, database=database)
+        result = await client.execute_query(query=query, database=database, return_dataframe=True)
+        assert isinstance(result, pl.DataFrame)
+        return result
     finally:
         await client.close()

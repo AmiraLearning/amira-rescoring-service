@@ -1,8 +1,8 @@
-from datetime import datetime, timedelta
 from pathlib import Path
 from enum import StrEnum
 from typing import Final
 from types import MappingProxyType
+from ast import literal_eval
 
 from loguru import logger
 import polars as pl
@@ -10,7 +10,6 @@ import polars as pl
 from utils.config import PipelineConfig
 from infra.athena_client import query_athena
 
-from ast import literal_eval
 
 ACTIVITY_QUERY: Final[str] = """
     SELECT activityid,
@@ -22,17 +21,12 @@ ACTIVITY_QUERY: Final[str] = """
         status,
         displaystatus
     FROM activity_v
-    WHERE districtid in ('955168', '1000022968')
-    AND storyid = '3E53D222EC5B4D8E897AB054AB20DC98'
-    AND createdat >= TIMESTAMP '2024-01-09 00:00:00'
-    AND createdat < TIMESTAMP '2025-12-10 23:59:59'
-    LIMIT {limit}
+    WHERE type = 'letterNamingAndSounds'
+    AND status = 'under_review'
+    AND createdat >= TIMESTAMP '{start_time}'
+    AND createdat < TIMESTAMP '{end_time}'
+    AND districtid IN ('955168', '1000022968')
 """
-
-# WHERE type = 'letterNamingAndSounds'
-# AND createdat >= TIMESTAMP '{start_time}'
-# AND createdat < TIMESTAMP '{end_time}'
-# AND districtid IN ('955168', '1000022968')
 
 COLUMN_MAPPING: Final[MappingProxyType[str, str]] = MappingProxyType(
     {
@@ -88,9 +82,10 @@ async def load_activity_data(*, config: PipelineConfig) -> pl.DataFrame:
         )
         from infra.appsync_utils import load_activity_from_graphql
 
-        activity_df: pl.DataFrame = load_activity_from_graphql(
+        activity_data = load_activity_from_graphql(
             activity_id=config.metadata.activity_id
         )
+        activity_df: pl.DataFrame = pl.DataFrame(activity_data)
 
         activity_raw_path: Path = Path(result_dir) / "activities.parquet"
         activity_raw_path.parent.mkdir(parents=True, exist_ok=True)
@@ -104,27 +99,21 @@ async def load_activity_data(*, config: PipelineConfig) -> pl.DataFrame:
         )
         activity_file_path = Path(config.metadata.activity_file)
         if activity_file_path.suffix == ".parquet":
-            activity_df: pl.DataFrame = pl.read_parquet(config.metadata.activity_file)
+            activity_df = pl.read_parquet(config.metadata.activity_file)
         else:
-            activity_df: pl.DataFrame = pl.read_csv(config.metadata.activity_file)
+            activity_df = pl.read_csv(config.metadata.activity_file)
     else:
         logger.info("Fetching activities from data lake")
-        processing_start_time: str | None = config.metadata.processing_start_time
-        processing_end_time: str | None = config.metadata.processing_end_time
+        query_start_time = config.metadata.processing_start_time.strftime("%Y-%m-%d %H:%M:%S")
+        query_end_time = config.metadata.processing_end_time.strftime("%Y-%m-%d %H:%M:%S")
+        logger.info(
+            f"Using time range: {query_start_time} to {query_end_time}"
+        )
 
-        if not processing_start_time or not processing_end_time:
-            yesterday: datetime = datetime.now() - timedelta(days=1)
-            processing_start_time = yesterday.strftime("%Y-%m-%d 00:00:00")
-            processing_end_time = yesterday.strftime("%Y-%m-%d 23:59:59")
-            logger.info(
-                f"Using default time range: {processing_start_time} to {processing_end_time}"
-            )
-
-        activity_df: pl.DataFrame = await query_athena(
+        activity_df = await query_athena(
             query=ACTIVITY_QUERY.format(
-                start_time=processing_start_time,
-                end_time=processing_end_time,
-                limit=config.metadata.limit,
+                start_time=query_start_time,
+                end_time=query_end_time,
             )
         )
 
@@ -134,10 +123,10 @@ async def load_activity_data(*, config: PipelineConfig) -> pl.DataFrame:
 
         activity_df = activity_df.rename(COLUMN_MAPPING)
 
-        activity_raw_path: Path = Path(result_dir) / "activities.parquet"
-        activity_raw_path.parent.mkdir(parents=True, exist_ok=True)
-        activity_df.write_parquet(activity_raw_path)
-        logger.info(f"Activity raw data saved: {activity_raw_path}")
+        activity_raw_file_path: Path = Path(result_dir) / "activities.parquet"
+        activity_raw_file_path.parent.mkdir(parents=True, exist_ok=True)
+        activity_df.write_parquet(activity_raw_file_path)
+        logger.info(f"Activity raw data saved: {activity_raw_file_path}")
 
     return activity_df
 
@@ -174,7 +163,7 @@ def load_story_phrase_data(*, config: PipelineConfig) -> pl.DataFrame:
         story_phrase_df: pl.DataFrame = pl.read_parquet(story_phrase_path)
     elif story_phrase_path.suffix == FileFormat.CSV:
         logger.info(f"Loading and processing story phrases from {story_phrase_path}")
-        story_phrase_df: pl.DataFrame = pl.read_csv(story_phrase_path)
+        story_phrase_df = pl.read_csv(story_phrase_path)
     else:
         raise ValueError(
             f"Unsupported file format: {story_phrase_path.suffix}. Use {FileFormat.PARQUET} or {FileFormat.CSV}"
@@ -183,7 +172,7 @@ def load_story_phrase_data(*, config: PipelineConfig) -> pl.DataFrame:
     REQUIRED_COLUMNS: Final[frozenset[str]] = frozenset(
         {StoryPhraseColumns.EXPECTED_TEXT}
     )
-    missing_columns: set[str] = REQUIRED_COLUMNS - set(story_phrase_df.columns)
+    missing_columns: set[str] = set(REQUIRED_COLUMNS) - set(story_phrase_df.columns)
     if missing_columns:
         raise ValueError(f"Missing required columns: {missing_columns}")
 

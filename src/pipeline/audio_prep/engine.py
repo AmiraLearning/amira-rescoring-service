@@ -239,10 +239,10 @@ class AudioPreparationEngine:
         Returns:
             bool: True if the audio is downloaded, False otherwise.
         """
-        audio_dir_path: str = Path(
+        audio_dir_path: Path = Path(
             self._audio_base_dir, "reconstituted_phrase_audio", "DEFAULT"
         )
-        activity_audio_dir: str = Path(audio_dir_path, activity_id)
+        activity_audio_dir: Path = Path(audio_dir_path, activity_id)
         if not Path(activity_audio_dir).exists():
             logger.info(f"Downloading audio for activity {activity_id}")
             download_success = await download_tutor_style_audio(
@@ -361,3 +361,6 @@ class AudioPreparationEngine:
                 storyId=phrase_data.storyId,
                 studentId=phrase_data.studentId,
             )
+        else:
+            logger.warning(f"Failed to process phrase {phrase_data.phraseIndex} - no audio returned")
+            return None

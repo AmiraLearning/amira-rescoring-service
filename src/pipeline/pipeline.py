@@ -185,7 +185,7 @@ class ProcessedActivity:
 
 
 async def process_activity(
-    *, activity_id: str, phrases_input: list[dict[str, Any]], config: PipelineConfig
+    *, activity_id: str, phrases_input: list[PhraseInput], config: PipelineConfig
 ) -> ProcessedActivity:
     """
     Process a single activity through CPU and GPU stages.
@@ -198,8 +198,9 @@ async def process_activity(
     Returns:
         Tuple containing activity output and inference result
     """
+    phrase_inputs: list[PhraseInput] = phrases_input
     activity_outputs: ActivityOutput = await cpu_download_worker(
-        phrases_input=phrases_input, activity_id=activity_id, config=config
+        phrases_input=phrase_inputs, activity_id=activity_id, config=config
     )
 
     audio_arrays = [
@@ -244,7 +245,10 @@ def perform_alignment(
         
         try:
             _, phrase_errors, _ = word_level_alignment(
-                expected_text, reference_phonemes, phonetic_transcript.elements, phonetic_transcript.confidences
+                expected_items=expected_text,
+                ref_phons=reference_phonemes,
+                hyp_phons=phonetic_transcript.elements,
+                confidences=phonetic_transcript.confidences
             )
             phrase_errors_nested.append(phrase_errors)
         except Exception as e:
@@ -273,7 +277,7 @@ def perform_alignment(
 
 
 async def process_single_activity(
-    *, activity_id: str, phrases_input: list[dict[str, Any]], config: PipelineConfig
+    *, activity_id: str, phrases_input: list[PhraseInput], config: PipelineConfig
 ) -> dict[str, Any]:
     """
     Process a single activity through CPU and GPU stages.
@@ -290,7 +294,7 @@ async def process_single_activity(
     )
 
     activity_response: dict[str, Any] = set_activity_fields(
-        activity_id=activity_id, field_values=errors, config=config
+        activity_id=activity_id, field_values=errors, config=config.aws
     )
 
     return activity_response
@@ -308,17 +312,17 @@ async def run_activity_pipeline(*, config: PipelineConfig) -> list[dict[str, Any
     """
     prepared_data: PreparedData = await load_and_prepare_data(config=config)
 
-    activity_groups: dict[str, dict[str, Any]] = group_activities_by_id(
+    activity_groups = group_activities_by_id(
         phrase_df=prepared_data.phrase_df
     )
-    activity_ids: list[str] = activity_groups.get(ActivityFields.ACTIVITY_ID, [])
+    activity_ids = activity_groups.get(ActivityFields.ACTIVITY_ID, [])
 
     if not activity_ids:
         logger.warning("No activity IDs found to process")
         return []
 
     activity_responses: list[dict[str, Any]] = []
-    records_list: list[list[dict[str, Any]]] = activity_groups.get(
+    records_list = activity_groups.get(
         ActivityFields.RECORDS, []
     )
 

@@ -14,7 +14,7 @@ import shutil
 from typing import Any, Final
 from pydantic import BaseModel
 
-import boto3
+import aioboto3
 import botocore
 from loguru import logger
 
@@ -23,12 +23,15 @@ from datetime import datetime
 
 from infra.s3_client import ProductionS3Client, S3OperationResult
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import json
+import tempfile
 
 _S3_SPEECH_ROOT_PROD: Final[str] = "amira-speech-stream"
 _S3_SPEECH_ROOT_STAGE: Final[str] = "amira-speech-stream-stage"
 SEGMENTS_TXT_FILES_BY_ACT: Final[str] = "segments_txt_files_by_act"
 RECONSTITUTED_PHRASE_AUDIO: Final[str] = "reconstituted_phrase_audio"
 SEGMENTS_BY_ACT: Final[str] = "segments_by_act"
+MANIFEST_FILENAME: Final[str] = "segments_manifest.json"
 
 
 class S3Object(BaseModel):
@@ -58,8 +61,8 @@ async def s3_find(
     Returns:
         List of S3Object instances
     """
-    prefix: str = prefix.lstrip(delimiter)
-    result = await s3_client.list_objects_batch([(bucket, prefix)])
+    cleaned_prefix: str = prefix.lstrip(delimiter)
+    result = await s3_client.list_objects_batch([(bucket, cleaned_prefix)])
 
     if not result or not result[0].success:
         logger.warning(f"Failed to list objects in s3://{bucket}/{prefix}")
@@ -134,6 +137,68 @@ async def get_segment_file_names(
     return keys
 
 
+async def load_activity_manifest(
+    *, activity_id: str, s3_client: ProductionS3Client, stage_source: bool = False
+) -> dict[str, Any] | None:
+    """Load segments manifest for an activity if present.
+
+    Returns manifest dict or None if missing/unavailable.
+    """
+    bucket: str = bucket_for(stage_source=stage_source)
+    manifest_key: str = f"{activity_id}/{MANIFEST_FILENAME}"
+    with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as tf:
+        tmp_path: str = tf.name
+    try:
+        results: list[S3OperationResult] = await s3_client.download_files_batch(
+            [(bucket, manifest_key, tmp_path)]
+        )
+        if not results or not results[0].success:
+            return None
+        with open(tmp_path, "r") as f:
+            return json.load(f)
+    except Exception as e:
+        logger.warning(f"Failed to load manifest for {activity_id}: {e}")
+        return None
+    finally:
+        try:
+            Path(tmp_path).unlink(missing_ok=True)
+        except Exception:
+            pass
+
+
+async def write_activity_manifest(
+    *,
+    activity_id: str,
+    segments: list[str],
+    slices_by_phrase: dict[int, Any],
+    num_phrases_in_act: int,
+    s3_client: ProductionS3Client,
+    stage_source: bool = False,
+) -> None:
+    """Write segments manifest for an activity for future runs."""
+    bucket: str = bucket_for(stage_source=stage_source)
+    manifest_key: str = f"{activity_id}/{MANIFEST_FILENAME}"
+    payload: dict[str, Any] = {
+        "activity_id": activity_id,
+        "segments": segments,
+        "slices_by_phrase": slices_by_phrase,
+        "num_phrases_in_act": num_phrases_in_act,
+        "schema_version": 1,
+    }
+    with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as tf:
+        tmp_path: str = tf.name
+        tf.write(json.dumps(payload).encode("utf-8"))
+    try:
+        await s3_client.upload_files_batch([(tmp_path, bucket, manifest_key)])
+    except Exception as e:
+        logger.warning(f"Failed to write manifest for {activity_id}: {e}")
+    finally:
+        try:
+            Path(tmp_path).unlink(missing_ok=True)
+        except Exception:
+            pass
+
+
 async def download_segment_files(
     *,
     segment_file_names: list[str],
@@ -148,7 +213,7 @@ async def download_segment_files(
         return False
 
     mkdir_path: Path = Path(destination_path) / segment_file_names[0]
-    _ensure_parent_dir(path=mkdir_path)
+    _ensure_parent_dir(path=str(mkdir_path))
 
     bucket: str = bucket_for(stage_source=stage_source)
 
@@ -224,7 +289,7 @@ async def get_segment_metadata(
         if result.success and result.data:
             metadata: dict[str, Any] = result.data.get("metadata", {})
             try:
-                segment_head: SegmentHead = SegmentHead(
+                current_segment_head: SegmentHead = SegmentHead(
                     segment_file=segment_file,
                     phrase_index=int(
                         metadata.get("Metadata", {}).get("phraseindex", -1)
@@ -235,7 +300,7 @@ async def get_segment_metadata(
                 )
             except (ValueError, KeyError) as e:
                 logger.warning(f"Failed to parse metadata for {segment_file}: {e}")
-                segment_head: SegmentHead = SegmentHead(
+                current_segment_head = SegmentHead(
                     segment_file=segment_file,
                     phrase_index=None,
                     sequence_number=None,
@@ -244,7 +309,7 @@ async def get_segment_metadata(
                 )
         else:
             logger.warning(f"Failed to get metadata for {segment_file}: {result.error}")
-            segment_head: SegmentHead = SegmentHead(
+            current_segment_head = SegmentHead(
                 segment_file=segment_file,
                 phrase_index=None,
                 sequence_number=None,
@@ -252,7 +317,7 @@ async def get_segment_metadata(
                 success=False,
             )
 
-        metadata_across_segments.append(segment_head)
+        metadata_across_segments.append(current_segment_head)
 
     slices_by_phrase: dict[int, Any] = {}
     num_phrases_in_act: int = 0
@@ -266,7 +331,7 @@ async def get_segment_metadata(
                 logger.info(
                     f"retrying due to failed custom segment metadata head call: activity_id {activity_id}..."
                 )
-            for idx in range(retry_limit):
+            for idx in range(retry_limit or 2):
                 segment_meta_file: str = segment_meta.segment_file
                 logger.info(
                     f"retry {idx} during segment metadata head call: segment_meta_file {segment_meta_file}..."
@@ -277,41 +342,43 @@ async def get_segment_metadata(
                 ] = await s3_client.head_objects_batch([(bucket, segment_meta_file)])
 
                 if retry_results and retry_results[0].success:
-                    result: S3OperationResult = retry_results[0]
-                    metadata: dict[str, Any] = result.data.get("metadata", {})
+                    retry_result: S3OperationResult = retry_results[0]
+                    retry_metadata: dict[str, Any] = retry_result.data.get("metadata", {})
                     try:
-                        segment_meta: SegmentHead = SegmentHead(
+                        updated_segment_meta: SegmentHead = SegmentHead(
                             segment_file=segment_meta_file,
                             phrase_index=int(
-                                metadata.get("Metadata", {}).get("phraseindex", -1)
+                                retry_metadata.get("Metadata", {}).get("phraseindex", -1)
                             ),
-                            sequence_number=metadata.get("Metadata", {}).get(
+                            sequence_number=retry_metadata.get("Metadata", {}).get(
                                 "sequencenumber"
                             ),
-                            last_segment=metadata.get("Metadata", {}).get(
+                            last_segment=retry_metadata.get("Metadata", {}).get(
                                 "lastsegment"
                             ),
                             success=True,
                         )
+                        segment_meta = updated_segment_meta
                         break
                     except (ValueError, KeyError):
                         continue
             if not segment_meta.success:
                 return {}, 0, False
-        segment_file: str = segment_meta.segment_file
+        current_segment_file: str = segment_meta.segment_file
         phrase_index: int | None = segment_meta.phrase_index
         sequence_number: str | None = segment_meta.sequence_number
         last_segment: str | None = segment_meta.last_segment
 
-        if (phrase_index + 1) > num_phrases_in_act:
-            num_phrases_in_act = phrase_index + 1
+        if phrase_index is not None:
+            if (phrase_index + 1) > num_phrases_in_act:
+                num_phrases_in_act = phrase_index + 1
 
-        if phrase_index not in slices_by_phrase.keys():
-            slices_by_phrase[phrase_index] = {"last_segment": {}, "segments": {}}
+            if phrase_index not in slices_by_phrase.keys():
+                slices_by_phrase[phrase_index] = {"last_segment": {}, "segments": {}}
 
-        slices_by_phrase[phrase_index]["segments"][sequence_number] = segment_file
-        if last_segment:
-            slices_by_phrase[phrase_index]["last_segment"] = {
+            slices_by_phrase[phrase_index]["segments"][sequence_number] = segment_file
+            if last_segment:
+                slices_by_phrase[phrase_index]["last_segment"] = {
                 "file_name": segment_file,
                 "sequence_number": sequence_number,
             }
@@ -457,7 +524,7 @@ def reconstitute_and_save_phrase(
             try:
                 seg: str = phrase_meta["segments"][str(curr)]
                 if phrase_dir is None:
-                    phrase_dir = Path(phrase_segments_root_dir) / seg.split("/")[0]
+                    phrase_dir = str(Path(phrase_segments_root_dir) / seg.split("/")[0])
                 files.append(
                     _concat_input_line(
                         root_dir=phrase_segments_root_dir, segment_path=seg
@@ -497,7 +564,7 @@ def reconstitute_and_save_phrase(
             for line in files:
                 f.write(f"{line}\n")
         _concat_export(
-            concat_file=phrase_segments_concat_file, export_file=export_destination_file
+            concat_file=str(phrase_segments_concat_file), export_file=str(export_destination_file)
         )
         return phrase_dir
 
@@ -558,9 +625,8 @@ class PhraseSlicer:
             s3: S3 client
             stage_source: Whether to use the staging bucket
         """
-        self.s3_client: ProductionS3Client = s3_client or boto3.client(
-            "s3", config=botocore.client.Config(max_pool_connections=50)
-        )
+        from infra.s3_client import HighPerformanceS3Config
+        self.s3_client: ProductionS3Client = s3_client or ProductionS3Client(config=HighPerformanceS3Config())
         self.destination_path: str = (
             destination_path
             if destination_path.endswith("/")
@@ -586,53 +652,83 @@ class PhraseSlicer:
             bool: True if the activity was processed successfully, False otherwise.
         """
         source_activity_id: str = activity_id
-        logger.info(f"getting file names for activity {source_activity_id}...")
-        segment_file_names: list[str] = await get_segment_file_names(
+        manifest: dict[str, Any] | None = await load_activity_manifest(
             activity_id=source_activity_id,
             s3_client=self.s3_client,
             stage_source=self.stage_source,
         )
+        if manifest is not None:
+            logger.info(f"Using manifest for {source_activity_id}")
+            segment_file_names: list[str] = manifest.get("segments", [])
+            slices_by_phrase: dict[int, Any] = manifest.get("slices_by_phrase", {})
+            num_phrases_in_act: int = int(manifest.get("num_phrases_in_act", 0))
+            success_bool: bool = bool(segment_file_names) and bool(slices_by_phrase)
+        else:
+            logger.info(f"getting file names for activity {source_activity_id}...")
+            fetched_segment_file_names: list[str] = await get_segment_file_names(
+                activity_id=source_activity_id,
+                s3_client=self.s3_client,
+                stage_source=self.stage_source,
+            )
 
-        logger.info(f"downloading / categorizing metadata {source_activity_id}...")
-        slices_by_phrase, num_phrases_in_act, success_bool = await get_segment_metadata(
-            segment_file_names=segment_file_names,
-            s3_client=self.s3_client,
-            activity_id=source_activity_id,
-            retry_limit=2,
-            stage_source=self.stage_source,
-        )
+            logger.info(f"downloading / categorizing metadata {source_activity_id}...")
+            slices_by_phrase, num_phrases_in_act, fetched_success_bool = await get_segment_metadata(
+                segment_file_names=fetched_segment_file_names,
+                s3_client=self.s3_client,
+                activity_id=source_activity_id,
+                retry_limit=2,
+                stage_source=self.stage_source,
+            )
         logger.info(f"slices_by_phrase: {slices_by_phrase}")
         logger.info(f"num_phrases_in_act: {num_phrases_in_act}")
-        logger.info(f"success_bool: {success_bool}")
-        if not success_bool:
-            return success_bool
+        # Use appropriate success_bool based on whether manifest was used
+        current_success_bool = success_bool if manifest is not None else fetched_success_bool
+        logger.info(f"success_bool: {current_success_bool}")
+        if not current_success_bool:
+            return current_success_bool
 
         logger.info(f"downloading segments {source_activity_id}...")
-        logger.info(f"segment_file_names: {segment_file_names}")
+        # Use appropriate segment_file_names based on whether manifest was used
+        current_segment_file_names = segment_file_names if manifest is not None else fetched_segment_file_names
+        logger.info(f"segment_file_names: {current_segment_file_names}")
         logger.info(f"destination_path: {self.destination_path}")
         logger.info(f"s3_client: {self.s3_client}")
         logger.info(f"stage_source: {self.stage_source}")
-        success_bool: bool = await download_segment_files(
-            segment_file_names=segment_file_names,
+        download_success_bool: bool = await download_segment_files(
+            segment_file_names=current_segment_file_names,
             destination_path=self.destination_path.replace(
                 RECONSTITUTED_PHRASE_AUDIO, SEGMENTS_BY_ACT
             ),
             s3_client=self.s3_client,
             stage_source=self.stage_source,
         )
-        if not success_bool:
-            return success_bool
+        if not download_success_bool:
+            return download_success_bool
+
+        if manifest is None and download_success_bool:
+            try:
+                await write_activity_manifest(
+                    activity_id=source_activity_id,
+                    segments=current_segment_file_names,
+                    slices_by_phrase=slices_by_phrase,
+                    num_phrases_in_act=num_phrases_in_act,
+                    s3_client=self.s3_client,
+                    stage_source=self.stage_source,
+                )
+            except Exception as e:
+                logger.warning(f"Failed to write manifest for {source_activity_id}: {e}")
 
         logger.info(f"reconstituting phrase audio {source_activity_id}...")
-        if replay_suffix is not None:
-            target_activity_id: str = source_activity_id[:-4] + replay_suffix
-        else:
-            target_activity_id: str = source_activity_id
-        success_bool: bool = reconstitute_and_save_phrase(
+        final_target_activity_id: str = (
+            source_activity_id[:-4] + replay_suffix 
+            if replay_suffix is not None 
+            else source_activity_id
+        )
+        reconstitute_success_bool: bool = reconstitute_and_save_phrase(
             num_phrases_in_act=num_phrases_in_act,
             slices_by_phrase=slices_by_phrase,
             destination_path=self.destination_path,
-            activity_id=target_activity_id,
+            activity_id=final_target_activity_id,
             keep_intermediaries=keep_intermediaries,
         )
-        return success_bool
+        return reconstitute_success_bool

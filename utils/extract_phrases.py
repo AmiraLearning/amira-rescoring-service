@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-
+import urllib.parse
 from pathlib import Path
 
 from pydantic import BaseModel, Field
@@ -46,22 +46,23 @@ def _resolve_paths(
     )
 
     if RECONSTITUTED_PHRASE_AUDIO in activity_dir:
-        root_dir: Path = Path(activity_dir).split(RECONSTITUTED_PHRASE_AUDIO)[0]
+        root_dir_str: str = activity_dir.split(RECONSTITUTED_PHRASE_AUDIO)[0]
+        root_dir: Path = Path(root_dir_str)
         dataset_name_suffix: str = (
-            Path(activity_dir).split(RECONSTITUTED_PHRASE_AUDIO)[-1].strip("/")
+            activity_dir.split(RECONSTITUTED_PHRASE_AUDIO)[-1].strip("/")
             if dataset_name is None
             else dataset_name
         )
     else:
-        root_dir: Path = Path(activity_dir)
-        dataset_name_suffix: str = (
+        root_dir = Path(activity_dir)
+        dataset_name_suffix = (
             dataset_name if dataset_name is not None else "DEFAULT"
         )
 
     if use_audio_dir_as_activities_root:
         dataset_dir_full_path: Path = Path(activity_dir)
     else:
-        dataset_dir_full_path: Path = (
+        dataset_dir_full_path = (
             Path(root_dir) / RECONSTITUTED_PHRASE_AUDIO / dataset_name_suffix
         )
 
@@ -74,13 +75,13 @@ def _resolve_paths(
     )
 
 
-def _upload_phrase_files_to_s3(
+async def _upload_phrase_files_to_s3(
     *,
     activity_dir_full_path: Path,
     audio_s3_root: Path,
     dataset_name_suffix: str,
     stage_activity_id: str,
-    s3_client: BotoClient,
+    s3_client: ProductionS3Client,
 ) -> None:
     """Upload phrase files to S3.
 
@@ -91,10 +92,13 @@ def _upload_phrase_files_to_s3(
         stage_activity_id: Activity identifier with stage suffix.
         s3: Optional boto3 S3 client.
     """
-    bucket: str = audio_s3_root.netloc
-    base_path: Path = audio_s3_root.path.strip("/").split(RECONSTITUTED_PHRASE_AUDIO)[0]
+    parsed_url = urllib.parse.urlparse(str(audio_s3_root))
+    bucket: str = parsed_url.netloc
+    base_path_str: str = parsed_url.path.strip("/").split(RECONSTITUTED_PHRASE_AUDIO)[0]
+    base_path: Path = Path(base_path_str)
     activity_dir_full_path.mkdir(parents=True, exist_ok=True)
 
+    upload_operations = []
     for wav_file in activity_dir_full_path.iterdir():
         if not str(wav_file).endswith(".wav"):
             continue
@@ -106,12 +110,16 @@ def _upload_phrase_files_to_s3(
             / wav_file.name
         )
         filename: str = str(activity_dir_full_path / wav_file.name)
+        upload_operations.append((filename, bucket, key))
+    
+    if upload_operations:
         try:
-            s3_client.upload_file(Filename=filename, Bucket=bucket, Key=key)
+            results = await s3_client.upload_files_batch(upload_operations)
+            for result in results:
+                if not result.success:
+                    logger.warning(f"Failed to upload: {result.error}")
         except Exception as e:
-            logger.warning(
-                f"Could not upload file {filename} to s3 s3://{bucket}/{key}: {e}"
-            )
+            logger.warning(f"Batch upload failed: {e}")
 
 
 async def extract_phrase_slices_tutor_style(
@@ -175,7 +183,7 @@ async def extract_phrase_slices_tutor_style(
             )
 
             if audio_s3_root is not None:
-                _upload_phrase_files_to_s3(
+                await _upload_phrase_files_to_s3(
                     activity_dir_full_path=audio_paths.activity_dir_full_path,
                     audio_s3_root=audio_s3_root,
                     dataset_name_suffix=audio_paths.dataset_name_suffix,

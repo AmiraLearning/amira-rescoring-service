@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any, Final, Awaitable
 
 import aioboto3
-from botocore.client import Config as BotoConfig
+from aiobotocore.config import AioConfig
 from pydantic import BaseModel, Field
 from rich.progress import Progress
 
@@ -203,7 +203,7 @@ class ProductionS3Client:
             if self._clients_created < self._config.client_pool_size:
                 client_context = self._session.client(
                     "s3",
-                    config=BotoConfig(
+                    config=AioConfig(
                         max_pool_connections=self._config.max_connections_per_host,
                         retries={"max_attempts": 0},
                         read_timeout=self._config.read_timeout,

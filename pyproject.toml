@@ -27,6 +27,7 @@ dependencies = [
   "torchcodec>=0.6.0",
   "soundfile>=0.13.1",
   "scipy>=1.16.1",
+  "line-profiler>=5.0.0",
 ]
 
 [build-system]
@@ -39,4 +40,8 @@ dev = [
     "pre-commit>=4.3.0",
     "ruff>=0.12.10",
     "maturin>=1.9.3",
+    "types-pyyaml>=6.0.12.20250822",
+    "boto3-stubs>=1.40.21",
+    "types-aioboto3>=15.1.0",
+    "scipy-stubs>=1.16.1.1",
 ]

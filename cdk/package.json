@@ -9,7 +9,9 @@
     "test": "jest",
     "cdk": "cdk",
     "deploy": "cdk deploy",
-    "destroy": "cdk destroy"
+    "destroy": "cdk destroy",
+    "deploy-parallel": "cdk deploy AmiraLambdaParallelStack",
+    "destroy-parallel": "cdk destroy AmiraLambdaParallelStack"
   },
   "devDependencies": {
     "@types/jest": "^29.5.5",

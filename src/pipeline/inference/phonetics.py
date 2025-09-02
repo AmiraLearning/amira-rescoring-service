@@ -3,7 +3,7 @@ from .constants import VALID_PHONETIC_ELEMENTS
 
 
 class TrieNode:
-    def __init__(self):
+    def __init__(self) -> None:
         self.children: dict[str, "TrieNode"] = {}
         self.is_end_of_element: bool = False
         self.element_value: str | None = None
@@ -16,7 +16,7 @@ class LongestMatchResult:
 
 
 class PhoneticTrie:
-    def __init__(self, *, phonetic_elements: list[str] | None = None):
+    def __init__(self, *, phonetic_elements: list[str] | None = None) -> None:
         self.root: TrieNode = TrieNode()
         for element in phonetic_elements or VALID_PHONETIC_ELEMENTS:
             self._insert(element=element)

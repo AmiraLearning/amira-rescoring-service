@@ -15,7 +15,7 @@ def cleanup_pipeline_data(*, config: PipelineConfig) -> bool:
     """
     directories: dict[str, Path] = {
         "Audio": config.audio.audio_dir,
-        "Results": config.result.output_dir,
+        "Results": Path(config.result.output_dir),
     }
 
     dirs_to_clean: dict[str, Path] = {

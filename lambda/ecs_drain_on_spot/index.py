@@ -1,10 +1,10 @@
 import os
 from typing import Any
 
-import boto3
+import aioboto3
 
 
-def _find_container_instance_arn(
+async def _find_container_instance_arn(
     *, ecs_client: Any, cluster_arn: str, instance_id: str
 ) -> str | None:
     """Locate the ECS container instance ARN for a given EC2 instance ID.
@@ -23,7 +23,7 @@ def _find_container_instance_arn(
         if next_token is not None:
             request_kwargs["nextToken"] = next_token
 
-        list_response: dict[str, Any] = ecs_client.list_container_instances(
+        list_response: dict[str, Any] = await ecs_client.list_container_instances(
             **request_kwargs
         )
         container_instance_arns: list[str] = list_response.get(
@@ -32,7 +32,7 @@ def _find_container_instance_arn(
         if not container_instance_arns:
             return None
 
-        describe_response: dict[str, Any] = ecs_client.describe_container_instances(
+        describe_response: dict[str, Any] = await ecs_client.describe_container_instances(
             cluster=cluster_arn, containerInstances=container_instance_arns
         )
         container_instances: list[dict[str, Any]] = describe_response.get(
@@ -51,7 +51,7 @@ def _find_container_instance_arn(
             return None
 
 
-def handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
+async def handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
     """Handle Spot ITN/Rebalance events and set ECS container instance to DRAINING.
 
     Args:
@@ -61,27 +61,28 @@ def handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
     Returns:
         dict[str, Any]: Status payload indicating action taken.
     """
-    ecs_client: Any = boto3.client("ecs")
-    cluster_arn: str | None = os.environ.get("CLUSTER_ARN")
+    session = aioboto3.Session()
+    async with session.client("ecs") as ecs_client:
+        cluster_arn: str | None = os.environ.get("CLUSTER_ARN")
 
-    event_detail: dict[str, Any] = (
-        event.get("detail", {}) if isinstance(event, dict) else {}
-    )
-    instance_id: str | None = event_detail.get("instance-id") or event_detail.get(
-        "EC2InstanceId"
-    )
-    if instance_id is None or cluster_arn is None:
-        return {"status": "missing-params"}
+        event_detail: dict[str, Any] = (
+            event.get("detail", {}) if isinstance(event, dict) else {}
+        )
+        instance_id: str | None = event_detail.get("instance-id") or event_detail.get(
+            "EC2InstanceId"
+        )
+        if instance_id is None or cluster_arn is None:
+            return {"status": "missing-params"}
 
-    container_instance_arn: str | None = _find_container_instance_arn(
-        ecs_client=ecs_client, cluster_arn=cluster_arn, instance_id=instance_id
-    )
-    if container_instance_arn is None:
-        return {"status": "no-container-instance"}
+        container_instance_arn: str | None = await _find_container_instance_arn(
+            ecs_client=ecs_client, cluster_arn=cluster_arn, instance_id=instance_id
+        )
+        if container_instance_arn is None:
+            return {"status": "no-container-instance"}
 
-    _ = ecs_client.update_container_instances_state(
-        cluster=cluster_arn,
-        containerInstances=[container_instance_arn],
-        status="DRAINING",
-    )
-    return {"status": "draining", "containerInstanceArn": container_instance_arn}
+        _ = await ecs_client.update_container_instances_state(
+            cluster=cluster_arn,
+            containerInstances=[container_instance_arn],
+            status="DRAINING",
+        )
+        return {"status": "draining", "containerInstanceArn": container_instance_arn}

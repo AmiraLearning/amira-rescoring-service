@@ -3,8 +3,9 @@ from pydantic import BaseModel, Field
 from pathlib import Path
 import yaml
 from loguru import logger
-from src.pipeline.inference.constants import DeviceType
+import os
 from datetime import datetime
+from src.pipeline.inference.models import W2VConfig
 
 
 DEFAULT_CONFIG_PATH: Final[str] = "config_parallel.yaml"
@@ -12,7 +13,8 @@ DEFAULT_RESULT_DIR: Final[str] = "2025_letter_sound_scoring"
 LOG_FORMAT: Final[str] = "{time:YYYY-MM-DD HH:mm:ss} | {level} | {message}"
 
 
-logger.add("pipeline_execution.log")
+if os.getenv("ENABLE_FILE_LOG", "0") == "1":
+    logger.add("pipeline_execution.log")
 
 
 class PipelineMetadataConfig(BaseModel):
@@ -44,7 +46,7 @@ class AudioConfig(BaseModel):
     audio_dir: Path = Path("audio")
     save_padded_audio: bool = True
     padded_seconds: int = 3
-    use_complete_audio: bool = False
+    use_complete_audio: bool = True
 
 
 class QueueSizesConfig(BaseModel):
@@ -74,14 +76,6 @@ class AwsConfig(BaseModel):
     audio_env: str = "prod2"
     appsync_env: str = "prod2"
     aws_profile: str = "legacy"
-
-
-class W2VConfig(BaseModel):
-    """Wav2Vec2 configuration."""
-
-    model_path: str = "models/wav2vec2-ft-large-eng-phoneme-amirabet_2025-04-24"
-    device: DeviceType = DeviceType.CPU
-    include_confidence: bool = False
 
 
 class PipelineConfig(BaseModel):

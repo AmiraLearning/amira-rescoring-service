@@ -6,7 +6,6 @@ import traceback
 from typing import Any
 
 import numpy as np
-import asyncio
 import torch
 from loguru import logger
 from transformers import BatchFeature, Wav2Vec2ForCTC, Wav2Vec2Processor
@@ -16,6 +15,8 @@ from .constants import (
     BYTES_PER_GB,
     MS_PER_SECOND,
     DeviceType,
+    TokenType,
+    VALID_PHONETIC_ELEMENTS,
 )
 from .models import (
     W2VConfig,
@@ -24,38 +25,12 @@ from .models import (
     DecodePredictionResult,
     ConfidenceResult,
     InferenceInput,
+    PhoneticTranscript,
     GPUInferenceResult,
+    GroupedPhoneticUnits,
+    Segment,
 )
-from .decoder import PhonemeDecoder
-
-
-_ENGINE_SINGLETON: Wav2Vec2InferenceEngine | None = None
-
-
-async def preload_inference_engine_async(
-    *, w2v_config: W2VConfig, warmup: bool = False
-) -> None:
-    """Asynchronously preload the inference engine (and optionally warm it up).
-
-    Args:
-        w2v_config: W2V2 configuration to construct the engine with.
-        warmup: If True, run a tiny dummy inference to initialize kernels.
-    """
-    global _ENGINE_SINGLETON
-    if _ENGINE_SINGLETON is not None:
-        return
-
-    def _build() -> None:
-        global _ENGINE_SINGLETON
-        if _ENGINE_SINGLETON is None:
-            _ENGINE_SINGLETON = Wav2Vec2InferenceEngine(w2v_config=w2v_config)
-            if warmup:
-                dummy: np.ndarray = np.zeros(1600, dtype=np.float32)
-                _ENGINE_SINGLETON.infer(
-                    input_data=InferenceInput(audio_array=dummy, inference_id="warmup")
-                )
-
-    await asyncio.to_thread(_build)
+from .phonetics import PhoneticTrie, LongestMatchResult
 
 
 class Wav2Vec2InferenceEngine:
@@ -99,48 +74,17 @@ class Wav2Vec2InferenceEngine:
             )
 
         self._init_device()
-        self._decoder = PhonemeDecoder()
+        self._phonetic_trie = PhoneticTrie(phonetic_elements=VALID_PHONETIC_ELEMENTS)
 
     def _init_device(self) -> None:
         """Initialize the device for the model."""
-        if torch.cuda.is_available():
-            self._device = torch.device(DeviceType.GPU.value)
-        elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-            self._device = torch.device("mps")
-        else:
-            self._device = torch.device(DeviceType.CPU.value)
-
-        try:
-            num_threads_env = os.getenv("TORCH_NUM_THREADS")
-            interop_threads_env = os.getenv("TORCH_NUM_INTEROP_THREADS")
-            if not num_threads_env:
-                import os as _os
-                default_threads = max(1, (_os.cpu_count() or 8) // 2)
-                torch.set_num_threads(default_threads)
-            else:
-                torch.set_num_threads(int(num_threads_env))
-            if not interop_threads_env:
-                torch.set_num_interop_threads(2)
-            else:
-                torch.set_num_interop_threads(int(interop_threads_env))
-        except Exception:
-            pass
-
-        self._model = self._model.to(self._device)
-
-        if (
-            self._device.type == "cpu"
-            and os.getenv("W2V2_QUANTIZE", "false").lower() == "true"
-        ):
-            try:
-                self._model = torch.quantization.quantize_dynamic(
-                    self._model, {torch.nn.Linear}, dtype=torch.qint8
-                )
-                logger.info("Applied dynamic quantization to W2V2 model (CPU)")
-            except Exception as e:
-                logger.warning(f"Dynamic quantization failed, continuing without it: {e}")
-
-        self._model.eval()
+        self._device = torch.device(
+            DeviceType.GPU.value if torch.cuda.is_available() else DeviceType.CPU.value
+        )
+        if getattr(self, "_model", None) is not None:
+            # TODO check if model is already on the device
+            self._model = self._model.to(self._device)  # type: ignore[assignment]
+            self._model.eval()  # type: ignore[attr-defined]
         logger.info(f"Model loaded on {self._device}")
         self._log_gpu_memory_usage()
 
@@ -155,7 +99,7 @@ class Wav2Vec2InferenceEngine:
         """
         preprocess_start: float = time.time()
         inputs: BatchFeature = self._processor(
-            [audio_array], sampling_rate=16_000, return_tensors="pt", padding=False
+            [audio_array], sampling_rate=16_000, return_tensors="pt", padding=True
         )
         input_values: torch.Tensor = inputs.input_values.to(self._device)
         return PreprocessResult(
@@ -189,11 +133,7 @@ class Wav2Vec2InferenceEngine:
             logits_np = resp.as_numpy("OUTPUT__0")
             logits: torch.Tensor = torch.from_numpy(logits_np)
         else:
-            logger.info(
-                f"Running w2v2 model inference on {input_values.shape} input values"
-            )
-            with torch.autocast(device_type=self._device.type if self._device.type != "mps" else "cpu", enabled=(self._device.type != "cpu")):
-                logits = self._model(input_values).logits  # type: ignore[operator]
+            logits = self._model(input_values).logits  # type: ignore[operator]
         return InferenceResult(
             logits=logits,
             model_inference_time_ms=(time.time() - model_start) * MS_PER_SECOND,
@@ -241,11 +181,136 @@ class Wav2Vec2InferenceEngine:
     def _log_gpu_memory_usage(self) -> None:
         """Log the GPU memory usage."""
         if not torch.cuda.is_available():
-            logger.info("No GPU available")
             return
         allocated = torch.cuda.memory_allocated(device=0) / BYTES_PER_GB
         cached = torch.cuda.memory_reserved(device=0) / BYTES_PER_GB
         logger.info(f"GPU: {allocated:.1f}GB allocated, {cached:.1f}GB reserved")
+
+    def _group_consecutive_tokens(self, *, segment: Segment) -> GroupedPhoneticUnits:
+        """Group consecutive tokens.
+
+        Args:
+            segment: The segment to group consecutive tokens on.
+
+        Returns:
+            GroupedPhoneticUnits: The grouped phonetic units.
+        """
+        if not segment.tokens:
+            return GroupedPhoneticUnits(tokens=[], confidences=[])
+        grouped_tokens: list[str] = []
+        averaged_confidences: list[float] = []
+        current_token: str = segment.tokens[0]
+        current_conf: list[float] = []
+        if segment.confidences is not None:
+            current_conf.append(segment.confidences[0])
+        for idx in range(1, len(segment.tokens)):
+            next_token: str = segment.tokens[idx]
+            if current_token == next_token:
+                if segment.confidences is not None:
+                    current_conf.append(segment.confidences[idx])
+            else:
+                grouped_tokens.append(current_token)
+                if segment.confidences is not None:
+                    averaged_confidences.append(sum(current_conf) / len(current_conf))
+                current_token = next_token
+                current_conf = []
+                if segment.confidences is not None:
+                    current_conf.append(segment.confidences[idx])
+        grouped_tokens.append(current_token)
+        if segment.confidences is not None:
+            averaged_confidences.append(sum(current_conf) / len(current_conf))
+        return GroupedPhoneticUnits(
+            tokens=grouped_tokens, confidences=averaged_confidences
+        )
+
+    def _parse_phonetic_elements(
+        self, *, grouped_segment_units: GroupedPhoneticUnits
+    ) -> GroupedPhoneticUnits:
+        """Parse the phonetic elements.
+
+        Args:
+            grouped_segment_units: The grouped segment units to parse.
+
+        Returns:
+            GroupedPhoneticUnits: The parsed phonetic elements.
+        """
+        final_elements: list[str] = []
+        final_confidences: list[float] = []
+        idx: int = 0
+        track_conf: bool = bool(grouped_segment_units.confidences)
+        while idx < len(grouped_segment_units.tokens):
+            lm: LongestMatchResult = self._phonetic_trie.find_longest_match(
+                tokens=grouped_segment_units.tokens, start_index=idx
+            )
+            if lm.matched_element and lm.tokens_consumed > 0:
+                final_elements.append(lm.matched_element)
+                if track_conf:
+                    seg_conf: list[float] = grouped_segment_units.confidences[
+                        idx : idx + lm.tokens_consumed
+                    ]
+                    final_confidences.append(sum(seg_conf) / len(seg_conf))
+                idx += lm.tokens_consumed
+            else:
+                raise ValueError(
+                    f"Unable to match phonetic element at position {idx} in segment: {''.join(grouped_segment_units.tokens[idx:])}"
+                )
+        return GroupedPhoneticUnits(
+            tokens=final_elements, confidences=final_confidences
+        )
+
+    def _process_segment_to_phonetics(self, segment: Segment) -> PhoneticTranscript:
+        """Process the segment to phonetics.
+
+        Args:
+            segment: The segment to process.
+
+        Returns:
+            PhoneticTranscript: The phonetic transcript.
+        """
+        grouped: GroupedPhoneticUnits = self._group_consecutive_tokens(segment=segment)
+        parsed: GroupedPhoneticUnits = self._parse_phonetic_elements(
+            grouped_segment_units=grouped
+        )
+        return PhoneticTranscript(
+            elements=parsed.tokens, confidences=parsed.confidences
+        )
+
+    def _process_phonetic_transcription(
+        self, pred_tokens: list[str], max_probs: np.ndarray | None
+    ) -> PhoneticTranscript:
+        """Process the phonetic transcription.
+
+        Args:
+            pred_tokens: The predicted tokens.
+            max_probs: The max probabilities.
+
+        Returns:
+            PhoneticTranscript: The phonetic transcript.
+        """
+        final: PhoneticTranscript = PhoneticTranscript(elements=[], confidences=[])
+        current: Segment = Segment(tokens=[], confidences=[])
+        for idx, token in enumerate(pred_tokens):
+            if token == TokenType.PAD:
+                continue
+            elif token == TokenType.SEPARATOR:
+                if current.tokens:
+                    seg: PhoneticTranscript = self._process_segment_to_phonetics(
+                        segment=current
+                    )
+                    final.elements.extend(seg.elements)
+                    final.confidences.extend(seg.confidences)
+                    current = Segment(tokens=[], confidences=[])
+            else:
+                current.tokens.append(token)
+                if max_probs is not None:
+                    current.confidences.append(max_probs[idx])
+        if current.tokens:
+            seg: PhoneticTranscript = self._process_segment_to_phonetics(
+                segment=current
+            )
+            final.elements.extend(seg.elements)
+            final.confidences.extend(seg.confidences)
+        return final
 
     def infer(self, *, input_data: InferenceInput) -> GPUInferenceResult:
         """Perform the inference.
@@ -256,9 +321,6 @@ class Wav2Vec2InferenceEngine:
         Returns:
             GPUInferenceResult: The inference result.
         """
-        logger.info(
-            f"Performing inference on {input_data.audio_array.shape} audio array"
-        )
         result: GPUInferenceResult = GPUInferenceResult(
             inference_id=input_data.inference_id
         )
@@ -272,9 +334,6 @@ class Wav2Vec2InferenceEngine:
             )
             result.preprocess_time_ms = preprocess_result.preprocess_time_ms
             with torch.no_grad():
-                logger.info(
-                    f"Running model inference on {preprocess_result.input_values.shape} input values"
-                )
                 inference_result: InferenceResult = self._run_model_inference(
                     input_values=preprocess_result.input_values
                 )
@@ -295,13 +354,11 @@ class Wav2Vec2InferenceEngine:
                     result.confidence_calculation_time_ms = (
                         conf_result.confidence_time_ms
                     )
-                result.phonetic_transcript = self._decoder.decode(
+                result.phonetic_transcript = self._process_phonetic_transcription(
                     pred_tokens=result.pred_tokens,
-                    max_probs=(
-                        result.max_probs
-                        if self._w2v_config.include_confidence
-                        else None
-                    ),
+                    max_probs=result.max_probs
+                    if self._w2v_config.include_confidence
+                    else None,
                 )
             result.total_duration_ms = (time.time() - inference_start) * MS_PER_SECOND
             result.success = True
@@ -337,14 +394,11 @@ def perform_single_audio_inference(
     Returns:
         GPUInferenceResult: The inference result.
     """
-    global _ENGINE_SINGLETON
-    if _ENGINE_SINGLETON is None:
-        _ENGINE_SINGLETON = Wav2Vec2InferenceEngine(
-            w2v_config=w2v_config,
-            model_instance=model_instance,
-            processor_instance=processor_instance,
-        )
-    engine: Wav2Vec2InferenceEngine = _ENGINE_SINGLETON
+    engine: Wav2Vec2InferenceEngine = Wav2Vec2InferenceEngine(
+        w2v_config=w2v_config,
+        model_instance=model_instance,
+        processor_instance=processor_instance,
+    )
     return engine.infer(
         input_data=InferenceInput(audio_array=audio_array, inference_id=inference_id)
     )
