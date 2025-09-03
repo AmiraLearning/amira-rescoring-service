@@ -102,3 +102,81 @@ Notes
 - Load/capacity testing: add load test harness (Locust/k6) with representative audio; publish baseline throughput/latency and alert on regressions.
 - Time/clock correctness: standardize on UTC everywhere; verify EMF timestamps and any cross‑region clock skew handling.
 - Error taxonomy: define error codes/classes and map to log fields and metrics for consistent triage and dashboards.
+
+## Platform Plan: From Project to Organization-wide Batch ASR
+
+Excellent question. You have built an incredible foundation for a single, high-performance ASR task. Elevating it from a specific project to the go-to platform for batch ASR processing in your organization is a strategic shift. It's less about adding more AWS resources and more about abstraction, developer experience, and multi-tenancy.
+
+Here is a roadmap on how to make your project the go-to solution, building upon your existing CDK stack.
+
+### Phase 1: Generalize and Abstract (From Project to Platform)
+
+Your current stack is purpose-built for AmiraLetterScoring. The first step is to decouple the generic infrastructure from the specific task.
+
+- Isolate the "Workload" from the "Platform":
+  - The Platform: Your core infrastructure (ECS Cluster, ASGs with GPUs, SQS queues, ALB, autoscaling logic, monitoring) is the platform. This is the reusable part.
+  - The Workload: This is the task-specific part: the container image with the ASR model, the pre/post-processing code, and the specific ModelPath.
+  - Action: Refactor your CDK. Create a core AsrBatchPlatformStack that provisions the cluster, networking, and scaling. Then, create a separate AsrWorkloadStack (or a similar construct) that defines an ECS Task Definition and Service for a specific ASR model. This allows new tasks to be onboarded without redeploying the entire cluster.
+
+- Make the Platform Model-Agnostic:
+  - Your ModelPath is a CfnParameter, which is a good start. To become a true platform, you need to support any model that can run in a container.
+  - Action: Define a standard container contract. For example, your platform could mandate that any ASR container must:
+    - Read a job message from an environment variable or a file.
+    - Accept audio file locations (S3 URIs) as input.
+    - Write its output (transcripts, logs) to a specified S3 prefix.
+    - Expose a /health/ready endpoint if it's a service.
+  - This way, any team can bring their own ASR model (wav2vec2, Whisper, etc.), package it according to the contract, and run it on your platform.
+
+- Create a Centralized Job Submission API:
+  - The ManualEnqueueFunction is a great tool for testing. For a platform, you need a more robust and secure way for users and services to submit jobs.
+  - Action: Create a simple internal API using API Gateway with Lambda integration. This API would be the single front door for all ASR batch jobs.
+    - POST /jobs: Submits a new batch job. The request body specifies the S3 path to the audio files, the desired "Workload" (e.g., amira-letter-scoring:v1.2 or whisper-large:v3), and where to put the results.
+    - GET /jobs/{job_id}: Checks the status of a job.
+
+### Phase 2: Obsess Over Developer Experience (DX)
+
+If your platform is hard to use, no one will adopt it. Your goal is to make running a massive ASR job easier than setting up a single EC2 instance.
+
+- Create a Simple Command-Line Interface (CLI):
+  - Most developers prefer a CLI over crafting raw API calls.
+  - Action: Build a simple Python CLI (using click or argparse) that wraps your API.
+
+```bash
+# Submit a job using the 'amira-letter-scoring' model
+asr-platform submit --model amira-letter-scoring:v1.2 \
+                    --input s3://my-audio-bucket/unprocessed/ \
+                    --output s3://my-results-bucket/run-123/
+
+# Check the status
+asr-platform status --job-id <job-id-1234>
+```
+
+- Publish Comprehensive Documentation:
+  - Quickstart Guide: How to run your first job in 5 minutes using the CLI.
+  - The Container Contract: How a team can package their own ASR model to run on the platform.
+  - API Reference: Details on the API endpoints.
+  - Architecture Overview: A high-level diagram of how the platform works.
+
+- Provide Scaffolding and Templates:
+  - Lower the barrier to entry for teams bringing new models.
+  - Action: Create a template repository (cookiecutter is great for this) that includes a sample Dockerfile, Python script, and README.md demonstrating how to build a container that complies with your platform's contract. A developer can use this template to get their model running in minutes.
+
+### Phase 3: Implement Governance and Operational Excellence
+
+As more teams use your platform, you need to ensure it remains stable, fair, and cost-effective.
+
+- Implement Cost Allocation and Visibility:
+  - Use resource tagging. Tag every resource (ECS services, S3 objects, etc.) with a Project or Team tag passed through the API during job submission.
+  - Create a dedicated Cost and Usage Report (CUR) or use AWS Cost Explorer, filtered by these tags, to build a cost dashboard. This allows you to show Team A how much their jobs cost versus Team B.
+
+- Add Multi-Tenancy and Isolation:
+  - You don't want a misconfigured job from one team to consume all the GPU resources and starve other teams' jobs.
+  - Action:
+    - Priority Queues: Evolve your single SQS queue into multiple queues (e.g., high-priority, low-priority). The job submission API can route jobs accordingly.
+    - Resource Quotas: Use ECS capacity providers to potentially isolate workloads. You could create separate capacity providers for different teams if strict isolation is needed, though this adds complexity. A simpler start is to implement API-level throttling and quotas (e.g., "Team A can only have 1000 active tasks at a time").
+
+- Enhance Observability for Users:
+  - Your current CloudWatch dashboard is excellent for you, the platform owner. Your users will want to see the status of their jobs.
+  - Action:
+    - Emit custom CloudWatch metrics from your job processing containers with the Project or JobId as a dimension.
+    - Create a "Job Status" page or API endpoint that provides logs, progress (e.g., "752 of 1000 files processed"), and a link to the results in S3.

@@ -1,6 +1,7 @@
 import os
 from typing import Any, Final
 
+import requests
 from gql import Client, gql
 from gql.transport.requests import RequestsHTTPTransport
 from loguru import logger
@@ -12,6 +13,11 @@ from utils.config import AwsConfig  # TODO rename to AWSConfig
 _GRAPHQL_ENDPOINT_URL: Final[str] = os.environ.get("APPSYNC_URL", "")
 _GRAPHQL_ENDPOINT_KEY: Final[str] = os.environ.get("APPSYNC_API_KEY", "")
 _GRAPHQL_ALLOW_MOCK: Final[bool] = os.environ.get("APPSYNC_ALLOW_MOCK", "false").lower() == "true"
+
+# Global cache for GraphQL client and session to optimize Lambda warm starts
+_cached_session: requests.Session | None = None
+_cached_graphql_client: Client | None = None
+_cached_client_config_hash: int | None = None
 
 UPDATE_ACTIVITY_FIELDS_MUTATION = gql(
     """
@@ -151,6 +157,63 @@ class UpdateActivityResponse(BaseModel):
     data: UpdateActivityData
 
 
+def _get_cached_session() -> requests.Session:
+    """Get or create a cached HTTP session with connection pooling."""
+    global _cached_session
+    if _cached_session is None:
+        _cached_session = requests.Session()
+
+        # Configure connection pooling for better performance
+        adapter = requests.adapters.HTTPAdapter(
+            pool_connections=2,  # Number of connection pools
+            pool_maxsize=5,  # Maximum number of connections in pool
+            max_retries=0,  # Let tenacity handle retries
+        )
+        _cached_session.mount("https://", adapter)
+        _cached_session.mount("http://", adapter)
+
+        # Set keep-alive and timeout defaults
+        _cached_session.headers.update(
+            {"Connection": "keep-alive", "Keep-Alive": "timeout=30, max=100"}
+        )
+
+    return _cached_session
+
+
+def _get_cached_graphql_client(
+    *, url: str, api_key: str, timeout: int, correlation_id: str | None = None
+) -> Client:
+    """Get or create a cached GraphQL client with connection pooling."""
+    global _cached_graphql_client, _cached_client_config_hash
+
+    # Create config hash to detect changes that require new client
+    config_items = [url, api_key, str(timeout)]
+    config_hash = hash(tuple(config_items))
+
+    if _cached_graphql_client is None or _cached_client_config_hash != config_hash:
+        session = _get_cached_session()
+
+        headers = {"x-api-key": api_key}
+        if correlation_id:
+            headers["x-correlation-id"] = correlation_id
+
+        transport = RequestsHTTPTransport(
+            url=url,
+            headers=headers,
+            timeout=timeout,
+            session=session,  # Use cached session with connection pooling
+        )
+
+        _cached_graphql_client = Client(transport=transport)
+        _cached_client_config_hash = config_hash
+
+    # Update correlation ID in headers if provided (client is cached, but headers can change)
+    if correlation_id and hasattr(_cached_graphql_client.transport, "headers"):
+        _cached_graphql_client.transport.headers["x-correlation-id"] = correlation_id
+
+    return _cached_graphql_client
+
+
 def set_activity_fields(
     *,
     activity_id: str,
@@ -182,11 +245,14 @@ def set_activity_fields(
 
     timeout_s: int = int(os.getenv("APPSYNC_TIMEOUT", "60"))
     max_attempts: int = int(os.getenv("APPSYNC_MAX_ATTEMPTS", "3"))
-    headers: dict[str, str] = {"x-api-key": _GRAPHQL_ENDPOINT_KEY}
-    if correlation_id:
-        headers["x-correlation-id"] = correlation_id
-    transport = RequestsHTTPTransport(url=_GRAPHQL_ENDPOINT_URL, headers=headers, timeout=timeout_s)
-    client: Client = Client(transport=transport)
+
+    # Use cached client with connection pooling
+    client = _get_cached_graphql_client(
+        url=_GRAPHQL_ENDPOINT_URL,
+        api_key=_GRAPHQL_ENDPOINT_KEY,
+        timeout=timeout_s,
+        correlation_id=correlation_id,
+    )
 
     @retry(
         stop=stop_after_attempt(max(1, max_attempts)),
@@ -238,12 +304,10 @@ def query_activities_with_filter(
         raise RuntimeError("APPSYNC_URL and APPSYNC_API_KEY must be set")
 
     timeout_s: int = int(os.getenv("APPSYNC_TIMEOUT", "60"))
-    client: Client = Client(
-        transport=RequestsHTTPTransport(
-            url=_GRAPHQL_ENDPOINT_URL,
-            headers={"x-api-key": _GRAPHQL_ENDPOINT_KEY},
-            timeout=timeout_s,
-        )
+
+    # Use cached client with connection pooling
+    client = _get_cached_graphql_client(
+        url=_GRAPHQL_ENDPOINT_URL, api_key=_GRAPHQL_ENDPOINT_KEY, timeout=timeout_s
     )
 
     response: dict[str, Any] = client.execute(
@@ -268,12 +332,10 @@ def introspect_schema() -> dict[str, Any]:
         raise RuntimeError("APPSYNC_URL and APPSYNC_API_KEY must be set")
 
     timeout_s: int = int(os.getenv("APPSYNC_TIMEOUT", "60"))
-    client: Client = Client(
-        transport=RequestsHTTPTransport(
-            url=_GRAPHQL_ENDPOINT_URL,
-            headers={"x-api-key": _GRAPHQL_ENDPOINT_KEY},
-            timeout=timeout_s,
-        )
+
+    # Use cached client with connection pooling
+    client = _get_cached_graphql_client(
+        url=_GRAPHQL_ENDPOINT_URL, api_key=_GRAPHQL_ENDPOINT_KEY, timeout=timeout_s
     )
 
     response: dict[str, Any] = client.execute(INTROSPECTION_QUERY)
@@ -289,8 +351,6 @@ def get_activity(*, activity_id: str) -> dict[str, Any]:
     Returns:
         The response data from the AppSync API.
     """
-    # TODO unused imports
-
     variables = {"activityId": [activity_id]}
 
     if not _GRAPHQL_ENDPOINT_URL or not _GRAPHQL_ENDPOINT_KEY:
@@ -303,12 +363,11 @@ def get_activity(*, activity_id: str) -> dict[str, Any]:
 
     timeout_s: int = int(os.getenv("APPSYNC_TIMEOUT", "60"))
     max_attempts: int = int(os.getenv("APPSYNC_MAX_ATTEMPTS", "3"))
-    transport = RequestsHTTPTransport(
-        url=_GRAPHQL_ENDPOINT_URL,
-        headers={"x-api-key": _GRAPHQL_ENDPOINT_KEY},
-        timeout=timeout_s,
+
+    # Use cached client with connection pooling
+    client = _get_cached_graphql_client(
+        url=_GRAPHQL_ENDPOINT_URL, api_key=_GRAPHQL_ENDPOINT_KEY, timeout=timeout_s
     )
-    client: Client = Client(transport=transport)
 
     @retry(
         stop=stop_after_attempt(max(1, max_attempts)),
@@ -320,9 +379,6 @@ def get_activity(*, activity_id: str) -> dict[str, Any]:
 
     response = _do_get()
     return response
-
-    # This should never be reached due to the raise in the loop, but satisfies mypy
-    raise RuntimeError("Failed to get activity after all retry attempts")
 
 
 def load_activity_from_graphql(*, activity_id: str) -> dict[str, Any]:
