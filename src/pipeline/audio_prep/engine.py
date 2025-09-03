@@ -261,7 +261,7 @@ class AudioPreparationEngine:
         else:
             output.error_message = f"No valid complete audio found for activity {activity_id}"
             logger.warning(f"Activity {activity_id} has no valid complete audio")
-            output.success = True
+            output.success = False
 
         return output
 

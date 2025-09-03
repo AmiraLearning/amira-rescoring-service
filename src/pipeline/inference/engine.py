@@ -2,6 +2,7 @@ import asyncio
 import os
 import time
 import traceback
+from threading import Lock
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -31,6 +32,7 @@ from .models import (
 )
 
 _cached_engines: dict[str, "Wav2Vec2InferenceEngine | TritonInferenceEngine"] = {}
+_cached_engines_lock: Lock = Lock()
 
 
 async def preload_inference_engine_async(
@@ -229,6 +231,8 @@ class Wav2Vec2InferenceEngine:
             PreprocessResult: The preprocessed audio array.
         """
         preprocess_start: float = time.time()
+        if not isinstance(audio_array, np.ndarray):
+            raise TypeError("audio_array must be a numpy.ndarray")
         inputs: BatchFeature = self._processor(
             [audio_array], sampling_rate=16_000, return_tensors="pt", padding=False
         )
@@ -398,8 +402,8 @@ class Wav2Vec2InferenceEngine:
                         else str(result.device),
                         "IncludeConfidence": str(self._w2v_config.include_confidence).lower(),
                         **(
-                            {"CorrelationId": str(input_data.inference_id)}
-                            if getattr(input_data, "inference_id", None)
+                            {"CorrelationId": str(input_data.correlation_id)}
+                            if getattr(input_data, "correlation_id", None)
                             else {}
                         ),
                     },
@@ -472,16 +476,22 @@ def get_cached_engine(
     """
     cache_key = f"{w2v_config.model_path}_{w2v_config.use_triton}_{w2v_config.use_torch_compile}_{w2v_config.use_jit_trace}"
 
-    if cache_key not in _cached_engines:
+    if cache_key in _cached_engines:
+        return _cached_engines[cache_key]
+
+    with _cached_engines_lock:
+        existing = _cached_engines.get(cache_key)
+        if existing is not None:
+            return existing
         if w2v_config.use_triton:
             from .triton_engine import TritonInferenceEngine
 
-            _cached_engines[cache_key] = TritonInferenceEngine(w2v_config=w2v_config)
+            engine = TritonInferenceEngine(w2v_config=w2v_config)
         else:
-            _cached_engines[cache_key] = Wav2Vec2InferenceEngine(w2v_config=w2v_config)
+            engine = Wav2Vec2InferenceEngine(w2v_config=w2v_config)  # type: ignore[assignment]
+        _cached_engines[cache_key] = engine
         logger.info(f"Cached new inference engine with key: {cache_key}")
-
-    return _cached_engines[cache_key]
+        return engine
 
 
 def perform_single_audio_inference(
@@ -493,6 +503,7 @@ def perform_single_audio_inference(
     inference_id: str | None = None,
     engine: "Wav2Vec2InferenceEngine | TritonInferenceEngine | None" = None,
     use_cache: bool = False,
+    correlation_id: str | None = None,
 ) -> GPUInferenceResult:
     """Perform a single audio inference.
 
@@ -522,5 +533,7 @@ def perform_single_audio_inference(
                 processor_instance=processor_instance,
             )
     return engine.infer(
-        input_data=InferenceInput(audio_array=audio_array, inference_id=inference_id)
+        input_data=InferenceInput(
+            audio_array=audio_array, inference_id=inference_id, correlation_id=correlation_id
+        )
     )

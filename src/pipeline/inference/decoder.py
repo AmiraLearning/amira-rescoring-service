@@ -11,6 +11,20 @@ from .models import (
 )
 from .phonetics import LongestMatchResult, PhoneticTrie
 
+# Global cache for PhoneticTrie to avoid rebuilding across Lambda invocations
+_cached_phonetic_trie: PhoneticTrie | None = None
+
+
+def get_cached_phonetic_trie(phonetic_elements: list[str] | None = None) -> PhoneticTrie:
+    """Get or create a cached PhoneticTrie instance for Lambda optimization."""
+    global _cached_phonetic_trie
+    target_elements = phonetic_elements or VALID_PHONETIC_ELEMENTS
+
+    if _cached_phonetic_trie is None:
+        _cached_phonetic_trie = PhoneticTrie(phonetic_elements=target_elements)
+
+    return _cached_phonetic_trie
+
 
 class PhonemeDecoder:
     """Decode model token outputs into phonetic/phonemic transcripts.
@@ -26,9 +40,7 @@ class PhonemeDecoder:
     """
 
     def __init__(self, *, phonetic_elements: list[str] | None = None) -> None:
-        self._phonetic_trie = PhoneticTrie(
-            phonetic_elements=phonetic_elements or VALID_PHONETIC_ELEMENTS
-        )
+        self._phonetic_trie = get_cached_phonetic_trie(phonetic_elements)
 
     def decode(self, *, pred_tokens: list[str], max_probs: np.ndarray | None) -> PhoneticTranscript:
         """Decode predicted tokens to a phonetic transcript.
@@ -45,20 +57,22 @@ class PhonemeDecoder:
         current_segment: Segment = Segment(tokens=[], confidences=[])
 
         for index, token in enumerate(pred_tokens):
-            if token == TokenType.PAD:
-                continue
-            elif token == TokenType.SEPARATOR:
-                if current_segment.tokens:
-                    segment_transcript: PhoneticTranscript = self._process_segment_to_phonetics(
-                        segment=current_segment
-                    )
-                    final_transcript.elements.extend(segment_transcript.elements)
-                    final_transcript.confidences.extend(segment_transcript.confidences)
-                    current_segment = Segment(tokens=[], confidences=[])
-            else:
-                current_segment.tokens.append(token)
-                if max_probs is not None:
-                    current_segment.confidences.append(max_probs[index])
+            match token:
+                case TokenType.PAD:
+                    continue
+                case TokenType.SEPARATOR:
+                    if current_segment.tokens:
+                        segment_transcript: PhoneticTranscript = self._process_segment_to_phonetics(
+                            segment=current_segment
+                        )
+                        final_transcript.elements.extend(segment_transcript.elements)
+                        final_transcript.confidences.extend(segment_transcript.confidences)
+                        current_segment = Segment(tokens=[], confidences=[])
+                case _:
+                    current_segment.tokens.append(token)
+                    if max_probs is not None:
+                        if index < len(max_probs):
+                            current_segment.confidences.append(max_probs[index])
 
         if current_segment.tokens:
             segment_transcript = self._process_segment_to_phonetics(segment=current_segment)
@@ -95,7 +109,7 @@ class PhonemeDecoder:
         grouped_tokens: list[str] = []
         averaged_confidences: list[float] = []
 
-        has_confidences = segment.confidences is not None and len(segment.confidences) > 0
+        has_confidences: bool = segment.confidences is not None and len(segment.confidences) > 0
 
         current_token: str = segment.tokens[0]
         current_confidences: list[float] = []
@@ -163,6 +177,16 @@ class PhonemeDecoder:
                     index += 1
                     continue
                 logger.error(message)
+                try:
+                    from utils.logging import emit_emf_metric
+
+                    emit_emf_metric(
+                        namespace="Amira/Decoder",
+                        metrics={"ParseFailure": 1.0},
+                        dimensions={},
+                    )
+                except Exception:
+                    pass
                 raise ValueError(message)
 
         return GroupedPhoneticUnits(tokens=final_elements, confidences=final_confidences)

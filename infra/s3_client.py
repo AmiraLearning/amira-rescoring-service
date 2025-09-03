@@ -546,6 +546,7 @@ class ProductionS3Client:
 
         return S3OperationResult(success=False, operation=operation, error="Max retries exceeded")
 
+    # TODO nuke this tuple nonsenses
     async def upload_files_batch(
         self, operations: list[tuple[str, str, str]]
     ) -> list[S3OperationResult]:
@@ -970,7 +971,6 @@ class S3OperationError(S3ClientError):
         self.operation = operation
 
 
-# Global S3 client registry to avoid repeated session inits per run
 _GLOBAL_S3_CLIENTS: dict[tuple[str, str], ProductionS3Client] = {}
 
 

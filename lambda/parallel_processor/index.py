@@ -38,6 +38,7 @@ _optimizations_applied = False
 _config_cache: PipelineConfig | None = None
 _cloudwatch_client: Any | None = None
 _s3_client: Any | None = None
+_cached_engine: Any | None = None
 
 
 def apply_lambda_optimizations() -> None:
@@ -86,6 +87,7 @@ def create_lambda_config() -> PipelineConfig:
         triton_url=triton_url or "",
         triton_model=triton_model,
         batch_all_phrases=batch_all_phrases,
+        fast_init=True,  # Enable fast initialization for Lambda
     )
     return PipelineConfig(aws=aws_config, w2v2=w2v2_config)
 
@@ -161,6 +163,15 @@ def write_results_to_s3(result: LambdaProcessingResult) -> None:
     s3_client.put_object(Key=f"{base_key}/_SUCCESS", Body=b"", **put_kwargs)
 
 
+def _get_cached_engine(config: PipelineConfig) -> Any:
+    global _cached_engine
+    if _cached_engine is None:
+        from src.pipeline.inference.engine import get_cached_engine
+
+        _cached_engine = get_cached_engine(w2v_config=config.w2v2)
+    return _cached_engine
+
+
 async def process_activity(
     activity_id: str, *, correlation_id: str | None = None
 ) -> LambdaProcessingResult:
@@ -173,7 +184,10 @@ async def process_activity(
     config.metadata.activity_id = activity_id
     if correlation_id:
         config.metadata.correlation_id = correlation_id
-    results = await run_activity_pipeline(config=config)
+
+    # Get or create cached engine for warm starts
+    cached_engine = _get_cached_engine(config)
+    results = await run_activity_pipeline(config=config, cached_engine=cached_engine)
 
     if not results:
         raise ValueError("Pipeline returned no results")

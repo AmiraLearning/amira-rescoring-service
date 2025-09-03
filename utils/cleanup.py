@@ -16,7 +16,7 @@ def cleanup_pipeline_data(*, config: PipelineConfig) -> bool:
         True if cleanup successful, False otherwise.
     """
     directories: dict[str, Path] = {"Audio": config.audio.audio_dir}
-    # Only remove results directory when audit mode is enabled to prevent data loss
+
     results_path: Path = Path(config.result.output_dir)
     if config.result.audit_mode:
         directories["Results"] = results_path

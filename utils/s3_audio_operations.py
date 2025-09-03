@@ -12,7 +12,7 @@ from typing import Any
 from loguru import logger
 from pydantic import BaseModel
 
-from infra.s3_client import ProductionS3Client
+from infra.s3_client import ProductionS3Client, S3OperationResult
 
 
 class S3Object(BaseModel):
@@ -45,8 +45,7 @@ async def s3_find(
         Exception: If S3 operation fails after retries
     """
     try:
-        # Use list_objects_batch method from ProductionS3Client
-        operations = [(source_bucket, prefix_path)]
+        operations: list[tuple[str, str]] = [(source_bucket, prefix_path)]
         results = await s3_client.list_objects_batch(operations)
         result = results[0] if results else None
 
@@ -54,8 +53,12 @@ async def s3_find(
             logger.warning(f"S3 list failed for {source_bucket}/{prefix_path}")
             return []
 
-        contents: list[dict[str, Any]] = result.data.get("Contents", []) if result.data else []
-        return [obj["Key"] for obj in contents if "Key" in obj]
+        objects: list[dict[str, Any]] = result.data.get("objects", []) if result.data else []
+        return [
+            str(obj.get("Key"))
+            for obj in objects
+            if isinstance(obj, dict) and obj.get("Key") is not None
+        ]
 
     except Exception as e:
         logger.error(f"Error finding S3 objects in {source_bucket}/{prefix_path}: {e}")
@@ -114,8 +117,8 @@ async def get_segment_file_names(
     if not activity_id:
         return []
 
-    bucket = bucket_for(stage_source=stage_source)
-    prefix = f"{activity_id}/"
+    bucket: str = bucket_for(stage_source=stage_source)
+    prefix: str = f"{activity_id}/"
 
     try:
         return await s3_find(
@@ -142,22 +145,20 @@ async def load_activity_manifest(
     Returns:
         Manifest data or None if not found
     """
-    bucket = bucket_for(stage_source=stage_source)
-    manifest_key = f"{activity_id}/manifest.json"
+    bucket: str = bucket_for(stage_source=stage_source)
+    manifest_key: str = f"{activity_id}/manifest.json"
 
     try:
-        # Use download_files_batch method from ProductionS3Client
-        temp_path = f"/tmp/{manifest_key.replace('/', '_')}"
-        operations = [(bucket, manifest_key, temp_path)]
-        results = await s3_client.download_files_batch(operations)
-        result = results[0] if results else None
+        temp_path: str = f"/tmp/{manifest_key.replace('/', '_')}"
+        operations: list[tuple[str, str, str]] = [(bucket, manifest_key, temp_path)]
+        results: list[S3OperationResult] = await s3_client.download_files_batch(operations)
+        result: S3OperationResult | None = results[0] if results else None
 
         if result and result.success:
-            # Read the downloaded file
-            temp_file = Path(temp_path)
+            temp_file: Path = Path(temp_path)
             if temp_file.exists():
-                content = temp_file.read_bytes()
-                temp_file.unlink()  # Clean up
+                content: bytes = temp_file.read_bytes()
+                temp_file.unlink()
                 return json.loads(content.decode("utf-8"))
 
     except Exception as e:
@@ -184,22 +185,19 @@ async def write_activity_manifest(
     Returns:
         True if successful, False otherwise
     """
-    bucket = bucket_for(stage_source=stage_source)
-    manifest_key = f"{activity_id}/manifest.json"
+    bucket: str = bucket_for(stage_source=stage_source)
+    manifest_key: str = f"{activity_id}/manifest.json"
 
     try:
-        content = json.dumps(manifest_data, indent=2).encode("utf-8")
+        content: bytes = json.dumps(manifest_data, indent=2).encode("utf-8")
 
-        # Use upload_files_batch method from ProductionS3Client
-        # First write content to temp file
-        temp_file = Path("/tmp") / f"temp_{manifest_key.replace('/', '_')}"
+        temp_file: Path = Path("/tmp") / f"temp_{manifest_key.replace('/', '_')}"
         temp_file.write_bytes(content)
 
-        operations = [(str(temp_file), bucket, manifest_key)]
-        results = await s3_client.upload_files_batch(operations)
-        result = results[0] if results else None
+        operations: list[tuple[str, str, str]] = [(str(temp_file), bucket, manifest_key)]
+        results: list[S3OperationResult] = await s3_client.upload_files_batch(operations)
+        result: S3OperationResult | None = results[0] if results else None
 
-        # Clean up temp file
         if temp_file.exists():
             temp_file.unlink()
 
@@ -232,19 +230,17 @@ async def download_segment_files(
         logger.warning("No segment files to download")
         return False
 
-    bucket = bucket_for(stage_source=stage_source)
+    bucket: str = bucket_for(stage_source=stage_source)
     _ensure_parent_dir(path=destination_path)
 
-    # Prepare download operations
-    operations = []
+    operations: list[tuple[str, str, str]] = []
     for s3_key in segment_file_names:
-        local_file = Path(destination_path) / Path(s3_key).name
+        local_file: Path = Path(destination_path) / Path(s3_key).name
         operations.append((bucket, s3_key, str(local_file)))
 
-    # Execute batch download
     try:
-        results = await s3_client.download_files_batch(operations)
-        success_count = sum(1 for r in results if r.success)
+        results: list[S3OperationResult] = await s3_client.download_files_batch(operations)
+        success_count: int = sum(1 for r in results if r.success)
 
         logger.info(f"Downloaded {success_count}/{len(operations)} segment files")
         return success_count == len(operations)

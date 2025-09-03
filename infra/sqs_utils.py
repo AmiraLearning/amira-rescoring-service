@@ -6,17 +6,37 @@ from pydantic import BaseModel, Field
 
 
 class JobMessage(BaseModel):
+    """Job message."""
+
     activity_id: str
     source: str
     timestamp: int | None = Field(default_factory=lambda: int(time.time()))
 
 
 class SQSEnqueuer:
+    """SQS enqueuer."""
+
     def __init__(self, client: Any, queue_url: str):
+        """Initialize the SQS enqueuer.
+
+        Args:
+            client: SQS client.
+            queue_url: SQS queue URL.
+        """
+
         self.client = client
         self.queue_url = queue_url
 
     async def enqueue_batch(self, messages: list[JobMessage]) -> int:
+        """Enqueue a batch of messages.
+
+        Args:
+            messages: List of messages to enqueue.
+
+        Returns:
+            Number of messages enqueued.
+        """
+
         BATCH_SIZE = 10
         count = 0
 

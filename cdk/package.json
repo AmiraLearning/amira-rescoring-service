@@ -8,6 +8,7 @@
     "watch": "tsc -w",
     "test": "jest",
     "cdk": "cdk",
+    "clean": "rm -rf dist cdk.out",
     "deploy": "cdk deploy -a 'node dist/bin/amira-letter-scoring.js'",
     "destroy": "cdk destroy -a 'node dist/bin/amira-letter-scoring.js'",
     "deploy-parallel": "cdk deploy -a 'node dist/bin/amira-lambda-parallel.js' AmiraLambdaParallelStack",

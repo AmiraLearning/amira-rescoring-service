@@ -26,6 +26,8 @@ if os.getenv("ENABLE_FILE_LOG", "0") == "1":
 class PipelineMetadataConfig(BaseModel):
     """Pipeline metadata configuration."""
 
+    # TODO no hardcoding dates
+
     processing_start_time: datetime = datetime(2025, 1, 9, 0, 0, 0)
     processing_end_time: datetime = datetime(2025, 1, 10, 23, 59, 59)
     activity_file: str | None = None

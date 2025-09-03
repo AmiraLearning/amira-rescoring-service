@@ -93,12 +93,15 @@ class PreparedData:
     engine: Any = None
 
 
-async def load_and_prepare_data(*, config: PipelineConfig | None) -> PreparedData:
+async def load_and_prepare_data(
+    *, config: PipelineConfig | None, cached_engine: Any = None
+) -> PreparedData:
     """
     Load activity and story phrase data and merge them.
 
     Args:
         config: Pipeline configuration parameters
+        cached_engine: Pre-cached engine instance (optional)
 
     Returns:
         PreparedData containing activity dataframe and merged phrase dataframe
@@ -110,10 +113,38 @@ async def load_and_prepare_data(*, config: PipelineConfig | None) -> PreparedDat
     if config is None:
         raise ValueError("Config parameter is required")
 
+    # Skip engine preloading if we already have a cached engine
+    if cached_engine is not None:
+        logger.info("Using cached engine, skipping preload")
+        s3_preload_task: asyncio.Task[Any] = asyncio.create_task(
+            preload_s3_client_async(
+                config=HighPerformanceS3Config(
+                    aws_profile=config.aws.aws_profile, aws_region=config.aws.aws_region
+                ),
+                num_clients=2,
+            )
+        )
+
+        activity_df: pl.DataFrame = await load_activity_data(config=config)
+        story_phrase_df: pl.DataFrame = load_story_phrase_data(config=config)
+        phrase_df: pl.DataFrame = await merge_activities_with_phrases(
+            activity_df=activity_df, story_phrase_df=story_phrase_df
+        )
+
+        logger.info(f"{phrase_df.height} phrases from {activity_df.height} activities to process")
+
+        try:
+            await s3_preload_task
+        except Exception as e:
+            logger.warning(f"S3 preload failed (continuing): {e}")
+
+        return PreparedData(activity_df=activity_df, phrase_df=phrase_df, engine=cached_engine)
+
+    # Original behavior for when no cached engine is provided
     preload_task: asyncio.Task[Any] = asyncio.create_task(
         preload_inference_engine_async(w2v_config=config.w2v2, warmup=True)
     )
-    s3_preload_task: asyncio.Task[Any] = asyncio.create_task(
+    s3_preload_task_fallback: asyncio.Task[Any] = asyncio.create_task(
         preload_s3_client_async(
             config=HighPerformanceS3Config(
                 aws_profile=config.aws.aws_profile, aws_region=config.aws.aws_region
@@ -122,21 +153,25 @@ async def load_and_prepare_data(*, config: PipelineConfig | None) -> PreparedDat
         )
     )
 
-    activity_df: pl.DataFrame = await load_activity_data(config=config)
-    story_phrase_df: pl.DataFrame = load_story_phrase_data(config=config)
-    phrase_df: pl.DataFrame = await merge_activities_with_phrases(
-        activity_df=activity_df, story_phrase_df=story_phrase_df
+    activity_df_fallback: pl.DataFrame = await load_activity_data(config=config)
+    story_phrase_df_fallback: pl.DataFrame = load_story_phrase_data(config=config)
+    phrase_df_fallback: pl.DataFrame = await merge_activities_with_phrases(
+        activity_df=activity_df_fallback, story_phrase_df=story_phrase_df_fallback
     )
 
-    logger.info(f"{phrase_df.height} phrases from {activity_df.height} activities to process")
+    logger.info(
+        f"{phrase_df_fallback.height} phrases from {activity_df_fallback.height} activities to process"
+    )
 
     try:
-        engine, _ = await asyncio.gather(preload_task, s3_preload_task)
+        engine, _ = await asyncio.gather(preload_task, s3_preload_task_fallback)
     except Exception as e:
         logger.warning(f"Preload failed (continuing): {e}")
         engine = None
 
-    return PreparedData(activity_df=activity_df, phrase_df=phrase_df, engine=engine)
+    return PreparedData(
+        activity_df=activity_df_fallback, phrase_df=phrase_df_fallback, engine=engine
+    )
 
 
 def group_activities_by_id(*, phrase_df: pl.DataFrame) -> dict[str, list[Any]]:
@@ -238,6 +273,14 @@ async def process_activity(
             logger.warning(f"Failed to initialize inference engine on-demand: {e}")
             engine_local = None
 
+    correlation_id = (
+        str(config.metadata.correlation_id)
+        if hasattr(config, "metadata")
+        and hasattr(config.metadata, "correlation_id")
+        and config.metadata.correlation_id
+        else None
+    )
+
     for phrase in activity_outputs.phrases:
         phrase_start_time: float = time.time()
         if phrase.speech is not None and len(phrase.speech) > 0:
@@ -249,7 +292,11 @@ async def process_activity(
                 w2v_config=config.w2v2,
                 inference_id=f"{activity_id}_phrase_{phrase.phraseIndex}",
                 engine=engine_local,
+                use_cache=True,  # Enable caching for Lambda optimization
+                correlation_id=correlation_id,
             )
+            if correlation_id is not None:
+                inference_output.inference_id = correlation_id
 
             if inference_output.success and inference_output.phonetic_transcript:
                 logger.debug(
@@ -445,22 +492,26 @@ async def process_single_activity(
         phonetic_transcript=processed_activity.phonetic_transcript,
     )
 
-    total_ms: float = (time.time() - activity_start) * 1000.0
+    total_ms: float = (time.time() - activity_start) * 1_000.0
     try:
+        correlation_id = (
+            str(config.metadata.correlation_id)
+            if hasattr(config, "metadata")
+            and hasattr(config.metadata, "correlation_id")
+            and config.metadata.correlation_id
+            else None
+        )
         phrase_count: int = len(processed_activity.activity_outputs.phrases)
         emit_emf_metric(
             namespace="Amira/Activity",
             metrics={
                 "ActivityTotalMs": total_ms,
                 "Phrases": float(phrase_count),
+                "ActivitySuccess": 1.0,
             },
             dimensions={
                 "ActivityId": str(activity_id),
-                **(
-                    {"CorrelationId": str(config.metadata.correlation_id)}
-                    if getattr(config.metadata, "correlation_id", None)
-                    else {}
-                ),
+                **({"CorrelationId": correlation_id} if correlation_id is not None else {}),
             },
         )
     except Exception:
@@ -480,29 +531,33 @@ async def process_single_activity(
             activity_id=activity_id,
             field_values=fields.model_dump(),
             config=config.aws,
-            correlation_id=str(config.metadata.correlation_id)
-            if getattr(config.metadata, "correlation_id", None)
-            else None,
+            correlation_id=correlation_id,
         )
+        logger.info(f"AppSync fields updated successfully for activity {activity_id}")
     except Exception as e:
         logger.info(f"Skipping AppSync upload - using local response due to: {e}")
+        logger.info(f"Would set fields: {errors}")
         activity_response = {"data": {"updateActivity": {"activityId": activity_id}}}
-    logger.info(f"Skipping AppSync upload - would set fields: {errors}")
 
     return activity_response
 
 
-async def run_activity_pipeline(*, config: PipelineConfig) -> list[dict[str, Any]]:
+async def run_activity_pipeline(
+    *, config: PipelineConfig, cached_engine: Any = None
+) -> list[dict[str, Any]]:
     """
     Run the streamlined activity pipeline.
 
     Args:
         config: Pipeline configuration parameters
+        cached_engine: Pre-cached engine instance (optional)
 
     Returns:
         bool: True if pipeline executed successfully
     """
-    prepared_data: PreparedData = await load_and_prepare_data(config=config)
+    prepared_data: PreparedData = await load_and_prepare_data(
+        config=config, cached_engine=cached_engine
+    )
     engine = prepared_data.engine
 
     activity_groups = group_activities_by_id(phrase_df=prepared_data.phrase_df)
