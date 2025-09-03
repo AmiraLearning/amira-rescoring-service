@@ -8,34 +8,34 @@ Activity pipeline:
 5. Update activity fields
 """
 
-import polars as pl
-import numpy as np
-from loguru import logger
 import asyncio
 import warnings
-from typing import Any
 from dataclasses import dataclass
 from enum import StrEnum
+from typing import Any
 
+import numpy as np
+import polars as pl
+from loguru import logger
+
+from infra.appsync_utils import set_activity_fields
+from infra.s3_client import HighPerformanceS3Config, preload_s3_client_async
+from my_asr_aligner import word_level_alignment  # type: ignore
+from src.pipeline.audio_prep import ActivityOutput, PhraseInput, cpu_download_worker
+from src.pipeline.inference import (
+    GPUInferenceResult,
+    PhoneticTranscript,
+    perform_single_audio_inference,
+)
+from src.pipeline.inference.engine import preload_inference_engine_async
 from src.pipeline.query import (
     load_activity_data,
     load_story_phrase_data,
     merge_activities_with_phrases,
 )
-
-warnings.filterwarnings("ignore", category=UserWarning, module=r"torchaudio(\..*)?")
 from utils.config import PipelineConfig
-from src.pipeline.audio_prep import cpu_download_worker, ActivityOutput, PhraseInput
-from src.pipeline.audio_prep.engine import AudioPreparationEngine
-from src.pipeline.inference import (
-    perform_single_audio_inference,
-    GPUInferenceResult,
-    PhoneticTranscript,
-)
-from src.pipeline.inference.engine import preload_inference_engine_async
-from my_asr_aligner import word_level_alignment
-from infra.appsync_utils import set_activity_fields
-from infra.s3_client import preload_s3_client_async, HighPerformanceS3Config
+
+warnings.filterwarnings("ignore", category=UserWarning, module=r"torchaudio(\..*)?$")
 
 
 class ActivityFields(StrEnum):
@@ -53,6 +53,7 @@ def convert_grouped_data_to_phrases(grouped_data: Any) -> list[dict[str, Any]]:
     Returns:
         List of phrase dictionaries suitable for ActivityInput
     """
+    # TODO no hasattr please
     if hasattr(grouped_data, "to_dicts"):
         # If it's a struct, convert to dict
         data_dict = grouped_data.to_dicts()
@@ -239,6 +240,9 @@ async def process_activity(
 
     for phrase in activity_outputs.phrases:
         if phrase.speech is not None and len(phrase.speech) > 0:
+            logger.debug(
+                f"Phrase {phrase.phraseIndex}: audio length {len(phrase.speech)}, min/max {np.min(phrase.speech):.3f}/{np.max(phrase.speech):.3f}"
+            )
             inference_output: GPUInferenceResult = perform_single_audio_inference(
                 audio_array=phrase.speech,
                 w2v_config=config.w2v2,
@@ -247,8 +251,13 @@ async def process_activity(
             )
 
             if inference_output.success and inference_output.phonetic_transcript:
+                logger.debug(
+                    f"Phrase {phrase.phraseIndex}: transcribed to {inference_output.phonetic_transcript.elements}"
+                )
                 all_elements.extend(inference_output.phonetic_transcript.elements)
                 all_confidences.extend(inference_output.phonetic_transcript.confidences)
+            else:
+                logger.warning(f"Phrase {phrase.phraseIndex}: inference failed")
 
     # Create combined phonetic transcript
     from src.pipeline.inference.models import PhoneticTranscript
@@ -294,8 +303,9 @@ def perform_alignment(
             "total_alignments": 0,
             "alignment_accuracy": 0.0,
         }
-    # Process alignment for each phrase individually, maintaining nested structure
-    phrase_errors_nested = []
+    # Collect all expected text and reference phonemes from all phrases
+    all_expected_text = []
+    all_reference_phonemes = []
 
     for phrase in activity_outputs.phrases:
         expected_text: list[str] = (
@@ -309,18 +319,52 @@ def perform_alignment(
             else [phrase.reference_phonemes]
         )
 
-        try:
-            _, phrase_errors, _ = word_level_alignment(
-                expected_items=expected_text,
-                ref_phons=reference_phonemes,
-                hyp_phons=phonetic_transcript.elements,
-                confidences=phonetic_transcript.confidences,
+        all_expected_text.extend(expected_text)
+        all_reference_phonemes.extend(reference_phonemes)
+
+    # Debug logging
+    logger.info(f"Expected items (first 10): {all_expected_text[:10]}")
+    logger.info(f"Reference phonemes (first 10): {all_reference_phonemes[:10]}")
+    logger.info(f"Hypothesis phonemes (first 10): {phonetic_transcript.elements[:10]}")
+    logger.info(
+        f"Total expected: {len(all_expected_text)}, ref: {len(all_reference_phonemes)}, hyp: {len(phonetic_transcript.elements)}"
+    )
+
+    # Call alignment once with all data - it returns flat error list
+    try:
+        _, flat_errors, _ = word_level_alignment(
+            expected_items=all_expected_text,
+            ref_phons=all_reference_phonemes,
+            hyp_phons=phonetic_transcript.elements,
+            confidences=phonetic_transcript.confidences,
+        )
+
+        # Convert flat error list back to nested phrase structure
+        phrase_errors_nested = []
+        error_idx = 0
+        for phrase in activity_outputs.phrases:
+            phrase_expected_text: list[str] = (
+                phrase.expected_text
+                if isinstance(phrase.expected_text, list)
+                else [phrase.expected_text]
             )
+            phrase_len = len(phrase_expected_text)
+            phrase_errors = flat_errors[error_idx : error_idx + phrase_len]
             phrase_errors_nested.append(phrase_errors)
-        except Exception as e:
-            logger.error(f"Alignment failed for phrase {phrase}: {e}")
-            # Add errors for all expected items in this phrase
-            phrase_errors_nested.append([True] * len(expected_text))
+            error_idx += phrase_len
+
+    except Exception as e:
+        logger.error(f"Alignment failed for activity: {e}")
+        # Add errors for all expected items
+        phrase_errors_nested = [
+            [True]
+            * len(
+                phrase.expected_text
+                if isinstance(phrase.expected_text, list)
+                else [phrase.expected_text]
+            )
+            for phrase in activity_outputs.phrases
+        ]
 
     # Flatten for summary statistics but keep nested structure for main output
     flattened_errors = [

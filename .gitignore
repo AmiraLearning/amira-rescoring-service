@@ -23,3 +23,7 @@ models/
 *.log
 
 audio/
+
+# Profiling output
+prof/
+*.prof
