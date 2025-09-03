@@ -1,4 +1,4 @@
-"""High-performance S3 client with advanced optimizations.
+"""Optimized S3 client with advanced optimizations.
 
 This module provides a S3 service with connection pooling,
 concurrent operations, batch processing, and comprehensive performance
@@ -7,16 +7,16 @@ optimizations for system-wide use.
 
 import asyncio
 import time
+from collections.abc import Awaitable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Final, Awaitable
+from typing import Any, Final
 
 import aioboto3
 from aiobotocore.config import AioConfig
+from loguru import logger
 from pydantic import BaseModel, Field
 from rich.progress import Progress
-
-from loguru import logger
 
 DEFAULT_MAX_CONNECTIONS: Final[int] = 1000  # Increased for cloud deployment
 DEFAULT_MAX_CONNECTIONS_PER_HOST: Final[int] = 500  # Increased for cloud deployment
@@ -55,11 +55,9 @@ class S3OperationResult:
 
 
 class HighPerformanceS3Config(BaseModel):
-    """Configuration for high-performance S3 client."""
+    """Configuration for optimized S3 client."""
 
-    aws_profile: str = Field(
-        default="legacy", description="AWS profile for authentication"
-    )
+    aws_profile: str = Field(default="legacy", description="AWS profile for authentication")
     aws_region: str = Field(default="us-east-1", description="AWS region")
 
     max_connections: int = Field(
@@ -144,8 +142,9 @@ class HighPerformanceS3Config(BaseModel):
         le=65536,
         description="Buffer size for streaming operations",
     )
-    client_pool_size: int = Field(
-        default=20, ge=5, le=100, description="Size of S3 client pool"
+    client_pool_size: int = Field(default=20, ge=5, le=100, description="Size of S3 client pool")
+    use_head_for_progress: bool = Field(
+        default=False, description="Issue HEAD to set progress totals before downloads"
     )
 
 
@@ -153,7 +152,7 @@ class ProductionS3Client:
     """S3 client with optimizations."""
 
     def __init__(self, *, config: HighPerformanceS3Config) -> None:
-        """Initialize high-performance S3 client.
+        """Initialize optimized S3 client.
 
         Args:
             config: S3 client configuration.
@@ -162,9 +161,7 @@ class ProductionS3Client:
         self._logger = logger
 
         self._session: aioboto3.Session | None = None
-        self._client_pool: asyncio.Queue[Any] = asyncio.Queue(
-            maxsize=config.client_pool_size
-        )
+        self._client_pool: asyncio.Queue[Any] = asyncio.Queue(maxsize=config.client_pool_size)
         self._clients_created: int = 0
 
         self._download_semaphore = asyncio.Semaphore(config.max_concurrent_downloads)
@@ -240,9 +237,7 @@ class ProductionS3Client:
             component="s3_client",
             operations_processed=self._operation_count,
             total_bytes_transferred=self._total_bytes_transferred,
-            avg_operation_time_ms=self._total_operation_time
-            / max(1, self._operation_count)
-            * 1000,
+            avg_operation_time_ms=self._total_operation_time / max(1, self._operation_count) * 1000,
         )
 
     async def warm_up(self, *, num_clients: int = 2) -> None:
@@ -288,9 +283,7 @@ class ProductionS3Client:
         )
 
         s3_operations = [
-            S3Operation(
-                bucket=bucket, key=key, local_path=local_path, operation_type="download"
-            )
+            S3Operation(bucket=bucket, key=key, local_path=local_path, operation_type="download")
             for bucket, key, local_path in operations
         ]
 
@@ -309,9 +302,7 @@ class ProductionS3Client:
                 processed_results.append(
                     S3OperationResult(
                         success=False,
-                        operation=S3Operation(
-                            bucket="", key="", operation_type="download"
-                        ),
+                        operation=S3Operation(bucket="", key="", operation_type="download"),
                         error=str(result),
                     )
                 )
@@ -356,50 +347,35 @@ class ProductionS3Client:
 
                 try:
                     if operation.local_path is None:
-                        raise ValueError(
-                            "local_path is required for download operations"
-                        )
+                        raise ValueError("local_path is required for download operations")
                     local_path = Path(operation.local_path)
                     local_path.parent.mkdir(parents=True, exist_ok=True)
 
-                    if progress and task_id is not None:
+                    total_size: int | None = None
+                    if progress and task_id is not None and self._config.use_head_for_progress:
                         try:
                             head_response = await client.head_object(
                                 Bucket=operation.bucket, Key=operation.key
                             )
-                            total_size = head_response["ContentLength"]
-                            progress.update(task_id, total=total_size)
+                            total_size = head_response.get("ContentLength")
+                            if total_size is not None:
+                                progress.update(task_id, total=total_size)
                         except Exception:
-                            total_size = None  # Unable to get size
+                            total_size = None
 
-                        class ProgressCallback:
-                            def __init__(
-                                self,
-                                progress_bar: Progress,
-                                task: Any,
-                                total: int | None,
-                            ) -> None:
-                                self._progress = progress_bar
-                                self._task = task
-                                self._total = total
-                                self._seen_so_far = 0
+                    response = await client.get_object(Bucket=operation.bucket, Key=operation.key)
+                    body = response["Body"]
 
-                            def __call__(self, bytes_amount: int) -> None:
-                                self._seen_so_far += bytes_amount
-                                self._progress.update(
-                                    self._task, completed=self._seen_so_far
-                                )
-
-                        await client.download_file(
-                            operation.bucket,
-                            operation.key,
-                            str(local_path),
-                            Callback=ProgressCallback(progress, task_id, total_size),
-                        )
-                    else:
-                        await client.download_file(
-                            operation.bucket, operation.key, str(local_path)
-                        )
+                    bytes_written: int = 0
+                    with open(local_path, "wb") as f:
+                        while True:
+                            chunk: bytes = await body.read(self._config.buffer_size)
+                            if not chunk:
+                                break
+                            f.write(chunk)
+                            bytes_written += len(chunk)
+                            if progress and task_id is not None:
+                                progress.update(task_id, completed=bytes_written)
 
                     duration = time.time() - start_time
                     file_size = local_path.stat().st_size if local_path.exists() else 0
@@ -445,9 +421,7 @@ class ProductionS3Client:
                 )
                 await asyncio.sleep(backoff_time)
 
-        return S3OperationResult(
-            success=False, operation=operation, error="Max retries exceeded"
-        )
+        return S3OperationResult(success=False, operation=operation, error="Max retries exceeded")
 
     async def upload_files_batch(
         self, operations: list[tuple[str, str, str]]
@@ -470,9 +444,7 @@ class ProductionS3Client:
         )
 
         s3_operations: list[S3Operation] = [
-            S3Operation(
-                bucket=bucket, key=key, local_path=local_path, operation_type="upload"
-            )
+            S3Operation(bucket=bucket, key=key, local_path=local_path, operation_type="upload")
             for local_path, bucket, key in operations
         ]
 
@@ -490,9 +462,7 @@ class ProductionS3Client:
                 processed_results.append(
                     S3OperationResult(
                         success=False,
-                        operation=S3Operation(
-                            bucket="", key="", operation_type="upload"
-                        ),
+                        operation=S3Operation(bucket="", key="", operation_type="upload"),
                         error=str(result),
                     )
                 )
@@ -510,16 +480,12 @@ class ProductionS3Client:
 
         return processed_results
 
-    async def _upload_single_with_semaphore(
-        self, operation: S3Operation
-    ) -> S3OperationResult:
+    async def _upload_single_with_semaphore(self, operation: S3Operation) -> S3OperationResult:
         """Upload single file with semaphore control."""
         async with self._upload_semaphore:
             return await self._upload_single_with_retry(operation)
 
-    async def _upload_single_with_retry(
-        self, operation: S3Operation
-    ) -> S3OperationResult:
+    async def _upload_single_with_retry(self, operation: S3Operation) -> S3OperationResult:
         """Upload single file with retry logic."""
         start_time = time.time()
 
@@ -529,9 +495,7 @@ class ProductionS3Client:
 
                 try:
                     if operation.local_path is None:
-                        raise ValueError(
-                            "local_path is required for download operations"
-                        )
+                        raise ValueError("local_path is required for download operations")
                     local_path = Path(operation.local_path)
 
                     if not local_path.exists():
@@ -541,9 +505,8 @@ class ProductionS3Client:
                             error=f"Local file does not exist: {local_path}",
                         )
 
-                    await client.upload_file(
-                        str(local_path), operation.bucket, operation.key
-                    )
+                    data: bytes = local_path.read_bytes()
+                    await client.put_object(Bucket=operation.bucket, Key=operation.key, Body=data)
 
                     duration = time.time() - start_time
                     file_size = local_path.stat().st_size
@@ -588,13 +551,9 @@ class ProductionS3Client:
                 )
                 await asyncio.sleep(backoff_time)
 
-        return S3OperationResult(
-            success=False, operation=operation, error="Max retries exceeded"
-        )
+        return S3OperationResult(success=False, operation=operation, error="Max retries exceeded")
 
-    async def list_objects_batch(
-        self, requests: list[tuple[str, str]]
-    ) -> list[S3OperationResult]:
+    async def list_objects_batch(self, requests: list[tuple[str, str]]) -> list[S3OperationResult]:
         """List objects from multiple buckets/prefixes concurrently.
 
         Args:
@@ -669,9 +628,7 @@ class ProductionS3Client:
                     duration_ms=duration * 1000,
                 )
 
-    async def head_objects_batch(
-        self, requests: list[tuple[str, str]]
-    ) -> list[S3OperationResult]:
+    async def head_objects_batch(self, requests: list[tuple[str, str]]) -> list[S3OperationResult]:
         """Get metadata for multiple objects concurrently.
 
         Args:
@@ -684,8 +641,7 @@ class ProductionS3Client:
             return []
 
         operations: list[S3Operation] = [
-            S3Operation(bucket=bucket, key=key, operation_type="head")
-            for bucket, key in requests
+            S3Operation(bucket=bucket, key=key, operation_type="head") for bucket, key in requests
         ]
 
         tasks: list[Awaitable[S3OperationResult]] = [
@@ -720,9 +676,7 @@ class ProductionS3Client:
                 client = await self._get_client()
 
                 try:
-                    response = await client.head_object(
-                        Bucket=operation.bucket, Key=operation.key
-                    )
+                    response = await client.head_object(Bucket=operation.bucket, Key=operation.key)
 
                     duration_success: float = time.time() - start_time
 
@@ -772,9 +726,7 @@ class ProductionS3Client:
                 processed_results.append(
                     S3OperationResult(
                         success=False,
-                        operation=S3Operation(
-                            bucket=bucket, key="", operation_type="delete"
-                        ),
+                        operation=S3Operation(bucket=bucket, key="", operation_type="delete"),
                         error=str(result),
                     )
                 )
@@ -792,25 +744,19 @@ class ProductionS3Client:
 
         return processed_results
 
-    async def _delete_single_with_semaphore(
-        self, operation: S3Operation
-    ) -> S3OperationResult:
+    async def _delete_single_with_semaphore(self, operation: S3Operation) -> S3OperationResult:
         """Delete single object with semaphore control."""
         async with self._operation_semaphore:
             return await self._delete_single_with_retry(operation)
 
-    async def _delete_single_with_retry(
-        self, operation: S3Operation
-    ) -> S3OperationResult:
+    async def _delete_single_with_retry(self, operation: S3Operation) -> S3OperationResult:
         """Delete single object with retry logic."""
         start_time = time.time()
         for attempt in range(self._config.max_retries):
             try:
                 client = await self._get_client()
                 try:
-                    await client.delete_object(
-                        Bucket=operation.bucket, Key=operation.key
-                    )
+                    await client.delete_object(Bucket=operation.bucket, Key=operation.key)
                     duration = time.time() - start_time
                     return S3OperationResult(
                         success=True,
@@ -840,9 +786,7 @@ class ProductionS3Client:
                         self._config.retry_backoff_max,
                     )
                 )
-        return S3OperationResult(
-            success=False, operation=operation, error="Max retries exceeded"
-        )
+        return S3OperationResult(success=False, operation=operation, error="Max retries exceeded")
 
     async def get_paginator(self, operation_name: str) -> Any:
         """Get paginator for specified operation.
@@ -861,19 +805,14 @@ class ProductionS3Client:
 
     def get_performance_metrics(self) -> dict[str, Any]:
         """Get performance metrics for monitoring."""
-        avg_operation_time: float = self._total_operation_time / max(
-            1, self._operation_count
-        )
+        avg_operation_time: float = self._total_operation_time / max(1, self._operation_count)
 
         return {
             "operation_count": self._operation_count,
             "total_bytes_transferred": self._total_bytes_transferred,
             "avg_operation_time_ms": avg_operation_time * 1000,
             "throughput_mbps": (
-                self._total_bytes_transferred
-                / max(1, self._total_operation_time)
-                / 1024
-                / 1024
+                self._total_bytes_transferred / max(1, self._total_operation_time) / 1024 / 1024
             ),
             "clients_created": self._clients_created,
             "client_pool_size": self._config.client_pool_size,
@@ -920,9 +859,7 @@ def get_global_s3_client(*, config: HighPerformanceS3Config) -> ProductionS3Clie
     return _GLOBAL_S3_CLIENTS[key]
 
 
-async def preload_s3_client_async(
-    *, config: HighPerformanceS3Config, num_clients: int = 2
-) -> None:
+async def preload_s3_client_async(*, config: HighPerformanceS3Config, num_clients: int = 2) -> None:
     """Asynchronously preload the S3 client and create clients in pool."""
     client = get_global_s3_client(config=config)
     await client.warm_up(num_clients=num_clients)

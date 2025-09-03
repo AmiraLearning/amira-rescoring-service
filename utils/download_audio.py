@@ -6,19 +6,17 @@ keyword-only arguments for safer, more readable usage.
 
 import urllib.parse
 from pathlib import Path
-from typing import Final
-from botocore.client import BaseClient as BotoClient
-from pydantic import BaseModel
 
 from loguru import logger
+from pydantic import BaseModel
 
 from infra.s3_client import ProductionS3Client
-from utils.phrase_slicing import PhraseSlicer, s3_find
 from utils.config import (
+    RECONSTITUTED_PHRASE_AUDIO,
     S3_SPEECH_ROOT_PROD,
     S3_SPEECH_ROOT_STAGE,
-    RECONSTITUTED_PHRASE_AUDIO,
 )
+from utils.phrase_slicing import PhraseSlicer, s3_find
 
 
 def resolve_bucket(stage_source: bool) -> str:
@@ -57,12 +55,8 @@ def resolve_dataset_layout(
         The resolved dataset layout
     """
     if RECONSTITUTED_PHRASE_AUDIO in str(audio_path):
-        resolved_root_dir: Path = Path(
-            str(audio_path).split(RECONSTITUTED_PHRASE_AUDIO)[0]
-        )
-        resolved_dataset_suffix = (
-            str(audio_path).split(RECONSTITUTED_PHRASE_AUDIO)[-1].strip("/")
-        )
+        resolved_root_dir: Path = Path(str(audio_path).split(RECONSTITUTED_PHRASE_AUDIO)[0])
+        resolved_dataset_suffix = str(audio_path).split(RECONSTITUTED_PHRASE_AUDIO)[-1].strip("/")
     else:
         resolved_root_dir = audio_path
         resolved_dataset_suffix = dataset_name
@@ -106,15 +100,11 @@ async def get_segment_file_names(
     """
     keys: list[str] = []
     bucket: str = resolve_bucket(stage_source)
-    for obj in await s3_find(
-        bucket=bucket, prefix=f"{activity_id}/", s3_client=s3_client
-    ):
+    for obj in await s3_find(bucket=bucket, prefix=f"{activity_id}/", s3_client=s3_client):
         if ".wav" in obj.key and "complete" not in obj.key:
             keys.append(obj.key)
         else:
-            logger.error(
-                f"skipping non-phrase key under s3://{bucket}/{activity_id}: {obj.key}"
-            )
+            logger.error(f"skipping non-phrase key under s3://{bucket}/{activity_id}: {obj.key}")
     return keys
 
 
@@ -148,9 +138,7 @@ async def download_tutor_style_audio(
     Returns:
         True if the operation was successful
     """
-    eff_act_id: str = effective_activity_id(
-        activity_id=activity_id, replay_suffix=replay_suffix
-    )
+    eff_act_id: str = effective_activity_id(activity_id=activity_id, replay_suffix=replay_suffix)
 
     logger.info(f"Downloading audio for activity {eff_act_id} to {audio_path}")
 
@@ -169,9 +157,7 @@ async def download_tutor_style_audio(
 
     if eff_act_id not in existing_folders:
         if activity_id in existing_folders:
-            Path(layout.dataset_dir, activity_id).rename(
-                Path(layout.dataset_dir, eff_act_id)
-            )
+            Path(layout.dataset_dir, activity_id).rename(Path(layout.dataset_dir, eff_act_id))
         else:
             await PhraseSlicer(
                 destination_path=str(layout.dataset_dir),

@@ -1,12 +1,13 @@
-from typing import Final, Any
-from pydantic import BaseModel, Field, validator, root_validator
-from pathlib import Path
-import yaml
-from loguru import logger
 import os
 from datetime import datetime
-from src.pipeline.inference.models import W2VConfig
+from pathlib import Path
+from typing import Any, Final
 
+import yaml  # type: ignore
+from loguru import logger
+from pydantic import BaseModel, Field, field_validator, model_validator
+
+from src.pipeline.inference.models import W2VConfig
 
 DEFAULT_CONFIG_PATH: Final[str] = "config_parallel.yaml"
 DEFAULT_RESULT_DIR: Final[str] = "2025_letter_sound_scoring"
@@ -51,10 +52,11 @@ class AudioConfig(BaseModel):
     audio_dir: Path = Path("audio")
     save_padded_audio: bool = True
     padded_seconds: int = 3
-    use_complete_audio: bool = True
+    use_complete_audio: bool = False
 
-    @validator("padded_seconds")
-    def validate_padded_seconds(cls, v):
+    @field_validator("padded_seconds")
+    @classmethod
+    def validate_padded_seconds(cls, v: int) -> int:
         """Validate padded_seconds is within reasonable range."""
         if v < 0 or v > 30:
             raise ValueError("padded_seconds must be between 0 and 30")
@@ -68,8 +70,9 @@ class QueueSizesConfig(BaseModel):
     transcription_queue: int = 80
     status_updates_queue: int = 400
 
-    @validator("audio_queue", "transcription_queue", "status_updates_queue")
-    def validate_positive_queue_size(cls, v):
+    @field_validator("audio_queue", "transcription_queue", "status_updates_queue")
+    @classmethod
+    def validate_positive_queue_size(cls, v: int) -> int:
         """Validate queue sizes are positive."""
         if v <= 0:
             raise ValueError("Queue sizes must be positive integers")
@@ -108,21 +111,13 @@ class PipelineConfig(BaseModel):
     aws: AwsConfig = Field(default_factory=AwsConfig)
     phrase_to_align: list[int] = Field(default_factory=lambda: [4, 11])
 
-    @root_validator(pre=False, skip_on_failure=True)
-    def validate_config_consistency(cls, values):
+    @model_validator(mode="after")
+    def validate_config_consistency(self) -> "PipelineConfig":
         """Validate configuration consistency across fields."""
-        metadata = values.get("metadata")
-        if (
-            metadata
-            and hasattr(metadata, "processing_start_time")
-            and hasattr(metadata, "processing_end_time")
-        ):
-            if metadata.processing_start_time >= metadata.processing_end_time:
-                raise ValueError(
-                    "processing_start_time must be before processing_end_time"
-                )
-
-        return values
+        metadata = self.metadata
+        if metadata and metadata.processing_start_time >= metadata.processing_end_time:
+            raise ValueError("processing_start_time must be before processing_end_time")
+        return self
 
     def validate_runtime_requirements(self) -> None:
         """Validate runtime requirements and dependencies.
@@ -137,15 +132,11 @@ class PipelineConfig(BaseModel):
         try:
             self.audio.audio_dir.mkdir(parents=True, exist_ok=True)
         except Exception as e:
-            raise ValueError(
-                f"Cannot create audio directory {self.audio.audio_dir}: {e}"
-            )
+            raise ValueError(f"Cannot create audio directory {self.audio.audio_dir}: {e}")
 
         # Validate story phrase file exists if specified
         if not self.cached.story_phrase_path.exists():
-            logger.warning(
-                f"Story phrase file not found: {self.cached.story_phrase_path}"
-            )
+            logger.warning(f"Story phrase file not found: {self.cached.story_phrase_path}")
 
         # Validate Triton configuration if enabled
         if self.w2v2.use_triton:
@@ -197,6 +188,13 @@ def load_config(*, config_path: str | None = None) -> PipelineConfig:
         config.w2v2.triton_model = os.getenv("TRITON_MODEL", config.w2v2.triton_model)
     if os.getenv("MODEL_PATH"):
         config.w2v2.model_path = os.getenv("MODEL_PATH", config.w2v2.model_path)
+    if os.getenv("AWS_PROFILE"):
+        config.aws.aws_profile = os.getenv("AWS_PROFILE", config.aws.aws_profile)
+    if os.getenv("AWS_REGION"):
+        region_env = os.getenv("AWS_REGION", config.aws.aws_region)
+        config.aws.aws_region = region_env
+        # Keep alias in sync
+        config.aws.region = region_env
 
     # Validate runtime requirements
     try:

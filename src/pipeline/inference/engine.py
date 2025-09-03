@@ -1,12 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 import os
 import time
 import traceback
 from typing import TYPE_CHECKING
 
 import numpy as np
-import asyncio
 import torch
 from loguru import logger
 from transformers import BatchFeature, Wav2Vec2ForCTC, Wav2Vec2Processor
@@ -19,21 +19,21 @@ from .constants import (
     MS_PER_SECOND,
     DeviceType,
 )
-from .models import (
-    W2VConfig,
-    PreprocessResult,
-    InferenceResult,
-    DecodePredictionResult,
-    ConfidenceResult,
-    InferenceInput,
-    GPUInferenceResult,
-)
 from .decoder import PhonemeDecoder
+from .models import (
+    ConfidenceResult,
+    DecodePredictionResult,
+    GPUInferenceResult,
+    InferenceInput,
+    InferenceResult,
+    PreprocessResult,
+    W2VConfig,
+)
 
 
 async def preload_inference_engine_async(
     *, w2v_config: W2VConfig, warmup: bool = False
-):
+) -> Wav2Vec2InferenceEngine | TritonInferenceEngine:
     """Asynchronously preload the inference engine.
 
     Args:
@@ -44,8 +44,8 @@ async def preload_inference_engine_async(
         Inference engine instance (either Wav2Vec2InferenceEngine or TritonInferenceEngine).
     """
 
-    def _build() -> "Wav2Vec2InferenceEngine" | "TritonInferenceEngine":
-        engine: "Wav2Vec2InferenceEngine" | "TritonInferenceEngine"
+    def _build() -> Wav2Vec2InferenceEngine | TritonInferenceEngine:
+        engine: Wav2Vec2InferenceEngine | TritonInferenceEngine
         if w2v_config.use_triton:
             from .triton_engine import TritonInferenceEngine
 
@@ -55,9 +55,7 @@ async def preload_inference_engine_async(
 
         if warmup:
             dummy: np.ndarray = np.zeros(1600, dtype=np.float32)
-            engine.infer(
-                input_data=InferenceInput(audio_array=dummy, inference_id="warmup")
-            )
+            engine.infer(input_data=InferenceInput(audio_array=dummy, inference_id="warmup"))
         return engine
 
     return await asyncio.to_thread(_build)
@@ -135,21 +133,16 @@ class Wav2Vec2InferenceEngine:
         except (ValueError, TypeError) as e:
             logger.warning(f"Failed to configure torch threading: {e}")
 
-        self._model = self._model.to(self._device)  # type: ignore[arg-type]
+        self._model = self._model.to(self._device)
 
-        if (
-            self._device.type == "cpu"
-            and os.getenv("W2V2_QUANTIZE", "false").lower() == "true"
-        ):
+        if self._device.type == "cpu" and os.getenv("W2V2_QUANTIZE", "false").lower() == "true":
             try:
                 self._model = torch.quantization.quantize_dynamic(
                     self._model, {torch.nn.Linear}, dtype=torch.qint8
                 )
                 logger.info("Applied dynamic quantization to W2V2 model (CPU)")
             except Exception as e:
-                logger.warning(
-                    f"Dynamic quantization failed, continuing without it: {e}"
-                )
+                logger.warning(f"Dynamic quantization failed, continuing without it: {e}")
 
         self._model.eval()
         logger.info(f"Model loaded on {self._device}")
@@ -184,11 +177,15 @@ class Wav2Vec2InferenceEngine:
             InferenceResult: The inference result.
         """
         model_start: float = time.time()
+        logger.debug(f"Starting model inference on device: {self._device.type}")
         if self._device.type == "cuda":
             with torch.autocast(device_type="cuda"):
-                logits = self._model(input_values).logits  # type: ignore[operator]
+                logger.debug("Running model with CUDA autocast")
+                logits = self._model(input_values).logits
         else:
-            logits = self._model(input_values).logits  # type: ignore[operator]
+            logger.debug("Running model without autocast")
+            logits = self._model(input_values).logits
+        logger.debug(f"Model inference completed in {(time.time() - model_start) * 1000:.1f}ms")
         return InferenceResult(
             logits=logits,
             model_inference_time_ms=(time.time() - model_start) * MS_PER_SECOND,
@@ -256,9 +253,7 @@ class Wav2Vec2InferenceEngine:
         Returns:
             GPUInferenceResult: The inference result.
         """
-        result: GPUInferenceResult = GPUInferenceResult(
-            inference_id=input_data.inference_id
-        )
+        result: GPUInferenceResult = GPUInferenceResult(inference_id=input_data.inference_id)
         try:
             if self._device.type == "cuda":
                 result.device = DeviceType.GPU
@@ -271,13 +266,12 @@ class Wav2Vec2InferenceEngine:
                 audio_array=input_data.audio_array
             )
             result.preprocess_time_ms = preprocess_result.preprocess_time_ms
-            with torch.no_grad():
+            # inference_mode has lower overhead than no_grad for pure inference
+            with torch.inference_mode():
                 inference_result: InferenceResult = self._run_model_inference(
                     input_values=preprocess_result.input_values
                 )
-                result.model_inference_time_ms = (
-                    inference_result.model_inference_time_ms
-                )
+                result.model_inference_time_ms = inference_result.model_inference_time_ms
                 decode_result: DecodePredictionResult = self._decode_predictions(
                     logits=inference_result.logits
                 )
@@ -289,16 +283,10 @@ class Wav2Vec2InferenceEngine:
                         logits=inference_result.logits
                     )
                     result.max_probs = conf_result.max_probs
-                    result.confidence_calculation_time_ms = (
-                        conf_result.confidence_time_ms
-                    )
+                    result.confidence_calculation_time_ms = conf_result.confidence_time_ms
                 result.phonetic_transcript = self._decoder.decode(
                     pred_tokens=result.pred_tokens,
-                    max_probs=(
-                        result.max_probs
-                        if self._w2v_config.include_confidence
-                        else None
-                    ),
+                    max_probs=(result.max_probs if self._w2v_config.include_confidence else None),
                 )
             result.total_duration_ms = (time.time() - inference_start) * MS_PER_SECOND
             result.success = True
@@ -306,8 +294,49 @@ class Wav2Vec2InferenceEngine:
         except Exception as e:  # pragma: no cover
             logger.error(f"Error during inference: {e}")
             logger.error(f"Traceback: {traceback.format_exc()}")
-            result.success = False
-            result.error = str(e)
+
+            # If MPS fails with convolution error, try fallback to CPU
+            if "convolution_overrideable not implemented" in str(e) and self._device.type == "mps":
+                logger.warning("MPS convolution failed, falling back to CPU for this inference")
+                try:
+                    # Temporarily move model to CPU
+                    original_device = self._device
+                    self._device = torch.device("cpu")
+                    self._model = self._model.to(self._device)
+
+                    # Retry inference on CPU
+                    inference_start = time.time()
+                    preprocess_result = self._preprocess_audio(audio_array=input_data.audio_array)
+                    result.preprocess_time_ms = preprocess_result.preprocess_time_ms
+
+                    with torch.inference_mode():
+                        inference_result = self._run_model_inference(
+                            input_values=preprocess_result.input_values
+                        )
+                        result.model_inference_time_ms = inference_result.model_inference_time_ms
+                        decode_result = self._decode_predictions(logits=inference_result.logits)
+                        result.decode_time_ms = decode_result.decode_time_ms
+                        result.transcription = decode_result.transcription
+                        result.pred_tokens = decode_result.pred_tokens
+                        result.phonetic_transcript = self._decoder.decode(
+                            pred_tokens=result.pred_tokens, max_probs=None
+                        )
+
+                    result.total_duration_ms = (time.time() - inference_start) * MS_PER_SECOND
+                    result.success = True
+
+                    # Move model back to original device
+                    self._device = original_device
+                    self._model = self._model.to(self._device)
+                    logger.info("CPU fallback inference successful")
+
+                except Exception as fallback_e:
+                    logger.error(f"CPU fallback also failed: {fallback_e}")
+                    result.success = False
+                    result.error = str(e)  # Original error
+            else:
+                result.success = False
+                result.error = str(e)
         finally:
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()

@@ -4,16 +4,13 @@ This module handles audio file metadata extraction and segment analysis,
 extracted from phrase_slicing.py for better organization.
 """
 
-from __future__ import annotations
-
 import re
 from typing import Any
 
-from pydantic import BaseModel
 from loguru import logger
+from pydantic import BaseModel
 
 from infra.s3_client import ProductionS3Client
-from utils.s3_audio_operations import bucket_for
 
 
 class SegmentHead(BaseModel):

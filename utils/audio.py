@@ -1,29 +1,30 @@
-from pathlib import Path
-from typing import Final
-from functools import lru_cache
-import os
+import threading
+import warnings
 import wave
+from functools import lru_cache
+from pathlib import Path
+from typing import Any, Final
 
 import numpy as np
 import torch
-import torchaudio  # type: ignore
+import torchaudio
+from loguru import logger
 from pydantic import BaseModel, Field
-import threading
-import warnings
+
+from infra.s3_client import ProductionS3Client, S3OperationResult
+from utils.config import S3_SPEECH_ROOT_PROD
+from utils.extract_phrases import extract_phrase_slices_tutor_style
 
 # Suppress noisy torchaudio deprecation warnings globally
 warnings.filterwarnings("ignore", category=UserWarning, module=r"torchaudio(\..*)?")
 
 # Use the recommended torchaudio loading function
 try:
-    from torchaudio import load_with_torchcodec
+    import torchaudio.load_with_torchcodec
 
     _USE_TORCHCODEC = True
 except ImportError:
     _USE_TORCHCODEC = False
-
-from utils.extract_phrases import extract_phrase_slices_tutor_style
-from infra.s3_client import ProductionS3Client, S3OperationResult
 
 DEFAULT_SAMPLING_RATE: Final[int] = 16_000
 DEFAULT_PADDED_SECONDS: Final[int] = 3
@@ -32,8 +33,6 @@ DEFAULT_AUDIO_SUBDIR: Final[str] = "DEFAULT"
 PADDED_AUDIO_SUFFIX: Final[str] = "_padded.wav"
 AUDIO_FILE_EXTENSION: Final[str] = ".wav"
 AUDIO_BITS_PER_SAMPLE: Final[int] = 16
-
-from loguru import logger
 
 
 async def download_complete_audio_from_s3(
@@ -58,7 +57,7 @@ async def download_complete_audio_from_s3(
             logger.info(f"Complete audio already exists for {activity_id}")
             return True
 
-        bucket: str = "amira-speech-stream"
+        bucket: str = S3_SPEECH_ROOT_PROD
         s3_key: str = f"{activity_id}/complete.wav"
 
         result: list[S3OperationResult] = await s3_client.download_files_batch(
@@ -88,7 +87,7 @@ def _load_audio_file(*, file_path: Path) -> tuple[torch.Tensor, int]:
     """
     import signal
 
-    def timeout_handler(signum, frame):
+    def timeout_handler(signum: int, frame: Any) -> None:
         raise TimeoutError("Audio file loading timed out")
 
     use_signal: bool = threading.current_thread() is threading.main_thread()
@@ -103,9 +102,7 @@ def _load_audio_file(*, file_path: Path) -> tuple[torch.Tensor, int]:
             import warnings
 
             with warnings.catch_warnings():
-                warnings.filterwarnings(
-                    "ignore", category=UserWarning, module="torchaudio"
-                )
+                warnings.filterwarnings("ignore", category=UserWarning, module="torchaudio")
                 result = torchaudio.load(str(file_path))
         return result
     finally:
@@ -139,9 +136,7 @@ def _is_wav_empty(*, path: Path) -> bool:
 
 @lru_cache(maxsize=8)
 def _get_resampler(*, orig: int) -> torchaudio.transforms.Resample:
-    return torchaudio.transforms.Resample(
-        orig_freq=orig, new_freq=DEFAULT_SAMPLING_RATE
-    )
+    return torchaudio.transforms.Resample(orig_freq=orig, new_freq=DEFAULT_SAMPLING_RATE)
 
 
 @lru_cache(maxsize=64)
@@ -167,12 +162,8 @@ class AudioSegmentRequest(BaseModel):
 class PaddedAudioSaveRequest(BaseModel):
     """Request model for saving padded audio."""
 
-    padded_path: Path = Field(
-        ..., description="Path where padded audio should be saved"
-    )
-    processed_speech: torch.Tensor = Field(
-        ..., description="Processed audio tensor to save"
-    )
+    padded_path: Path = Field(..., description="Path where padded audio should be saved")
+    processed_speech: torch.Tensor = Field(..., description="Processed audio tensor to save")
     activity_id: str = Field(..., description="Activity identifier for logging")
     phrase_index: int = Field(..., ge=0, description="Phrase index for logging")
 
@@ -189,9 +180,7 @@ class PadAudioRequest(BaseModel):
     padded_seconds: int = Field(
         DEFAULT_PADDED_SECONDS, gt=0, description="Seconds to pad from adjacent phrases"
     )
-    save_padded_audio: bool = Field(
-        False, description="Whether to save padded audio to disk"
-    )
+    save_padded_audio: bool = Field(False, description="Whether to save padded audio to disk")
 
 
 async def download_tutor_style_audio(
@@ -250,11 +239,7 @@ def _load_audio_segment(*, request: AudioSegmentRequest) -> torch.Tensor | None:
             return None
         num_samples: int = int(request.seconds * DEFAULT_SAMPLING_RATE)
 
-        return (
-            resampled_seg[-num_samples:]
-            if request.is_previous
-            else resampled_seg[:num_samples]
-        )
+        return resampled_seg[-num_samples:] if request.is_previous else resampled_seg[:num_samples]
     except Exception as e:
         logger.warning(f"Failed to load audio segment from {request.file_path}: {e}")
         return None
@@ -311,9 +296,7 @@ def pad_audio_in_memory(*, request: PadAudioRequest) -> np.ndarray | None:
             logger.info(
                 f"Using existing padded audio for activity={request.activity_id} phrase={request.phrase_index}"
             )
-            loaded: np.ndarray | None = _try_load_existing_padded_audio(
-                padded_path=padded_path
-            )
+            loaded: np.ndarray | None = _try_load_existing_padded_audio(padded_path=padded_path)
             if loaded is not None:
                 return loaded
             logger.info(
@@ -359,9 +342,7 @@ def pad_audio_in_memory(*, request: PadAudioRequest) -> np.ndarray | None:
             )
         return processed_speech.numpy()
     except Exception as e:
-        logger.error(
-            f"Failed to pad audio for {request.activity_id}/{request.phrase_index}: {e}"
-        )
+        logger.error(f"Failed to pad audio for {request.activity_id}/{request.phrase_index}: {e}")
         return None
 
 
@@ -444,9 +425,7 @@ def _concatenate_audio_segments(
     return torch.cat([seg for seg in segments if seg is not None], dim=0)
 
 
-def load_complete_audio_in_memory(
-    *, audio_dir: str, activity_id: str
-) -> np.ndarray | None:
+def load_complete_audio_in_memory(*, audio_dir: str, activity_id: str) -> np.ndarray | None:
     """Load complete.wav audio file directly into memory.
 
     This function bypasses the phrase reconstitution logic and loads the complete
@@ -460,9 +439,7 @@ def load_complete_audio_in_memory(
         Complete audio array or None if loading fails.
     """
     try:
-        complete_audio_path = (
-            Path(audio_dir) / "complete_audio" / activity_id / "complete.wav"
-        )
+        complete_audio_path = Path(audio_dir) / "complete_audio" / activity_id / "complete.wav"
 
         if not complete_audio_path.exists():
             logger.warning(f"Complete audio file not found: {complete_audio_path}")
@@ -480,9 +457,7 @@ def load_complete_audio_in_memory(
                     import warnings
 
                     with warnings.catch_warnings():
-                        warnings.filterwarnings(
-                            "ignore", category=UserWarning, module="torchaudio"
-                        )
+                        warnings.filterwarnings("ignore", category=UserWarning, module="torchaudio")
                         speech, sr = torchaudio.load(str(complete_audio_path))
                 except Exception as e3:
                     logger.warning(f"Method 3 failed: {e3}")
@@ -494,14 +469,10 @@ def load_complete_audio_in_memory(
                         if len(speech.shape) == 1:
                             speech = speech.unsqueeze(0)
                     except Exception as e4:
-                        logger.error(
-                            f"All audio loading methods failed: {e1}, {e2}, {e3}, {e4}"
-                        )
+                        logger.error(f"All audio loading methods failed: {e1}, {e2}, {e3}, {e4}")
                         return None
 
-        resampler = torchaudio.transforms.Resample(
-            orig_freq=sr, new_freq=DEFAULT_SAMPLING_RATE
-        )
+        resampler = torchaudio.transforms.Resample(orig_freq=sr, new_freq=DEFAULT_SAMPLING_RATE)
         speech = resampler(speech.squeeze(0))
 
         logger.info(f"Successfully loaded complete audio for {activity_id}")
@@ -521,10 +492,7 @@ def prefetch_activity_phrase_audio(*, audio_dir: str, activity_id: str) -> None:
     """
     try:
         phrase_dir = (
-            Path(audio_dir)
-            / RECONSTITUTED_AUDIO_SUBDIR
-            / DEFAULT_AUDIO_SUBDIR
-            / activity_id
+            Path(audio_dir) / RECONSTITUTED_AUDIO_SUBDIR / DEFAULT_AUDIO_SUBDIR / activity_id
         )
         if not phrase_dir.exists():
             return

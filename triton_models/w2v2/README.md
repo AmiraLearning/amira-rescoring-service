@@ -5,4 +5,3 @@ Expected I/O:
 - OUTPUT__0: FP32 logits, shape [B, T, V]
 
 Update config.pbtxt dims to match your export.
-

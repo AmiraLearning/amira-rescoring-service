@@ -1,13 +1,13 @@
 # Amira Letter Scoring Pipeline
 
-A high-performance, GPU-accelerated machine learning pipeline for scoring letter names and sounds using Wav2Vec2 models. Supports both Lambda-only CPU processing and distributed GPU inference with Triton servers.
+A GPU-accelerated machine learning pipeline for scoring letter names and sounds using Wav2Vec2 models. Supports both Lambda-only CPU processing and distributed GPU inference with Triton servers.
 
 ## Features
 
 - **Dual Architecture Support**:
   - **Lambda-only**: Pure CPU inference using AWS Lambda at scale
   - **Lambda + GPU Cluster**: CPU processing in Lambda with GPU inference via Triton servers
-- **High-Performance Audio Processing**: Optimized for real-time phonetic transcription
+- **Audio Processing**: Optimized for real-time phonetic transcription
 - **Auto-scaling Infrastructure**: Dynamic scaling based on queue depth and inference load
 - **Comprehensive Monitoring**: CloudWatch metrics, alarms, and Slack notifications
 - **Secure & Compliant**: Proper IAM roles, encryption, and input validation
@@ -226,6 +226,23 @@ ruff check .
 # Run formatting
 ruff format .
 ```
+
+### Dev Tooling
+
+- Pre-commit hooks: install once, then hooks run on commit
+  - `uv tool run pre-commit install` (or `pre-commit install` if installed globally)
+  - Run all hooks manually: `pre-commit run --all-files`
+- Hooks mirror CI exactly:
+  - `ruff check .`
+  - `ruff format --check .`
+  - `mypy src/ utils/ infra/ lambda/ main.py`
+- Linting & formatting: `ruff check .` and `ruff format .`
+- Type checking: `mypy src/ utils/ infra/ lambda/ main.py`
+
+### CI
+
+- GitHub Actions workflow `.github/workflows/ci.yml` runs ruff and mypy on PRs/commits to main.
+- Adjust ruff/mypy settings in `pyproject.toml` under `[tool.ruff]` and `[tool.mypy]`.
 
 ### Adding New Features
 

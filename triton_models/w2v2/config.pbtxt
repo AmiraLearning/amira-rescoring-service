@@ -17,4 +17,3 @@ output [
 ]
 instance_group [{ kind: KIND_GPU }]
 dynamic_batching { preferred_batch_size: [ 8, 16 ] max_queue_delay_microseconds: 5000 }
-

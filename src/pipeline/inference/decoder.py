@@ -1,7 +1,7 @@
 import numpy as np
 from loguru import logger
 
-from .constants import TokenType, VALID_PHONETIC_ELEMENTS
+from .constants import VALID_PHONETIC_ELEMENTS, TokenType
 from .models import (
     GroupedPhoneticUnits,
     PhoneticTranscript,
@@ -28,9 +28,7 @@ class PhonemeDecoder:
             phonetic_elements=phonetic_elements or VALID_PHONETIC_ELEMENTS
         )
 
-    def decode(
-        self, *, pred_tokens: list[str], max_probs: np.ndarray | None
-    ) -> PhoneticTranscript:
+    def decode(self, *, pred_tokens: list[str], max_probs: np.ndarray | None) -> PhoneticTranscript:
         """Decode predicted tokens to a phonetic transcript.
 
         Args:
@@ -41,9 +39,7 @@ class PhonemeDecoder:
         Returns:
             PhoneticTranscript: Parsed phonetic elements and aggregated confidences.
         """
-        final_transcript: PhoneticTranscript = PhoneticTranscript(
-            elements=[], confidences=[]
-        )
+        final_transcript: PhoneticTranscript = PhoneticTranscript(elements=[], confidences=[])
         current_segment: Segment = Segment(tokens=[], confidences=[])
 
         for index, token in enumerate(pred_tokens):
@@ -51,8 +47,8 @@ class PhonemeDecoder:
                 continue
             elif token == TokenType.SEPARATOR:
                 if current_segment.tokens:
-                    segment_transcript: PhoneticTranscript = (
-                        self._process_segment_to_phonetics(segment=current_segment)
+                    segment_transcript: PhoneticTranscript = self._process_segment_to_phonetics(
+                        segment=current_segment
                     )
                     final_transcript.elements.extend(segment_transcript.elements)
                     final_transcript.confidences.extend(segment_transcript.confidences)
@@ -63,9 +59,7 @@ class PhonemeDecoder:
                     current_segment.confidences.append(max_probs[index])
 
         if current_segment.tokens:
-            segment_transcript = self._process_segment_to_phonetics(
-                segment=current_segment
-            )
+            segment_transcript = self._process_segment_to_phonetics(segment=current_segment)
             final_transcript.elements.extend(segment_transcript.elements)
             final_transcript.confidences.extend(segment_transcript.confidences)
 
@@ -81,12 +75,8 @@ class PhonemeDecoder:
             PhoneticTranscript: The phonetic transcript.
         """
         grouped: GroupedPhoneticUnits = self._group_consecutive_tokens(segment=segment)
-        parsed: GroupedPhoneticUnits = self._parse_phonetic_elements(
-            grouped_segment_units=grouped
-        )
-        return PhoneticTranscript(
-            elements=parsed.tokens, confidences=parsed.confidences
-        )
+        parsed: GroupedPhoneticUnits = self._parse_phonetic_elements(grouped_segment_units=grouped)
+        return PhoneticTranscript(elements=parsed.tokens, confidences=parsed.confidences)
 
     def _group_consecutive_tokens(self, *, segment: Segment) -> GroupedPhoneticUnits:
         """Group consecutive tokens in a segment.
@@ -116,9 +106,7 @@ class PhonemeDecoder:
             else:
                 grouped_tokens.append(current_token)
                 if segment.confidences is not None and len(current_confidences) > 0:
-                    averaged_confidences.append(
-                        sum(current_confidences) / len(current_confidences)
-                    )
+                    averaged_confidences.append(sum(current_confidences) / len(current_confidences))
                 current_token = next_token
                 current_confidences = []
                 if segment.confidences is not None and len(segment.confidences) > index:
@@ -126,13 +114,9 @@ class PhonemeDecoder:
 
         grouped_tokens.append(current_token)
         if segment.confidences is not None and len(current_confidences) > 0:
-            averaged_confidences.append(
-                sum(current_confidences) / len(current_confidences)
-            )
+            averaged_confidences.append(sum(current_confidences) / len(current_confidences))
 
-        return GroupedPhoneticUnits(
-            tokens=grouped_tokens, confidences=averaged_confidences
-        )
+        return GroupedPhoneticUnits(tokens=grouped_tokens, confidences=averaged_confidences)
 
     def _parse_phonetic_elements(
         self, *, grouped_segment_units: GroupedPhoneticUnits
@@ -171,6 +155,4 @@ class PhonemeDecoder:
                 logger.error(message)
                 raise ValueError(message)
 
-        return GroupedPhoneticUnits(
-            tokens=final_elements, confidences=final_confidences
-        )
+        return GroupedPhoneticUnits(tokens=final_elements, confidences=final_confidences)

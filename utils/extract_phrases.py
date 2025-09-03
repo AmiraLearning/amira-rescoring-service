@@ -1,12 +1,11 @@
 import urllib.parse
 from pathlib import Path
 
-from pydantic import BaseModel, Field
-from botocore.client import BaseClient as BotoClient
 from loguru import logger
+from pydantic import BaseModel, Field
 
 from infra.s3_client import ProductionS3Client
-from utils.phrase_slicing import PhraseSlicer, RECONSTITUTED_PHRASE_AUDIO
+from utils.phrase_slicing import RECONSTITUTED_PHRASE_AUDIO, PhraseSlicer
 
 
 class AudioPaths(BaseModel):
@@ -38,15 +37,11 @@ def _resolve_paths(
     """
     # Handle replay suffix: replace last 4 chars of activity_id with replay_suffix
     # This logic handles production ID transformations correctly
-    stage_activity_id: str = (
-        f"{activity_id[:-4]}{replay_suffix}" if replay_suffix else activity_id
-    )
+    stage_activity_id: str = f"{activity_id[:-4]}{replay_suffix}" if replay_suffix else activity_id
 
     # Validate that activity_id transformation makes sense
     if replay_suffix and len(activity_id) < 4:
-        raise ValueError(
-            f"Activity ID '{activity_id}' too short for replay suffix transformation"
-        )
+        raise ValueError(f"Activity ID '{activity_id}' too short for replay suffix transformation")
 
     if RECONSTITUTED_PHRASE_AUDIO in activity_dir:
         root_dir_str: str = activity_dir.split(RECONSTITUTED_PHRASE_AUDIO)[0]
@@ -63,9 +58,7 @@ def _resolve_paths(
     if use_audio_dir_as_activities_root:
         dataset_dir_full_path: Path = Path(activity_dir)
     else:
-        dataset_dir_full_path = (
-            Path(root_dir) / RECONSTITUTED_PHRASE_AUDIO / dataset_name_suffix
-        )
+        dataset_dir_full_path = Path(root_dir) / RECONSTITUTED_PHRASE_AUDIO / dataset_name_suffix
 
     activity_dir_full_path: Path = dataset_dir_full_path / stage_activity_id
     return AudioPaths(
@@ -169,27 +162,53 @@ async def extract_phrase_slices_tutor_style(
         if folder.is_dir()
     ]
 
-    if audio_paths.stage_activity_id not in existing_folders:
-        if activity_id in existing_folders:
-            (audio_paths.dataset_dir_full_path / activity_id).rename(
-                audio_paths.dataset_dir_full_path / audio_paths.stage_activity_id
+    # Check if folder exists AND contains phrase files
+    activity_folder = audio_paths.dataset_dir_full_path / audio_paths.stage_activity_id
+    needs_processing = True
+
+    if activity_folder.exists():
+        # Check if any phrase files exist
+        phrase_files = list(activity_folder.glob("phrase_*.wav"))
+        if phrase_files:
+            logger.info(
+                f"Found {len(phrase_files)} existing phrase files for {audio_paths.stage_activity_id}, skipping regeneration"
             )
+            needs_processing = False
         else:
-            await PhraseSlicer(
-                destination_path=str(audio_paths.dataset_dir_full_path),
-                s3_client=s3_client,
-                stage_source=stage_source,
-            ).process_activity_into_phrase_sliced_audio(
-                activity_id=activity_id, replay_suffix=replay_suffix
+            logger.warning(
+                f"Folder exists but no phrase files found for {audio_paths.stage_activity_id}, will regenerate"
+            )
+    elif activity_id in existing_folders:
+        # Handle activity_id != stage_activity_id case
+        old_folder = audio_paths.dataset_dir_full_path / activity_id
+        phrase_files = list(old_folder.glob("phrase_*.wav"))
+        if phrase_files:
+            logger.info(
+                f"Found {len(phrase_files)} existing phrase files for {activity_id}, renaming folder"
+            )
+            old_folder.rename(activity_folder)
+            needs_processing = False
+        else:
+            logger.warning(
+                f"Folder {activity_id} exists but no phrase files found, will regenerate"
             )
 
-            if audio_s3_root is not None:
-                await _upload_phrase_files_to_s3(
-                    activity_dir_full_path=audio_paths.activity_dir_full_path,
-                    audio_s3_root=audio_s3_root,
-                    dataset_name_suffix=audio_paths.dataset_name_suffix,
-                    stage_activity_id=audio_paths.stage_activity_id,
-                    s3_client=s3_client,
-                )
+    if needs_processing:
+        await PhraseSlicer(
+            destination_path=str(audio_paths.dataset_dir_full_path),
+            s3_client=s3_client,
+            stage_source=stage_source,
+        ).process_activity_into_phrase_sliced_audio(
+            activity_id=activity_id, replay_suffix=replay_suffix
+        )
+
+        if audio_s3_root is not None:
+            await _upload_phrase_files_to_s3(
+                activity_dir_full_path=audio_paths.activity_dir_full_path,
+                audio_s3_root=audio_s3_root,
+                dataset_name_suffix=audio_paths.dataset_name_suffix,
+                stage_activity_id=audio_paths.stage_activity_id,
+                s3_client=s3_client,
+            )
 
     return True

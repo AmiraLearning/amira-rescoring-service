@@ -4,16 +4,13 @@ This module contains S3-specific audio file operations extracted from phrase_sli
 for better code organization.
 """
 
-from __future__ import annotations
-
 import asyncio
 import json
-import os
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel
 from loguru import logger
+from pydantic import BaseModel
 
 from infra.s3_client import ProductionS3Client
 
@@ -57,9 +54,7 @@ async def s3_find(
             logger.warning(f"S3 list failed for {source_bucket}/{prefix_path}")
             return []
 
-        contents: list[dict[str, Any]] = (
-            result.data.get("Contents", []) if result.data else []
-        )
+        contents: list[dict[str, Any]] = result.data.get("Contents", []) if result.data else []
         return [obj["Key"] for obj in contents if "Key" in obj]
 
     except Exception as e:
@@ -85,7 +80,7 @@ def bucket_for(*, stage_source: bool) -> str:
     Returns:
         S3 bucket name
     """
-    from utils.config import S3_SPEECH_ROOT_STAGE, S3_SPEECH_ROOT_PROD
+    from utils.config import S3_SPEECH_ROOT_PROD, S3_SPEECH_ROOT_STAGE
 
     return S3_SPEECH_ROOT_STAGE if stage_source else S3_SPEECH_ROOT_PROD
 

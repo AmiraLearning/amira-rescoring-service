@@ -23,29 +23,19 @@ async def _find_container_instance_arn(
         if next_token is not None:
             request_kwargs["nextToken"] = next_token
 
-        list_response: dict[str, Any] = await ecs_client.list_container_instances(
-            **request_kwargs
-        )
-        container_instance_arns: list[str] = list_response.get(
-            "containerInstanceArns", []
-        )
+        list_response: dict[str, Any] = await ecs_client.list_container_instances(**request_kwargs)
+        container_instance_arns: list[str] = list_response.get("containerInstanceArns", [])
         if not container_instance_arns:
             return None
 
-        describe_response: dict[
-            str, Any
-        ] = await ecs_client.describe_container_instances(
+        describe_response: dict[str, Any] = await ecs_client.describe_container_instances(
             cluster=cluster_arn, containerInstances=container_instance_arns
         )
-        container_instances: list[dict[str, Any]] = describe_response.get(
-            "containerInstances", []
-        )
+        container_instances: list[dict[str, Any]] = describe_response.get("containerInstances", [])
         for container_instance in container_instances:
             ec2_instance_id: str | None = container_instance.get("ec2InstanceId")
             if ec2_instance_id == instance_id:
-                container_instance_arn: str | None = container_instance.get(
-                    "containerInstanceArn"
-                )
+                container_instance_arn: str | None = container_instance.get("containerInstanceArn")
                 return container_instance_arn
 
         next_token = list_response.get("nextToken")
@@ -67,9 +57,7 @@ async def handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
     async with session.client("ecs") as ecs_client:
         cluster_arn: str | None = os.environ.get("CLUSTER_ARN")
 
-        event_detail: dict[str, Any] = (
-            event.get("detail", {}) if isinstance(event, dict) else {}
-        )
+        event_detail: dict[str, Any] = event.get("detail", {}) if isinstance(event, dict) else {}
         instance_id: str | None = event_detail.get("instance-id") or event_detail.get(
             "EC2InstanceId"
         )

@@ -9,29 +9,23 @@ Intended usage:
 - this function returns "True" if the activity was successfully processed
 """
 
-from pathlib import Path
+import json
 import shutil
-from typing import Any, Final
-from pydantic import BaseModel
-
-import aioboto3
-import botocore
-from loguru import logger
-
-from pydantic import BaseModel
+import tempfile
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
+from pathlib import Path
+from typing import Any, Final
+
+from loguru import logger
+from pydantic import BaseModel
 
 from infra.s3_client import ProductionS3Client, S3OperationResult
-from concurrent.futures import ThreadPoolExecutor, as_completed
-import json
-import tempfile
-
-# Import modularized utilities
-from utils.s3_audio_operations import bucket_for as _bucket_for
 from utils.audio_metadata import SegmentMetadataResult
 
-_S3_SPEECH_ROOT_PROD: Final[str] = "amira-speech-stream"
-_S3_SPEECH_ROOT_STAGE: Final[str] = "amira-speech-stream-stage"
+# Use centralized bucket resolver to avoid duplication
+from utils.s3_audio_operations import bucket_for as _bucket_for
+
 SEGMENTS_TXT_FILES_BY_ACT: Final[str] = "segments_txt_files_by_act"
 RECONSTITUTED_PHRASE_AUDIO: Final[str] = "reconstituted_phrase_audio"
 SEGMENTS_BY_ACT: Final[str] = "segments_by_act"
@@ -90,15 +84,8 @@ async def s3_find(
 
 
 def bucket_for(*, stage_source: bool) -> str:
-    """Resolve bucket name based on environment.
-
-    Args:
-        stage_source: Whether to use the staging bucket.
-
-    Returns:
-        str: The bucket name.
-    """
-    return _S3_SPEECH_ROOT_STAGE if stage_source else _S3_SPEECH_ROOT_PROD
+    """Delegate to unified bucket resolver."""
+    return _bucket_for(stage_source=stage_source)
 
 
 def _ensure_parent_dir(*, path: str) -> None:
@@ -127,17 +114,13 @@ async def get_segment_file_names(
     """
     bucket: str = bucket_for(stage_source=stage_source)
     keys: list[str] = []
-    objects = await s3_find(
-        bucket=bucket, prefix=f"{activity_id}/", s3_client=s3_client
-    )
+    objects = await s3_find(bucket=bucket, prefix=f"{activity_id}/", s3_client=s3_client)
     for obj in objects:
         key: str = obj.key
         if ".wav" in key and "complete" not in key:
             keys.append(key)
         else:
-            logger.error(
-                f"skipping non-phrase key under s3://{bucket}/{activity_id}: {key}"
-            )
+            logger.error(f"skipping non-phrase key under s3://{bucket}/{activity_id}: {key}")
     return keys
 
 
@@ -158,7 +141,7 @@ async def load_activity_manifest(
         )
         if not results or not results[0].success:
             return None
-        with open(tmp_path, "r") as f:
+        with open(tmp_path) as f:
             return json.load(f)
     except Exception as e:
         logger.warning(f"Failed to load manifest for {activity_id}: {e}")
@@ -226,16 +209,12 @@ async def download_segment_files(
         for segment_file in segment_file_names
     ]
 
-    results: list[S3OperationResult] = await s3_client.download_files_batch(
-        download_operations
-    )
+    results: list[S3OperationResult] = await s3_client.download_files_batch(download_operations)
 
     successful_downloads: list[S3OperationResult] = [r for r in results if r.success]
 
     if len(successful_downloads) != len(segment_file_names):
-        failed_downloads: list[S3OperationResult] = [
-            r for r in results if not r.success
-        ]
+        failed_downloads: list[S3OperationResult] = [r for r in results if not r.success]
         for failed in failed_downloads:
             logger.warning(f"Failed to download {failed.operation.key}: {failed.error}")
         return False
@@ -280,9 +259,7 @@ async def get_segment_metadata(
     head_requests: list[tuple[str, str]] = [
         (bucket, segment_file) for segment_file in segment_file_names
     ]
-    head_results: list[S3OperationResult] = await s3_client.head_objects_batch(
-        head_requests
-    )
+    head_results: list[S3OperationResult] = await s3_client.head_objects_batch(head_requests)
 
     metadata_across_segments: list[SegmentHead] = []
 
@@ -294,9 +271,7 @@ async def get_segment_metadata(
             try:
                 current_segment_head: SegmentHead = SegmentHead(
                     segment_file=segment_file,
-                    phrase_index=int(
-                        metadata.get("Metadata", {}).get("phraseindex", -1)
-                    ),
+                    phrase_index=int(metadata.get("Metadata", {}).get("phraseindex", -1)),
                     sequence_number=metadata.get("Metadata", {}).get("sequencenumber"),
                     last_segment=metadata.get("Metadata", {}).get("lastsegment"),
                     success=True,
@@ -328,7 +303,7 @@ async def get_segment_metadata(
         if not segment_meta.success:
             if activity_id is None:
                 logger.info(
-                    f"retrying due to failed custom segment metadata head call: segment_meta {str(segment_meta)}..."
+                    f"retrying due to failed custom segment metadata head call: segment_meta {segment_meta!s}..."
                 )
             else:
                 logger.info(
@@ -340,29 +315,23 @@ async def get_segment_metadata(
                     f"retry {idx} during segment metadata head call: segment_meta_file {segment_meta_file}..."
                 )
 
-                retry_results: list[
-                    S3OperationResult
-                ] = await s3_client.head_objects_batch([(bucket, segment_meta_file)])
+                retry_results: list[S3OperationResult] = await s3_client.head_objects_batch(
+                    [(bucket, segment_meta_file)]
+                )
 
                 if retry_results and retry_results[0].success:
                     retry_result: S3OperationResult = retry_results[0]
-                    retry_metadata: dict[str, Any] = retry_result.data.get(
-                        "metadata", {}
-                    )
+                    retry_metadata: dict[str, Any] = retry_result.data.get("metadata", {})
                     try:
                         updated_segment_meta: SegmentHead = SegmentHead(
                             segment_file=segment_meta_file,
                             phrase_index=int(
-                                retry_metadata.get("Metadata", {}).get(
-                                    "phraseindex", -1
-                                )
+                                retry_metadata.get("Metadata", {}).get("phraseindex", -1)
                             ),
                             sequence_number=retry_metadata.get("Metadata", {}).get(
                                 "sequencenumber"
                             ),
-                            last_segment=retry_metadata.get("Metadata", {}).get(
-                                "lastsegment"
-                            ),
+                            last_segment=retry_metadata.get("Metadata", {}).get("lastsegment"),
                             success=True,
                         )
                         segment_meta = updated_segment_meta
@@ -370,10 +339,7 @@ async def get_segment_metadata(
                     except (ValueError, KeyError):
                         continue
             if not segment_meta.success:
-                return SegmentMetadataResult(
-                    phrase_metadata={}, num_phrases=0, success=False
-                )
-        current_segment_file: str = segment_meta.segment_file
+                return SegmentMetadataResult(phrase_metadata={}, num_phrases=0, success=False)
         phrase_index: int | None = segment_meta.phrase_index
         sequence_number: str | None = segment_meta.sequence_number
         last_segment: str | None = segment_meta.last_segment
@@ -385,7 +351,9 @@ async def get_segment_metadata(
             if phrase_index not in slices_by_phrase.keys():
                 slices_by_phrase[phrase_index] = {"last_segment": {}, "segments": {}}
 
-            slices_by_phrase[phrase_index]["segments"][sequence_number] = segment_file
+            slices_by_phrase[phrase_index]["segments"][sequence_number] = segment_file.split("/")[
+                -1
+            ]
             if last_segment:
                 slices_by_phrase[phrase_index]["last_segment"] = {
                     "file_name": segment_file,
@@ -474,9 +442,7 @@ def reconstitute_and_save_phrase(
         ]
         result = subprocess.run(cmd, capture_output=True, text=True)
         if result.returncode != 0:
-            logger.warning(
-                f"ffmpeg concat copy failed; falling back to re-encode: {result.stderr}"
-            )
+            logger.warning(f"ffmpeg concat copy failed; falling back to re-encode: {result.stderr}")
             fallback_cmd: list[str] = [
                 "ffmpeg",
                 "-hide_banner",
@@ -515,10 +481,7 @@ def reconstitute_and_save_phrase(
         """
         if phrase_index == 0:
             return 0
-        return (
-            int(slices_by_phrase[phrase_index - 1]["last_segment"]["sequence_number"])
-            + 1
-        )
+        return int(slices_by_phrase[phrase_index - 1]["last_segment"]["sequence_number"]) + 1
 
     def _build_concat_list(*, phrase_index: int) -> tuple[list[str], str | None]:
         """Build a list of concatenated files for a phrase.
@@ -539,17 +502,17 @@ def reconstitute_and_save_phrase(
             try:
                 seg: str = phrase_meta["segments"][str(curr)]
                 if phrase_dir is None:
-                    phrase_dir = str(Path(phrase_segments_root_dir) / seg.split("/")[0])
+                    phrase_dir = str(Path(phrase_segments_root_dir) / activity_id)
+                # Reconstruct full segment path since we now store only basename
+                segment_full_path = f"{activity_id}/{seg}"
                 files.append(
                     _concat_input_line(
-                        root_dir=phrase_segments_root_dir, segment_path=seg
+                        root_dir=phrase_segments_root_dir, segment_path=segment_full_path
                     )
                 )
                 dropped = 0
             except Exception as e:
-                logger.info(
-                    f"Dropped packet, phrase {phrase_index}, activity {activity_id}"
-                )
+                logger.info(f"Dropped packet, phrase {phrase_index}, activity {activity_id}")
                 logger.info(e)
                 dropped += 1
                 if dropped > 5:
@@ -568,9 +531,7 @@ def reconstitute_and_save_phrase(
         """
         logger.info(f"loading segments for phrase {phrase_index}, {activity_id}...")
         files, phrase_dir = _build_concat_list(phrase_index=phrase_index)
-        export_destination_file: Path = (
-            export_destination_folder / f"phrase_{phrase_index}.wav"
-        )
+        export_destination_file: Path = export_destination_folder / f"phrase_{phrase_index}.wav"
         phrase_segments_concat_file: Path = (
             phrase_segments_concat_dir / f"phrase_{phrase_index}.txt"
         )
@@ -590,17 +551,14 @@ def reconstitute_and_save_phrase(
     max_workers: int = min(6, max(1, len(phrase_indices)))
     with ThreadPoolExecutor(max_workers=max_workers) as pool:
         future_map = {
-            pool.submit(reconstitute_phrase, phrase_index=idx): idx
-            for idx in phrase_indices
+            pool.submit(reconstitute_phrase, phrase_index=idx): idx for idx in phrase_indices
         }
         for fut in as_completed(future_map):
             idx: int = future_map[fut]
             try:
                 phrase_segments_activity_dirs[idx] = fut.result()
             except Exception as e:
-                logger.error(
-                    f"Failed to reconstitute phrase {idx} for activity {activity_id}: {e}"
-                )
+                logger.error(f"Failed to reconstitute phrase {idx} for activity {activity_id}: {e}")
                 phrase_segments_activity_dirs[idx] = None
 
     if not keep_intermediaries:
@@ -611,7 +569,7 @@ def reconstitute_and_save_phrase(
                     shutil.rmtree(item)
         except Exception as e:
             logger.warning(
-                f"could not delete intermediaries for activity {activity_id} in reconstruction: {str(e)}"
+                f"could not delete intermediaries for activity {activity_id} in reconstruction: {e!s}"
             )
             return False
 
@@ -647,9 +605,7 @@ class PhraseSlicer:
             config=HighPerformanceS3Config()
         )
         self.destination_path: str = (
-            destination_path
-            if destination_path.endswith("/")
-            else (destination_path + "/")
+            destination_path if destination_path.endswith("/") else (destination_path + "/")
         )
         self.stage_source: bool = stage_source
 
@@ -671,58 +627,39 @@ class PhraseSlicer:
             bool: True if the activity was processed successfully, False otherwise.
         """
         source_activity_id: str = activity_id
-        manifest: dict[str, Any] | None = await load_activity_manifest(
+
+        logger.info(f"getting file names for activity {source_activity_id}...")
+        segment_file_names: list[str] = await get_segment_file_names(
             activity_id=source_activity_id,
             s3_client=self.s3_client,
             stage_source=self.stage_source,
         )
-        if manifest is not None:
-            logger.info(f"Using manifest for {source_activity_id}")
-            segment_file_names: list[str] = manifest.get("segments", [])
-            slices_by_phrase: dict[int, Any] = manifest.get("slices_by_phrase", {})
-            num_phrases_in_act: int = int(manifest.get("num_phrases_in_act", 0))
-            success_bool: bool = bool(segment_file_names) and bool(slices_by_phrase)
-        else:
-            logger.info(f"getting file names for activity {source_activity_id}...")
-            fetched_segment_file_names: list[str] = await get_segment_file_names(
-                activity_id=source_activity_id,
-                s3_client=self.s3_client,
-                stage_source=self.stage_source,
-            )
 
-            logger.info(f"downloading / categorizing metadata {source_activity_id}...")
-            metadata_result = await get_segment_metadata(
-                segment_file_names=fetched_segment_file_names,
-                s3_client=self.s3_client,
-                activity_id=source_activity_id,
-                retry_limit=2,
-                stage_source=self.stage_source,
-            )
-            slices_by_phrase = metadata_result.phrase_metadata
-            num_phrases_in_act = metadata_result.num_phrases
-            fetched_success_bool = metadata_result.success
+        logger.info(f"downloading / categorizing metadata {source_activity_id}...")
+        metadata_result = await get_segment_metadata(
+            segment_file_names=segment_file_names,
+            s3_client=self.s3_client,
+            activity_id=source_activity_id,
+            retry_limit=2,
+            stage_source=self.stage_source,
+        )
+        slices_by_phrase = metadata_result.phrase_metadata
+        num_phrases_in_act = metadata_result.num_phrases
+        success_bool = metadata_result.success
 
         logger.debug(f"slices_by_phrase: {slices_by_phrase}")
         logger.debug(f"num_phrases_in_act: {num_phrases_in_act}")
-        # Use appropriate success_bool based on whether manifest was used
-        current_success_bool = (
-            success_bool if manifest is not None else fetched_success_bool
-        )
-        logger.info(f"success_bool: {current_success_bool}")
-        if not current_success_bool:
-            return current_success_bool
+        logger.info(f"success_bool: {success_bool}")
+        if not success_bool:
+            return success_bool
 
         logger.info(f"downloading segments {source_activity_id}...")
-        # Use appropriate segment_file_names based on whether manifest was used
-        current_segment_file_names = (
-            segment_file_names if manifest is not None else fetched_segment_file_names
-        )
-        logger.debug(f"segment_file_names: {current_segment_file_names}")
+        logger.debug(f"segment_file_names: {segment_file_names}")
         logger.debug(f"destination_path: {self.destination_path}")
         logger.debug(f"s3_client: {self.s3_client}")
         logger.debug(f"stage_source: {self.stage_source}")
         download_success_bool: bool = await download_segment_files(
-            segment_file_names=current_segment_file_names,
+            segment_file_names=segment_file_names,
             destination_path=self.destination_path.replace(
                 RECONSTITUTED_PHRASE_AUDIO, SEGMENTS_BY_ACT
             ),
@@ -731,21 +668,6 @@ class PhraseSlicer:
         )
         if not download_success_bool:
             return download_success_bool
-
-        if manifest is None and download_success_bool:
-            try:
-                await write_activity_manifest(
-                    activity_id=source_activity_id,
-                    segments=current_segment_file_names,
-                    slices_by_phrase=slices_by_phrase,
-                    num_phrases_in_act=num_phrases_in_act,
-                    s3_client=self.s3_client,
-                    stage_source=self.stage_source,
-                )
-            except Exception as e:
-                logger.warning(
-                    f"Failed to write manifest for {source_activity_id}: {e}"
-                )
 
         logger.info(f"reconstituting phrase audio {source_activity_id}...")
         final_target_activity_id: str = (

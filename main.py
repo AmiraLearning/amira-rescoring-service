@@ -1,16 +1,15 @@
 """Simple Pipeline Runner."""
 
+import asyncio
 import time
 import traceback
-import asyncio
-from typing import Any
-import polars as pl
+
 import typer
+from loguru import logger
 
 from src.pipeline.pipeline import run_activity_pipeline
-from utils.config import PipelineConfig, load_config
-from loguru import logger
 from utils.cleanup import cleanup_pipeline_data
+from utils.config import PipelineConfig, load_config
 
 app: typer.Typer = typer.Typer(
     help="Run CPU-GPU Parallel LNS Scoring Pipeline", no_args_is_help=True
@@ -30,16 +29,13 @@ async def run_pipeline_core(*, config: PipelineConfig) -> bool:
 
     try:
         logger.info(
-            f"Pipeline config:\n"
+            "Pipeline config:\n"
             + "\n".join(
-                f"  {field}: {getattr(config, field)}"
-                for field in config.__class__.model_fields
+                f"  {field}: {getattr(config, field)}" for field in config.__class__.model_fields
             )
         )
 
-        activity_responses: list[dict[str, Any]] = await run_activity_pipeline(
-            config=config
-        )
+        await run_activity_pipeline(config=config)
 
         total_time: float = time.time() - start_time
         logger.info(f"Total time (including setup): {total_time:.1f}s")
@@ -110,9 +106,11 @@ def run(
         logger.error(traceback.format_exc())
 
     finally:
-        if cleanup and config_obj:
+        if cleanup:
             try:
                 cleanup_pipeline_data(config=config_obj)
+            except NameError:
+                pass  # config_obj was never defined due to early failure
             except Exception as e:
                 typer.echo(f"Cleanup failed: {e}", err=True)
                 logger.error(f"Cleanup failed: {e}")

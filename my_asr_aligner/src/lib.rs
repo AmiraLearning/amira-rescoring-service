@@ -1,5 +1,5 @@
 use pyo3::prelude::*;
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use similar::{ChangeTag, TextDiff};
 
 // Use the lazy_static crate to create a static, immutable map.

@@ -1,27 +1,31 @@
-import numpy as np
 from pathlib import Path
+
+import numpy as np
 from loguru import logger
-from utils.config import PipelineConfig
-from utils.audio import (
-    download_tutor_style_audio,
-    pad_audio_in_memory,
-    download_complete_audio_from_s3,
-    load_complete_audio_in_memory,
-    DEFAULT_SAMPLING_RATE,
-    prefetch_activity_phrase_audio,
-)
+
 from infra.s3_client import (
-    ProductionS3Client,
     HighPerformanceS3Config,
+    ProductionS3Client,
     get_global_s3_client,
 )
-from .models import (
-    PhraseInput,
-    ActivityInput,
-    ProcessedPhraseOutput,
-    ActivityOutput,
+from utils.audio import (
+    DEFAULT_AUDIO_SUBDIR,
+    DEFAULT_SAMPLING_RATE,
+    RECONSTITUTED_AUDIO_SUBDIR,
+    PadAudioRequest,
+    download_complete_audio_from_s3,
+    download_tutor_style_audio,
+    pad_audio_in_memory,
+    prefetch_activity_phrase_audio,
 )
-from utils.audio import PadAudioRequest
+from utils.config import PipelineConfig
+
+from .models import (
+    ActivityInput,
+    ActivityOutput,
+    PhraseInput,
+    ProcessedPhraseOutput,
+)
 
 
 class AudioPreparationEngine:
@@ -32,9 +36,7 @@ class AudioPreparationEngine:
         s3_client: The S3 client.
     """
 
-    def __init__(
-        self, *, config: PipelineConfig, s3_client: ProductionS3Client | None = None
-    ):
+    def __init__(self, *, config: PipelineConfig, s3_client: ProductionS3Client | None = None):
         """Initialize the audio preparation engine.
 
         Args:
@@ -59,20 +61,14 @@ class AudioPreparationEngine:
         self._result_dir: str = config.result.output_dir
         self._padded_seconds: int = config.audio.padded_seconds
 
-        self._save_padded_audio: bool = (
-            config.audio.save_padded_audio and config.result.audit_mode
-        )
+        self._save_padded_audio: bool = config.audio.save_padded_audio and config.result.audit_mode
         hp_config = HighPerformanceS3Config(
             aws_profile=config.aws.aws_profile,
             aws_region=config.aws.aws_region,
         )
-        self._s3_client: ProductionS3Client = s3_client or get_global_s3_client(
-            config=hp_config
-        )
+        self._s3_client: ProductionS3Client = s3_client or get_global_s3_client(config=hp_config)
 
-    async def prepare_activity_audio(
-        self, *, activity_input: ActivityInput
-    ) -> ActivityOutput:
+    async def prepare_activity_audio(self, *, activity_input: ActivityInput) -> ActivityOutput:
         """Prepare the activity audio.
 
         Args:
@@ -91,9 +87,7 @@ class AudioPreparationEngine:
         logger.info(f"Processing activity {activity_id}")
 
         try:
-            audio_available = await self._ensure_activity_audio_downloaded(
-                activity_id=activity_id
-            )
+            audio_available = await self._ensure_activity_audio_downloaded(activity_id=activity_id)
             if not audio_available:
                 output.error_message = f"No audio available for activity {activity_id}"
                 logger.warning(output.error_message)
@@ -104,9 +98,7 @@ class AudioPreparationEngine:
             output.error_message = error_msg
             return output
 
-        prefetch_activity_phrase_audio(
-            audio_dir=self._audio_base_dir, activity_id=activity_id
-        )
+        prefetch_activity_phrase_audio(audio_dir=self._audio_base_dir, activity_id=activity_id)
 
         from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -118,9 +110,7 @@ class AudioPreparationEngine:
             idx: int = phrase.phraseIndex
             try:
                 logger.info(f"Processing phrase {idx} for activity {activity_id}")
-                res = self._process_single_phrase(
-                    activity_id=activity_id, phrase_data=phrase
-                )
+                res = self._process_single_phrase(activity_id=activity_id, phrase_data=phrase)
                 return idx, res, None
             except FileNotFoundError as e:
                 error_msg = f"Audio file not found for phrase {idx}: {e}"
@@ -149,9 +139,7 @@ class AudioPreparationEngine:
                     logger.info(f"Successfully processed phrase {phrase_index}")
                 else:
                     output.phrases_failed += 1
-                    logger.warning(
-                        f"Failed to process phrase {phrase_index} - no audio returned"
-                    )
+                    logger.warning(f"Failed to process phrase {phrase_index} - no audio returned")
 
         if output.phrases_processed > 0:
             output.success = True
@@ -160,9 +148,7 @@ class AudioPreparationEngine:
             )
         else:
             output.error_message = f"No valid audio found for activity {activity_id}"
-            logger.warning(
-                f"Activity {activity_id} has no valid audio - all audio files are empty"
-            )
+            logger.warning(f"Activity {activity_id} has no valid audio - all audio files are empty")
             output.success = False
 
         logger.info(
@@ -202,15 +188,12 @@ class AudioPreparationEngine:
         logger.info(f"Processing activity {activity_id} with complete audio")
 
         try:
-            audio_available = await self._ensure_complete_audio_downloaded(
-                activity_id=activity_id
-            )
+            audio_available = await self._ensure_complete_audio_downloaded(activity_id=activity_id)
             if not audio_available:
-                output.error_message = (
-                    f"No complete audio available for activity {activity_id}"
+                logger.warning(
+                    f"No complete audio available for activity {activity_id}; falling back to phrase reconstitution path"
                 )
-                logger.warning(output.error_message)
-                return output
+                return await self.prepare_activity_audio(activity_input=activity_input)
 
             from utils.audio import download_tutor_style_audio
 
@@ -227,9 +210,7 @@ class AudioPreparationEngine:
                 logger.error(f"Phrase slicing FAILED for {activity_id}")
 
         except Exception as e:
-            error_msg = (
-                f"Failed to download complete audio for activity {activity_id}: {e}"
-            )
+            error_msg = f"Failed to download complete audio for activity {activity_id}: {e}"
             logger.error(error_msg)
             output.error_message = error_msg
             return output
@@ -247,9 +228,7 @@ class AudioPreparationEngine:
                 if processed_phrase:
                     output.phrases.append(processed_phrase)
                     output.phrases_processed += 1
-                    logger.info(
-                        f"Successfully processed phrase {phrase_index} with complete audio"
-                    )
+                    logger.info(f"Successfully processed phrase {phrase_index} with complete audio")
                 else:
                     output.phrases_failed += 1
                     logger.warning(
@@ -257,9 +236,7 @@ class AudioPreparationEngine:
                     )
             except Exception as e:
                 output.phrases_failed += 1
-                error_msg = (
-                    f"Error processing phrase {phrase_index} with complete audio: {e}"
-                )
+                error_msg = f"Error processing phrase {phrase_index} with complete audio: {e}"
                 logger.error(error_msg)
 
         if output.phrases_processed > 0:
@@ -268,9 +245,7 @@ class AudioPreparationEngine:
                 f"Activity {activity_id} prepared with complete audio: {output.phrases_processed}/{len(phrases)} phrases"
             )
         else:
-            output.error_message = (
-                f"No valid complete audio found for activity {activity_id}"
-            )
+            output.error_message = f"No valid complete audio found for activity {activity_id}"
             logger.warning(f"Activity {activity_id} has no valid complete audio")
             output.success = True
 
@@ -285,11 +260,29 @@ class AudioPreparationEngine:
         Returns:
             bool: True if the audio is downloaded, False otherwise.
         """
+
+        def _has_valid_phrase_audio(*, activity_audio_dir: Path) -> bool:
+            try:
+                if not activity_audio_dir.exists():
+                    return False
+                phrase_files = sorted(activity_audio_dir.glob("phrase_*.wav"))
+                if not phrase_files:
+                    return False
+                for f in phrase_files[:2]:
+                    try:
+                        if f.stat().st_size > 44:
+                            return True
+                    except Exception:
+                        continue
+                return False
+            except Exception:
+                return False
+
         audio_dir_path: Path = Path(
-            self._audio_base_dir, "reconstituted_phrase_audio", "DEFAULT"
+            self._audio_base_dir, RECONSTITUTED_AUDIO_SUBDIR, DEFAULT_AUDIO_SUBDIR
         )
         activity_audio_dir: Path = Path(audio_dir_path, activity_id)
-        if not Path(activity_audio_dir).exists():
+        if not _has_valid_phrase_audio(activity_audio_dir=activity_audio_dir):
             logger.info(f"Downloading audio for activity {activity_id}")
             download_success = await download_tutor_style_audio(
                 activity_id=activity_id,
@@ -300,11 +293,11 @@ class AudioPreparationEngine:
                 logger.info(f"Audio downloaded for {activity_id}")
             else:
                 logger.warning(f"Download failed for {activity_id}")
-            if not Path(activity_audio_dir).exists():
+            if not _has_valid_phrase_audio(activity_audio_dir=activity_audio_dir):
                 logger.warning(f"Skipping activity {activity_id} (no valid audio)")
                 return False
         else:
-            logger.info(f"Audio already exists for {activity_id}")
+            logger.info(f"Audio already exists and is valid for {activity_id}")
         return True
 
     async def _ensure_complete_audio_downloaded(self, *, activity_id: str) -> bool:
@@ -321,8 +314,15 @@ class AudioPreparationEngine:
         )
 
         if complete_audio_path.exists():
-            logger.info(f"Complete audio already exists for {activity_id}")
-            return True
+            try:
+                if complete_audio_path.stat().st_size > 44:
+                    logger.info(f"Complete audio already exists for {activity_id}")
+                    return True
+                logger.warning(
+                    f"Complete audio present but empty for {activity_id}; re-downloading"
+                )
+            except Exception:
+                logger.warning(f"Unable to stat complete audio for {activity_id}; re-downloading")
 
         logger.info(f"Downloading complete audio for activity {activity_id}")
         download_success = await download_complete_audio_from_s3(
@@ -341,7 +341,10 @@ class AudioPreparationEngine:
     def _process_single_phrase_with_complete_audio(
         self, *, activity_id: str, phrase_data: PhraseInput
     ) -> ProcessedPhraseOutput | None:
-        """Process a single phrase using complete audio (bypasses phrase reconstitution).
+        """Process a single phrase using complete audio approach.
+
+        This loads the individual phrase slice (not the complete audio) since
+        phrase slicing has already been done by extract_phrase_slices_tutor_style.
 
         Args:
             activity_id: The activity ID.
@@ -354,9 +357,15 @@ class AudioPreparationEngine:
             f"Processing phrase {phrase_data.phraseIndex} with complete audio for {activity_id}"
         )
 
-        audio_array = load_complete_audio_in_memory(
-            audio_dir=self._audio_base_dir, activity_id=activity_id
+        # Use the same logic as regular phrase processing to load the individual phrase slice
+        request: PadAudioRequest = PadAudioRequest(
+            audio_dir=self._audio_base_dir,
+            activity_id=activity_id,
+            phrase_index=phrase_data.phraseIndex,
+            padded_seconds=self._padded_seconds,
+            save_padded_audio=self._save_padded_audio,
         )
+        audio_array: np.ndarray | None = pad_audio_in_memory(request=request)
 
         if audio_array is not None and len(audio_array) > 0:
             return ProcessedPhraseOutput(
@@ -370,7 +379,9 @@ class AudioPreparationEngine:
                 studentId=phrase_data.studentId,
             )
         else:
-            logger.warning(f"Failed to load complete audio for {activity_id}")
+            logger.warning(
+                f"Failed to load phrase audio for {activity_id} phrase {phrase_data.phraseIndex}"
+            )
             return None
 
     def _process_single_phrase(
@@ -385,9 +396,7 @@ class AudioPreparationEngine:
         Returns:
             ProcessedPhraseOutput: The processed phrase output.
         """
-        logger.info(
-            f"Entering _process_single_phrase for phrase {phrase_data.phraseIndex}"
-        )
+        logger.info(f"Entering _process_single_phrase for phrase {phrase_data.phraseIndex}")
         request: PadAudioRequest = PadAudioRequest(
             audio_dir=self._audio_base_dir,
             activity_id=activity_id,

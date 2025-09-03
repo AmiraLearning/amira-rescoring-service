@@ -8,13 +8,14 @@ from pathlib import Path
 from typing import Any
 
 import aioboto3
+import pyarrow as pa
+import pyarrow.parquet as pq
 from loguru import logger
-import pyarrow as pa  # type: ignore
-import pyarrow.parquet as pq  # type: ignore
 from pydantic import BaseModel, Field, field_validator
 
+from src.pipeline.pipeline import run_activity_pipeline
 from utils.extract_phrases import extract_phrase_slices_tutor_style
-from src.pipeline.pipeline import process_single_activity
+
 # from src.pipeline.inference.engine import Wav2Vec2InferenceEngine, W2VConfig
 
 
@@ -37,7 +38,7 @@ class SQSMessage(BaseModel):
 
     @field_validator("activityId")
     @classmethod
-    def validate_activity_id(cls, v):
+    def validate_activity_id(cls, v: str) -> str:
         if not re.match(r"^[a-zA-Z0-9_-]+$", v):
             raise ValueError(f"Invalid activity ID format: {v}")
         if len(v) > 128:
@@ -46,14 +47,14 @@ class SQSMessage(BaseModel):
 
     @field_validator("dataset")
     @classmethod
-    def validate_dataset(cls, v):
+    def validate_dataset(cls, v: str | None) -> str | None:
         if v and not re.match(r"^[a-zA-Z0-9_-]+$", v):
             raise ValueError(f"Invalid dataset format: {v}")
         return v
 
     @field_validator("replaySuffix")
     @classmethod
-    def validate_replay_suffix(cls, v):
+    def validate_replay_suffix(cls, v: str | None) -> str | None:
         if v and not re.match(r"^[a-zA-Z0-9_-]+$", v):
             raise ValueError(f"Invalid replay suffix format: {v}")
         return v
@@ -79,37 +80,27 @@ class WorkerConfig(BaseModel):
 
     queue_url: str = Field(..., description="SQS queue URL for job messages")
     results_bucket: str = Field(..., description="S3 bucket for storing results")
-    model_path: str = Field(
-        "facebook/wav2vec2-base-960h", description="HF model path for Wav2Vec2"
-    )
-    include_confidence: bool = Field(
-        True, description="Whether to compute confidence scores"
-    )
-    audio_dir: str = Field(
-        "/tmp/audio", description="Local directory for audio processing"
-    )
+    model_path: str = Field("facebook/wav2vec2-base-960h", description="HF model path for Wav2Vec2")
+    include_confidence: bool = Field(True, description="Whether to compute confidence scores")
+    audio_dir: str = Field("/tmp/audio", description="Local directory for audio processing")
     results_prefix: str = Field("results/", description="S3 key prefix for results")
-    visibility_timeout: int = Field(
-        900, description="SQS visibility timeout in seconds"
-    )
+    visibility_timeout: int = Field(900, description="SQS visibility timeout in seconds")
     max_messages: int = Field(5, description="Maximum number of messages to receive")
     wait_time: int = Field(10, description="SQS long polling wait time")
     aws_region: str = Field("us-east-1", description="AWS region for SQS and S3")
-    max_processing_time: int = Field(
-        600, description="Maximum processing time per message"
-    )
+    max_processing_time: int = Field(600, description="Maximum processing time per message")
     retry_attempts: int = Field(3, description="Maximum retry attempts")
 
     @field_validator("queue_url")
     @classmethod
-    def validate_queue_url(cls, v):
+    def validate_queue_url(cls, v: str) -> str:
         if not v.startswith("https://sqs.") or not v.endswith(".amazonaws.com"):
             raise ValueError("Invalid SQS queue URL format")
         return v
 
     @field_validator("results_bucket")
     @classmethod
-    def validate_bucket_name(cls, v):
+    def validate_bucket_name(cls, v: str) -> str:
         if not re.match(r"^[a-z0-9.-]{3,63}$", v):
             raise ValueError("Invalid S3 bucket name format")
         return v
@@ -123,8 +114,8 @@ class WorkerConfig(BaseModel):
         Returns:
             PipelineConfig: Properly configured pipeline config instance
         """
-        from utils.config import PipelineConfig, AwsConfig, AudioConfig
         from src.pipeline.inference.models import W2VConfig as InferenceW2VConfig
+        from utils.config import AudioConfig, AwsConfig, PipelineConfig
 
         # Create coordinated configuration that matches main pipeline structure
         return PipelineConfig(
@@ -141,13 +132,11 @@ class WorkerConfig(BaseModel):
 
     @field_validator("audio_dir")
     @classmethod
-    def validate_audio_dir(cls, v):
+    def validate_audio_dir(cls, v: str) -> str:
         resolved_path = Path(v).resolve()
         allowed_prefixes = [Path("/tmp"), Path("/opt/app"), Path("/var/task")]
 
-        if not any(
-            str(resolved_path).startswith(str(prefix)) for prefix in allowed_prefixes
-        ):
+        if not any(str(resolved_path).startswith(str(prefix)) for prefix in allowed_prefixes):
             raise ValueError(f"Audio directory path not allowed: {resolved_path}")
 
         resolved_path.mkdir(parents=True, exist_ok=True)
@@ -156,7 +145,7 @@ class WorkerConfig(BaseModel):
 
     @field_validator("results_prefix")
     @classmethod
-    def validate_results_prefix(cls, v):
+    def validate_results_prefix(cls, v: str) -> str:
         if not re.match(r"^[a-zA-Z0-9/_-]*$", v):
             raise ValueError("Invalid results prefix format")
         return v
@@ -172,8 +161,7 @@ class WorkerConfig(BaseModel):
             queue_url=get_required_env("JOBS_QUEUE_URL"),
             results_bucket=get_required_env("RESULTS_BUCKET"),
             model_path=os.getenv("MODEL_PATH", "facebook/wav2vec2-base-960h"),
-            include_confidence=os.getenv("INCLUDE_CONFIDENCE", "true").lower()
-            == "true",
+            include_confidence=os.getenv("INCLUDE_CONFIDENCE", "true").lower() == "true",
             audio_dir=os.getenv("AUDIO_DIR", "/tmp/audio"),
             results_prefix=os.getenv("RESULTS_PREFIX", "results/"),
             visibility_timeout=int(os.getenv("VISIBILITY_TIMEOUT", "900")),
@@ -237,9 +225,7 @@ async def write_results_to_s3(
     table: pa.Table = pa.Table.from_pylist(records)
 
     dt_prefix: str = time.strftime("dt=%Y-%m-%d")
-    base_key: str = (
-        f"{results_prefix.rstrip('/')}/{dt_prefix}/activity_id={activity_id}"
-    )
+    base_key: str = f"{results_prefix.rstrip('/')}/{dt_prefix}/activity_id={activity_id}"
     data_key: str = f"{base_key}/results.parquet"
     success_key: str = f"{base_key}/_SUCCESS"
 
@@ -251,9 +237,7 @@ async def write_results_to_s3(
     await s3_client.put_object(Bucket=results_bucket, Key=success_key, Body=b"")
 
 
-async def process_message(
-    *, msg: SQSMessage, config: WorkerConfig, s3_client: Any
-) -> None:
+async def process_message(*, msg: SQSMessage, config: WorkerConfig, s3_client: Any) -> None:
     """Process a single SQS message containing an activity to analyze.
 
     Args:
@@ -266,22 +250,19 @@ async def process_message(
     if msg.timestamp:
         message_age = time.time() - msg.timestamp
         if message_age > 3600:
-            logger.warning(
-                f"Rejecting old message: {msg.activityId} (age: {message_age}s)"
-            )
+            logger.warning(f"Rejecting old message: {msg.activityId} (age: {message_age}s)")
             return
 
     try:
-        await process_single_activity(
-            activity_id=msg.activityId,
-            phrases_input=[],
-            config=config.to_pipeline_config(),
-        )
+        # Convert worker config to pipeline config and scope to this activity
+        pipeline_config = config.to_pipeline_config()
+        pipeline_config.metadata.activity_id = msg.activityId
+
+        # Run the full activity pipeline for the single activity
+        await run_activity_pipeline(config=pipeline_config)
 
         processing_time = time.time() - start_time
-        logger.info(
-            f"Successfully processed {msg.activityId} in {processing_time:.2f}s"
-        )
+        logger.info(f"Successfully processed {msg.activityId} in {processing_time:.2f}s")
 
     except Exception as e:
         processing_time = time.time() - start_time
@@ -342,7 +323,7 @@ async def handle_sqs_message(
                     process_message(msg=msg, config=config, s3_client=s3_client),
                     timeout=config.max_processing_time,
                 )
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 logger.error(f"Processing timeout for message {message_id}")
                 raise
 
@@ -359,9 +340,7 @@ async def handle_sqs_message(
                 except Exception as e:
                     logger.warning(f"Failed to extend visibility timeout: {e}")
 
-            await sqs_client.delete_message(
-                QueueUrl=config.queue_url, ReceiptHandle=receipt
-            )
+            await sqs_client.delete_message(QueueUrl=config.queue_url, ReceiptHandle=receipt)
             logger.info(f"Successfully processed and deleted message {message_id}")
             return
 
@@ -418,7 +397,7 @@ async def poll_and_process_messages(
 
                 semaphore = asyncio.Semaphore(config.max_messages)
 
-                async def process_with_semaphore(record):
+                async def process_with_semaphore(record: dict[str, Any]) -> None:
                     async with semaphore:
                         await handle_sqs_message(
                             record=record,
@@ -465,7 +444,7 @@ def main() -> None:
 
         session = aioboto3.Session()
 
-        async def run_worker():
+        async def run_worker() -> None:
             async with (
                 session.client("sqs", region_name=config.aws_region) as sqs_client,
                 session.client("s3", region_name=config.aws_region) as s3_client,

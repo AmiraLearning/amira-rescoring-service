@@ -1,15 +1,16 @@
-from gql import gql, Client
-from pydantic import BaseModel
+import os
 from typing import Any, Final
-from utils.config import AwsConfig  # TODO rename to AWSConfig
-from gql.transport.requests import RequestsHTTPTransport
-import requests
-from loguru import logger
 
-_GRAPHQL_ENDPOINT_URL: Final[str] = (
-    "https://4tsmcay4pnbhtmpxq7o24wktgy.appsync-api.us-east-1.amazonaws.com/graphql"
-)
-_GRAPHQL_ENDPOINT_KEY: Final[str] = "da2-6bolf4d5sfbdzmulnjazxmjuza"
+from gql import Client, gql
+from gql.transport.requests import RequestsHTTPTransport
+from loguru import logger
+from pydantic import BaseModel
+
+from utils.config import AwsConfig  # TODO rename to AWSConfig
+
+_GRAPHQL_ENDPOINT_URL: Final[str] = os.environ.get("APPSYNC_URL", "")
+_GRAPHQL_ENDPOINT_KEY: Final[str] = os.environ.get("APPSYNC_API_KEY", "")
+_GRAPHQL_ALLOW_MOCK: Final[bool] = os.environ.get("APPSYNC_ALLOW_MOCK", "false").lower() == "true"
 
 UPDATE_ACTIVITY_FIELDS_MUTATION = gql(
     """
@@ -147,6 +148,14 @@ def set_activity_fields(
         activityId=activity_id, fieldValues=field_values
     )
 
+    if not _GRAPHQL_ENDPOINT_URL or not _GRAPHQL_ENDPOINT_KEY:
+        if _GRAPHQL_ALLOW_MOCK:
+            logger.warning(
+                "Missing AppSync credentials; returning mock response due to APPSYNC_ALLOW_MOCK=true"
+            )
+            return {"data": {"updateActivity": {"activityId": activity_id}}}
+        raise RuntimeError("APPSYNC_URL and APPSYNC_API_KEY must be set")
+
     client: Client = Client(
         transport=RequestsHTTPTransport(
             url=_GRAPHQL_ENDPOINT_URL, headers={"x-api-key": _GRAPHQL_ENDPOINT_KEY}
@@ -158,9 +167,13 @@ def set_activity_fields(
             UPDATE_ACTIVITY_FIELDS_MUTATION, variable_values=variables.dict()
         )
     except Exception as e:
-        # For testing purposes, return a mock response if GraphQL fails
-        logger.info(f"GraphQL update failed (this is expected in test mode): {e}")
-        response = {"data": {"updateActivity": {"activityId": activity_id}}}
+        if _GRAPHQL_ALLOW_MOCK:
+            logger.info(
+                f"GraphQL update failed; returning mock due to APPSYNC_ALLOW_MOCK=true: {e}"
+            )
+            response = {"data": {"updateActivity": {"activityId": activity_id}}}
+        else:
+            raise
 
     return response
 
@@ -178,6 +191,14 @@ def query_activities_with_filter(
         The response data from the AppSync API.
     """
     variables = {"filter": activity_filter, "limit": limit}
+
+    if not _GRAPHQL_ENDPOINT_URL or not _GRAPHQL_ENDPOINT_KEY:
+        if _GRAPHQL_ALLOW_MOCK:
+            logger.warning(
+                "Missing AppSync credentials; returning mock due to APPSYNC_ALLOW_MOCK=true"
+            )
+            return {"data": {"activities": []}}
+        raise RuntimeError("APPSYNC_URL and APPSYNC_API_KEY must be set")
 
     client: Client = Client(
         transport=RequestsHTTPTransport(
@@ -198,6 +219,14 @@ def introspect_schema() -> dict[str, Any]:
     Returns:
         The schema introspection data from the AppSync API.
     """
+    if not _GRAPHQL_ENDPOINT_URL or not _GRAPHQL_ENDPOINT_KEY:
+        if _GRAPHQL_ALLOW_MOCK:
+            logger.warning(
+                "Missing AppSync credentials; returning mock due to APPSYNC_ALLOW_MOCK=true"
+            )
+            return {"data": {"__schema": {}}}
+        raise RuntimeError("APPSYNC_URL and APPSYNC_API_KEY must be set")
+
     client: Client = Client(
         transport=RequestsHTTPTransport(
             url=_GRAPHQL_ENDPOINT_URL, headers={"x-api-key": _GRAPHQL_ENDPOINT_KEY}
@@ -217,26 +246,31 @@ def get_activity(*, activity_id: str) -> dict[str, Any]:
     Returns:
         The response data from the AppSync API.
     """
+    # TODO unused imports
     import time
-    from requests.adapters import HTTPAdapter
-    from urllib3.util.retry import Retry
 
     variables = {"activityId": [activity_id]}
+
+    if not _GRAPHQL_ENDPOINT_URL or not _GRAPHQL_ENDPOINT_KEY:
+        if _GRAPHQL_ALLOW_MOCK:
+            logger.warning(
+                "Missing AppSync credentials; returning mock due to APPSYNC_ALLOW_MOCK=true"
+            )
+            return {"getActivity": []}
+        raise RuntimeError("APPSYNC_URL and APPSYNC_API_KEY must be set")
 
     transport = RequestsHTTPTransport(
         url=_GRAPHQL_ENDPOINT_URL,
         headers={"x-api-key": _GRAPHQL_ENDPOINT_KEY},
         timeout=60,
     )
+    # TODO use tenacity
 
     client: Client = Client(transport=transport)
 
-    # Retry logic for connection issues
     for attempt in range(3):
         try:
-            response: dict[str, Any] = client.execute(
-                GET_ACTIVITY_QUERY, variable_values=variables
-            )
+            response: dict[str, Any] = client.execute(GET_ACTIVITY_QUERY, variable_values=variables)
             return response
         except Exception as e:
             if attempt == 2:  # Last attempt
@@ -263,10 +297,10 @@ def load_activity_from_graphql(*, activity_id: str) -> dict[str, Any]:
     if not response.get("getActivity") or not response["getActivity"]:
         raise ValueError(f"Activity {activity_id} not found")
 
-    # Extract the first (and only) activity from the response
-    activity_data = response["getActivity"][0]
+    activity_data: dict[str, Any] = response["getActivity"][0]
 
     # Convert to the format expected by the pipeline (matching Athena query format)
+    # TODO this is weird. We should figure out why this is happening.
     activity_row = {
         "activityId": activity_data["activityId"],
         "storyId": activity_data["storyId"],

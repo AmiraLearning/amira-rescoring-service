@@ -1,9 +1,9 @@
-# Blazing fast optimized PyTorch Lambda with uv
+# Optimized PyTorch Lambda with uv
 # ARM64 Graviton with torch.compile and quantization
 
 FROM public.ecr.aws/lambda/python:3.12-arm64
 
-# Install uv for blazing fast dependency management
+# Install uv for fast dependency management
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
 # Optimization environment variables
@@ -42,16 +42,16 @@ COPY utils/ ./utils/
 COPY infra/ ./infra/
 COPY my_asr_aligner/ ./my_asr_aligner/
 
-# Install dependencies with uv (blazing fast)
+# Install dependencies with uv
 RUN uv pip install --system --no-cache-dir -e .
 
-# Pre-download Wav2Vec2 model for blazing fast single-use startup
+# Pre-download Wav2Vec2 model for fast startup
 ENV MODEL_PATH=facebook/wav2vec2-base-960h
 RUN python -c "
 import torch
 from transformers import Wav2Vec2ForCTC, Wav2Vec2Processor
 
-print('Pre-caching Wav2Vec2 model for blazing fast startup...')
+print('Pre-caching Wav2Vec2 model for fast startup...')
 
 # Load and save with float16 for faster loading
 processor = Wav2Vec2Processor.from_pretrained('${MODEL_PATH}')
@@ -64,7 +64,7 @@ model.eval()
 model.save_pretrained('/opt/models/wav2vec2-optimized')
 processor.save_pretrained('/opt/models/wav2vec2-optimized')
 
-print('Model pre-cached for single-use blazing fast startup')
+print('Model pre-cached for fast startup')
 "
 
 # Pre-compile all Python bytecode for faster imports
@@ -79,7 +79,7 @@ import torch, transformers, numpy, boto3
 print('All imports validated')
 print(f'PyTorch version: {torch.__version__}')
 print(f'Transformers version: {transformers.__version__}')
-print('Ready for blazing fast inference!')
+print('Ready for inference!')
 "
 
 CMD ["index.lambda_handler"]

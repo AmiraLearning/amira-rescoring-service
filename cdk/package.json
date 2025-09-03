@@ -8,10 +8,10 @@
     "watch": "tsc -w",
     "test": "jest",
     "cdk": "cdk",
-    "deploy": "cdk deploy",
-    "destroy": "cdk destroy",
-    "deploy-parallel": "cdk deploy AmiraLambdaParallelStack",
-    "destroy-parallel": "cdk destroy AmiraLambdaParallelStack"
+    "deploy": "cdk deploy -a 'npx ts-node --prefer-ts-exts bin/amira-letter-scoring.ts'",
+    "destroy": "cdk destroy -a 'npx ts-node --prefer-ts-exts bin/amira-letter-scoring.ts'",
+    "deploy-parallel": "cdk deploy -a 'npx ts-node --prefer-ts-exts bin/amira-lambda-parallel.ts' AmiraLambdaParallelStack",
+    "destroy-parallel": "cdk destroy -a 'npx ts-node --prefer-ts-exts bin/amira-lambda-parallel.ts' AmiraLambdaParallelStack"
   },
   "devDependencies": {
     "@types/jest": "^29.5.5",

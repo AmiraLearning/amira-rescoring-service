@@ -1,18 +1,14 @@
-import json
 import time
 from typing import Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class JobMessage(BaseModel):
     activity_id: str
     source: str
-    timestamp: int | None = None
-
-    def __post_init__(self):
-        if self.timestamp is None:
-            self.timestamp = int(time.time())
+    # Default timestamp at construction if not provided
+    timestamp: int | None = Field(default_factory=lambda: int(time.time()))
 
 
 class SQSEnqueuer:
@@ -32,9 +28,7 @@ class SQSEnqueuer:
             ]
 
             try:
-                await self.client.send_message_batch(
-                    QueueUrl=self.queue_url, Entries=entries
-                )
+                await self.client.send_message_batch(QueueUrl=self.queue_url, Entries=entries)
                 count += len(batch)
             except Exception:
                 pass

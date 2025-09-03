@@ -1,13 +1,14 @@
+import asyncio
 import json
 import os
 import time
-import asyncio
 from typing import Any
 
-from pydantic import BaseModel
-import torch
 import boto3
+import torch
+from pydantic import BaseModel
 
+from src.pipeline.inference.models import W2VConfig
 from src.pipeline.pipeline import run_activity_pipeline
 from utils.config import PipelineConfig
 
@@ -28,9 +29,12 @@ class LambdaResponse(BaseModel):
 
 
 _optimizations_applied = False
+_config_cache: PipelineConfig | None = None
+_cloudwatch_client: Any | None = None
+_s3_client: Any | None = None
 
 
-def apply_lambda_optimizations():
+def apply_lambda_optimizations() -> None:
     global _optimizations_applied
     if _optimizations_applied:
         return
@@ -51,25 +55,41 @@ def apply_lambda_optimizations():
 
 
 def create_lambda_config() -> PipelineConfig:
-    from utils.config import AwsConfig, W2VConfig
+    from utils.config import AwsConfig
 
     aws_config = AwsConfig(
         aws_profile=os.environ.get("AWS_PROFILE", "default"),
         aws_region=os.environ.get("AWS_REGION", "us-east-1"),
     )
+    use_triton = os.environ.get("USE_TRITON", "false").lower() == "true"
+    include_confidence = os.environ.get("INCLUDE_CONFIDENCE", "true").lower() == "true"
+    batch_all_phrases = os.environ.get("BATCH_ALL_PHRASES", "true").lower() == "true"
+    model_path = os.environ.get("MODEL_PATH", "")
+    triton_url = os.environ.get("TRITON_URL", "")
+    triton_model = os.environ.get("TRITON_MODEL", "w2v2")
+
     w2v2_config = W2VConfig(
-        model_path=os.environ["MODEL_PATH"],
-        include_confidence=os.environ.get("INCLUDE_CONFIDENCE", "true").lower()
-        == "true",
+        model_path=model_path,
+        include_confidence=include_confidence,
+        use_triton=use_triton,
+        triton_url=triton_url or "",
+        triton_model=triton_model,
+        batch_all_phrases=batch_all_phrases,
     )
     return PipelineConfig(aws=aws_config, w2v2=w2v2_config)
 
 
-def publish_job_metrics(result: LambdaProcessingResult):
-    try:
-        cloudwatch = boto3.client("cloudwatch")
+def _get_cloudwatch_client() -> Any:
+    global _cloudwatch_client
+    if _cloudwatch_client is None:
+        _cloudwatch_client = boto3.client("cloudwatch")
+    return _cloudwatch_client
 
-        cloudwatch.put_metric_data(
+
+def publish_job_metrics(result: LambdaProcessingResult) -> None:
+    try:
+        cw_client = _get_cloudwatch_client()
+        cw_client.put_metric_data(
             Namespace="Amira/Jobs",
             MetricData=[
                 {
@@ -95,8 +115,15 @@ def publish_job_metrics(result: LambdaProcessingResult):
         pass
 
 
-def write_results_to_s3(result: LambdaProcessingResult):
-    s3_client = boto3.client("s3")
+def _get_s3_client() -> Any:
+    global _s3_client
+    if _s3_client is None:
+        _s3_client = boto3.client("s3")
+    return _s3_client
+
+
+def write_results_to_s3(result: LambdaProcessingResult) -> None:
+    s3_client = _get_s3_client()
     bucket = os.environ["RESULTS_BUCKET"]
     prefix = os.environ.get("RESULTS_PREFIX", "results/")
 
@@ -119,10 +146,11 @@ def write_results_to_s3(result: LambdaProcessingResult):
 async def process_activity(activity_id: str) -> LambdaProcessingResult:
     start_time = time.time()
     apply_lambda_optimizations()
-
-    config = create_lambda_config()
+    global _config_cache
+    if _config_cache is None:
+        _config_cache = create_lambda_config()
+    config = _config_cache
     config.metadata.activity_id = activity_id
-
     results = await run_activity_pipeline(config=config)
 
     if not results:
@@ -142,9 +170,9 @@ async def process_activity(activity_id: str) -> LambdaProcessingResult:
     return result
 
 
-def publish_batch_metrics(successes: int, failures: int, total_time: float):
+def publish_batch_metrics(successes: int, failures: int, total_time: float) -> None:
     try:
-        cloudwatch = boto3.client("cloudwatch")
+        cw_client = _get_cloudwatch_client()
 
         metrics = []
         if failures > 0:
@@ -153,9 +181,7 @@ def publish_batch_metrics(successes: int, failures: int, total_time: float):
                     "MetricName": "JobsFailed",
                     "Value": failures,
                     "Unit": "Count",
-                    "Dimensions": [
-                        {"Name": "Processor", "Value": "existing-pipeline-arm64"}
-                    ],
+                    "Dimensions": [{"Name": "Processor", "Value": "existing-pipeline-arm64"}],
                 }
             )
 
@@ -165,14 +191,12 @@ def publish_batch_metrics(successes: int, failures: int, total_time: float):
                     "MetricName": "BatchThroughput",
                     "Value": successes / (total_time / 60) if total_time > 0 else 0,
                     "Unit": "Count/Minute",
-                    "Dimensions": [
-                        {"Name": "Processor", "Value": "existing-pipeline-arm64"}
-                    ],
+                    "Dimensions": [{"Name": "Processor", "Value": "existing-pipeline-arm64"}],
                 }
             )
 
         if metrics:
-            cloudwatch.put_metric_data(Namespace="Amira/Jobs", MetricData=metrics)
+            cw_client.put_metric_data(Namespace="Amira/Jobs", MetricData=metrics)
     except Exception:
         pass
 
@@ -184,24 +208,47 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
         records = event.get("Records", [])
         successes = 0
         failures = 0
-        batch_item_failures = []
+        batch_item_failures: list[dict[str, Any]] = []
         total_processing_time = 0.0
 
-        for record in records:
-            try:
-                body = json.loads(record.get("body", "{}"))
-                activity_id = body.get("activityId")
+        max_concurrency_env = os.environ.get("MAX_CONCURRENCY")
+        try:
+            max_concurrency = int(max_concurrency_env) if max_concurrency_env else 8
+        except ValueError:
+            max_concurrency = 8
 
-                if not activity_id:
-                    raise ValueError("Missing activityId")
+        async def _process_record(
+            record: dict[str, Any], sem: asyncio.Semaphore
+        ) -> tuple[bool, float, str | None]:
+            async with sem:
+                try:
+                    body_text = record.get("body", "{}")
+                    body = json.loads(body_text) if isinstance(body_text, str) else body_text
+                    activity_id = body.get("activityId")
+                    if not activity_id:
+                        raise ValueError("Missing activityId")
+                    result = await process_activity(activity_id)
+                    return True, result.processing_time, None
+                except Exception:
+                    return False, 0.0, record.get("messageId")
 
-                result = asyncio.run(process_activity(activity_id))
-                total_processing_time += result.processing_time
-                successes += 1
+        async def _run(
+            records_list: list[dict[str, Any]],
+        ) -> tuple[int, int, float, list[dict[str, Any]]]:
+            sem = asyncio.Semaphore(max_concurrency)
+            tasks = [asyncio.create_task(_process_record(r, sem)) for r in records_list]
+            done = await asyncio.gather(*tasks, return_exceptions=False)
+            ok = sum(1 for s, _, _ in done if s)
+            fail = sum(1 for s, _, _ in done if not s)
+            total_time = sum(t for s, t, _ in done if s)
+            failures_list = [{"itemIdentifier": mid} for s, _, mid in done if not s and mid]
+            return ok, fail, total_time, failures_list
 
-            except Exception:
-                batch_item_failures.append({"itemIdentifier": record.get("messageId")})
-                failures += 1
+        ok, fail, total_time_success, failures_list = asyncio.run(_run(records))
+        successes += ok
+        failures += fail
+        total_processing_time += total_time_success
+        batch_item_failures.extend(failures_list)
 
         handler_time = time.time() - handler_start
         publish_batch_metrics(successes, failures, handler_time)
@@ -222,13 +269,10 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
             ),
             batch_item_failures=batch_item_failures,
         )
-
         return response.model_dump()
 
     except Exception as e:
         return LambdaResponse(
             status_code=500,
-            body=json.dumps(
-                {"error": str(e), "handlerTime": time.time() - handler_start}
-            ),
+            body=json.dumps({"error": str(e), "handlerTime": time.time() - handler_start}),
         ).model_dump()

@@ -1,10 +1,11 @@
 from dataclasses import dataclass
+
 from .constants import VALID_PHONETIC_ELEMENTS
 
 
 class TrieNode:
     def __init__(self) -> None:
-        self.children: dict[str, "TrieNode"] = {}
+        self.children: dict[str, TrieNode] = {}
         self.is_end_of_element: bool = False
         self.element_value: str | None = None
 
@@ -30,9 +31,7 @@ class PhoneticTrie:
         node.is_end_of_element = True
         node.element_value = element
 
-    def find_longest_match(
-        self, *, tokens: list[str], start_index: int
-    ) -> LongestMatchResult:
+    def find_longest_match(self, *, tokens: list[str], start_index: int) -> LongestMatchResult:
         node: TrieNode = self.root
         longest_match_element: str | None = None
         longest_match_length: int = 0

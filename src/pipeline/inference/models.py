@@ -1,7 +1,9 @@
+from dataclasses import dataclass
+
 import numpy as np
 import torch
-from dataclasses import dataclass
 from pydantic import BaseModel, Field, field_serializer
+
 from .constants import DeviceType
 
 
@@ -14,11 +16,11 @@ class W2VConfig(BaseModel):
 
     # Triton inference server configuration
     use_triton: bool = False
-    triton_url: str = "http://localhost:8000"
+    triton_url: str = "https://localhost:8000"
     triton_model: str = "w2v2"
 
     # Compilation optimizations
-    use_torch_compile: bool = True
+    use_torch_compile: bool = False
     compile_mode: str = "default"  # "default", "reduce-overhead", "max-autotune"
     use_torch_jit: bool = False  # Fallback for torch.compile
     use_mixed_precision: bool = False
@@ -26,7 +28,7 @@ class W2VConfig(BaseModel):
 
     # Performance optimizations
     use_float16: bool = True  # Lambda-style Float16 precision for 2x speed
-    batch_all_phrases: bool = True  # Lambda-style single inference call
+    batch_all_phrases: bool = False  # Lambda-style single inference call
 
 
 class PreprocessResult(BaseModel):

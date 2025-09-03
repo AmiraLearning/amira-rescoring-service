@@ -75,6 +75,18 @@ export class AmiraLambdaParallelStack extends cdk.Stack {
       encryptionKey: kmsKey,
       bucketKeyEnabled: true,
       enforceSSL: true,
+      lifecycleRules: [
+        {
+          id: 'IntelligentTiering',
+          enabled: true,
+          transitions: [
+            {
+              storageClass: s3.StorageClass.INTELLIGENT_TIERING,
+              transitionAfter: cdk.Duration.days(0)
+            }
+          ]
+        }
+      ],
       removalPolicy: cdk.RemovalPolicy.RETAIN
     });
 
@@ -104,44 +116,6 @@ export class AmiraLambdaParallelStack extends cdk.Stack {
       encryptionKey: kmsKey
     });
 
-    // Processing Lambda function - simplified without VPC/EFS
-    const processingLambda = new lambda.Function(this, 'ProcessingFunction', {
-      runtime: lambda.Runtime.PYTHON_3_12,
-      architecture: lambda.Architecture.ARM_64,
-      handler: 'index.lambda_handler',
-      code: lambda.Code.fromAsset('../lambda/parallel_processor'),
-      timeout: cdk.Duration.minutes(15),
-      memorySize: 10240, // 10GB for CPU inference + chunked processing
-      reservedConcurrentExecutions: 1000,
-      deadLetterQueue: dlq,
-      tracing: lambda.Tracing.ACTIVE,
-      logGroup: logGroup,
-      environment: {
-        RESULTS_BUCKET: resultsBucket.bucketName,
-        RESULTS_PREFIX: resultsPrefixParam.valueAsString,
-        MODEL_PATH: modelPathParam.valueAsString,
-        AUDIO_BUCKET: audioBucketNameParam.valueAsString,
-        KMS_KEY_ID: kmsKey.keyId,
-        SLACK_WEBHOOK_URL: slackWebhookParam.valueAsString,
-        USE_FLOAT16: 'true',
-        INCLUDE_CONFIDENCE: 'true',
-        TEST_MODE: 'false',
-        // Triton configuration for remote GPU inference
-        USE_TRITON: cdk.Fn.conditionIf(tritonUrlProvided.logicalId, 'true', 'false').toString(),
-        TRITON_URL: tritonClusterUrlParam.valueAsString,
-        TRITON_MODEL: 'w2v2'
-      }
-    });
-
-    // SQS Event Source for Lambda
-    const eventSource = new sources.SqsEventSource(tasksQueue, {
-      batchSize: 10,
-      maxConcurrency: 100,
-      reportBatchItemFailures: true,
-      maxBatchingWindow: cdk.Duration.seconds(0),
-    });
-    processingLambda.addEventSource(eventSource);
-
     // Conditions
     const audioProvided = new cdk.CfnCondition(this, 'AudioBucketProvided', {
       expression: cdk.Fn.conditionNot(cdk.Fn.conditionEquals(audioBucketNameParam.valueAsString, ''))
@@ -149,7 +123,83 @@ export class AmiraLambdaParallelStack extends cdk.Stack {
     const tritonUrlProvided = new cdk.CfnCondition(this, 'TritonUrlProvided', {
       expression: cdk.Fn.conditionNot(cdk.Fn.conditionEquals(tritonClusterUrlParam.valueAsString, ''))
     });
-    
+
+    // Processing Lambda function as Docker image (pre-cached model)
+    const processingLambda = new lambda.DockerImageFunction(this, 'ProcessingFunction', {
+      functionName: 'amira-parallel-processor',
+      code: lambda.DockerImageCode.fromImageAsset('../lambda/parallel_processor'),
+      timeout: cdk.Duration.minutes(15),
+      memorySize: 10240,
+      reservedConcurrentExecutions: 1000,
+      deadLetterQueue: dlq,
+      tracing: lambda.Tracing.ACTIVE,
+      environment: {
+        RESULTS_BUCKET: resultsBucket.bucketName,
+        RESULTS_PREFIX: resultsPrefixParam.valueAsString,
+        MODEL_PATH: '/opt/models/wav2vec2-optimized',
+        AUDIO_BUCKET: audioBucketNameParam.valueAsString,
+        KMS_KEY_ID: kmsKey.keyId,
+        SLACK_WEBHOOK_URL: slackWebhookParam.valueAsString,
+        MAX_CONCURRENCY: '1', // TODO take a closer look at this
+        BATCH_ALL_PHRASES: 'true',
+        USE_FLOAT16: 'true',
+        INCLUDE_CONFIDENCE: 'true',
+        TEST_MODE: 'false',
+        USE_TRITON: cdk.Token.asString(cdk.Fn.conditionIf(tritonUrlProvided.logicalId, 'true', 'false')),
+        TRITON_URL: tritonClusterUrlParam.valueAsString,
+        TRITON_MODEL: 'w2v2',
+        PYTHONOPTIMIZE: '2',
+        TORCH_NUM_THREADS: '6',
+        OMP_NUM_THREADS: '6',
+        TRANSFORMERS_CACHE: '/tmp/models',
+        HF_HUB_CACHE: '/tmp/hf_cache'
+      }
+    });
+
+    // SQS Event Source for Lambda
+    const eventSource = new sources.SqsEventSource(tasksQueue, {
+      batchSize: 1,
+      maxConcurrency: 100,
+      reportBatchItemFailures: true,
+      maxBatchingWindow: cdk.Duration.seconds(0),
+    });
+    processingLambda.addEventSource(eventSource);
+
+    // Optional warming rule
+    const enableWarmingParam = new cdk.CfnParameter(this, 'EnableWarming', {
+      type: 'String',
+      default: 'false',
+      allowedValues: ['true', 'false'],
+      description: 'Enable periodic warm invocation to reduce cold starts'
+    });
+    const warmRateMinutesParam = new cdk.CfnParameter(this, 'WarmRateMinutes', {
+      type: 'Number',
+      default: 15,
+      description: 'Warm ping rate in minutes when EnableWarming=true'
+    });
+    const warmEnabled = new cdk.CfnCondition(this, 'WarmEnabled', {
+      expression: cdk.Fn.conditionEquals(enableWarmingParam.valueAsString, 'true')
+    });
+    const warmingRule = new events.CfnRule(this, 'ProcessingWarmRule', {
+      scheduleExpression: cdk.Fn.sub('rate(${Minutes} minutes)', { Minutes: warmRateMinutesParam.valueAsString }),
+      state: 'ENABLED',
+      targets: [
+        {
+          id: 'Target0',
+          arn: processingLambda.functionArn,
+          input: JSON.stringify({ warm: true })
+        }
+      ]
+    });
+    warmingRule.cfnOptions.condition = warmEnabled;
+    const warmPermission = new lambda.CfnPermission(this, 'AllowEventBridgeInvokeWarm', {
+      action: 'lambda:InvokeFunction',
+      functionName: processingLambda.functionName,
+      principal: 'events.amazonaws.com',
+      sourceArn: warmingRule.attrArn
+    });
+    warmPermission.cfnOptions.condition = warmEnabled;
+
     const audioPolicyDoc = new iam.PolicyDocument({
       statements: [
         new iam.PolicyStatement({
@@ -162,7 +212,7 @@ export class AmiraLambdaParallelStack extends cdk.Stack {
         })
       ]
     });
-    
+
     const audioCfnPolicy = new iam.CfnPolicy(this, 'ProcessingLambdaAudioPolicy', {
       policyDocument: audioPolicyDoc,
       roles: [processingLambda.role!.roleName],
@@ -318,22 +368,27 @@ export class AmiraLambdaParallelStack extends cdk.Stack {
     });
 
     // Job completion detection - queue empty AND no active Lambda executions
+    const concurrentExecutionsMetric = new cw.Metric({
+      namespace: 'AWS/Lambda',
+      metricName: 'ConcurrentExecutions',
+      dimensionsMap: { FunctionName: processingLambda.functionName },
+      statistic: 'Average',
+      period: cdk.Duration.minutes(2)
+    });
+    const jobCompletionExpr = new cw.MathExpression({
+      expression: 'IF(queue < 1 AND concurrent < 1, 1, 0)',
+      usingMetrics: {
+        queue: tasksQueue.metricApproximateNumberOfMessagesVisible({
+          statistic: 'Average',
+          period: cdk.Duration.minutes(2)
+        }),
+        concurrent: concurrentExecutionsMetric
+      }
+    });
     const jobCompletionAlarm = new cw.Alarm(this, 'JobCompletionAlarm', {
       alarmName: 'JobCompletionDetected',
       alarmDescription: 'Triggered when all jobs are processed (queue empty and no active executions)',
-      metric: cw.MathExpression.fromProperties({
-        expression: 'IF(queue < 1 AND concurrent < 1, 1, 0)',
-        usingMetrics: {
-          queue: tasksQueue.metricApproximateNumberOfMessagesVisible({
-            statistic: 'Average',
-            period: cdk.Duration.minutes(2)
-          }),
-          concurrent: processingLambda.metricConcurrentExecutions({
-            statistic: 'Average', 
-            period: cdk.Duration.minutes(2)
-          })
-        }
-      }),
+      metric: jobCompletionExpr,
       threshold: 1,
       evaluationPeriods: 1,
       comparisonOperator: cw.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
@@ -341,7 +396,7 @@ export class AmiraLambdaParallelStack extends cdk.Stack {
     });
 
     const alertAction = new cwactions.SnsAction(alertsTopic);
-    
+
     dlqDepthAlarm.addAlarmAction(alertAction);
     processingErrorsAlarm.addAlarmAction(alertAction);
     queueDepthAlarm.addAlarmAction(alertAction);
@@ -367,7 +422,7 @@ export class AmiraLambdaParallelStack extends cdk.Stack {
       }),
       new cw.GraphWidget({
         title: 'Lambda Concurrency',
-        left: [processingLambda.metricConcurrentExecutions()],
+        left: [concurrentExecutionsMetric],
         width: 24
       }),
       new cw.GraphWidget({
@@ -384,7 +439,7 @@ export class AmiraLambdaParallelStack extends cdk.Stack {
             statistic: 'Sum'
           }),
           new cw.Metric({
-            namespace: 'Amira/Jobs', 
+            namespace: 'Amira/Jobs',
             metricName: 'JobsFailed',
             statistic: 'Sum'
           })

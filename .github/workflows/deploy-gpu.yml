@@ -1,0 +1,60 @@
+name: Deploy GPU ECS Stack (Manual)
+
+on:
+  workflow_dispatch:
+    inputs:
+      appImageTag:
+        description: 'App image tag'
+        required: false
+        default: 'v0.0.0'
+      tritonImageTag:
+        description: 'Triton image tag'
+        required: false
+        default: 'v0.0.0'
+      useTriton:
+        description: 'Enable Triton (true/false)'
+        required: false
+        default: 'false'
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: us-east-1
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install CDK deps
+        working-directory: cdk
+        run: |
+          npm ci
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_GHA_CDK_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Synthesize
+        working-directory: cdk
+        run: |
+          npx cdk synth -a "npx ts-node --prefer-ts-exts bin/amira-letter-scoring.ts" | cat
+
+      - name: Deploy CDK (GPU stack)
+        working-directory: cdk
+        run: |
+          npx cdk deploy -a "npx ts-node --prefer-ts-exts bin/amira-letter-scoring.ts" AmiraLetterScoringStack --require-approval never \
+            --parameters AppImageTag=${{ github.event.inputs.appImageTag }} \
+            --parameters TritonImageTag=${{ github.event.inputs.tritonImageTag }} \
+            --parameters UseTriton=${{ github.event.inputs.useTriton }} | cat

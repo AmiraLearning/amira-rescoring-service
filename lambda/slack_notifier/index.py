@@ -1,9 +1,9 @@
 import json
 import os
 import time
-import urllib.request
 import urllib.parse
-from datetime import datetime, timezone
+import urllib.request
+from datetime import UTC, datetime
 from typing import Any
 
 from pydantic import BaseModel
@@ -102,13 +102,14 @@ def extract_job_metrics_from_cloudwatch(event: dict[str, Any]) -> JobSummary:
     Returns:
         JobSummary: Processed metrics summary
     """
-    import boto3
     from datetime import datetime, timedelta
+
+    import boto3
 
     cloudwatch = boto3.client("cloudwatch")
 
     # Extract alarm details
-    alarm_data = event.get("AlarmData", {})
+    event.get("AlarmData", {})
     alarm_name = event.get("AlarmName", "Unknown")
 
     # Set time range for metrics query (last hour)
@@ -156,9 +157,7 @@ def extract_job_metrics_from_cloudwatch(event: dict[str, Any]) -> JobSummary:
             failed_count = int(failed_response["Datapoints"][0].get("Sum", 0))
 
         if processing_time_response["Datapoints"]:
-            avg_processing_time = float(
-                processing_time_response["Datapoints"][0].get("Average", 0)
-            )
+            avg_processing_time = float(processing_time_response["Datapoints"][0].get("Average", 0))
 
         total_jobs = completed_count + failed_count
         duration_minutes = 60.0  # 1 hour window
@@ -174,7 +173,7 @@ def extract_job_metrics_from_cloudwatch(event: dict[str, Any]) -> JobSummary:
             dlq_count=0,  # Would need separate DLQ query
         )
 
-    except Exception as e:
+    except Exception:
         # Fallback to alarm event data if CloudWatch query fails
         return JobSummary(
             total_enqueued=1,
@@ -219,17 +218,13 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
             alarm_description: str = sns_data.get("AlarmDescription", "No description")
             metric_value: float = sns_data.get("NewStateValue", 0)
 
-            message = notifier.format_error_alert(
-                alarm_name, alarm_description, metric_value
-            )
+            message = notifier.format_error_alert(alarm_name, alarm_description, metric_value)
 
         success = notifier.send_message(message)
 
         return {
             "statusCode": 200 if success else 500,
-            "body": json.dumps(
-                {"sent": success, "timestamp": datetime.now(timezone.utc).isoformat()}
-            ),
+            "body": json.dumps({"sent": success, "timestamp": datetime.now(UTC).isoformat()}),
         }
 
     except Exception as e:

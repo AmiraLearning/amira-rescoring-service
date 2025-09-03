@@ -1,36 +1,36 @@
 from .constants import (
-    DeviceType,
-    TokenType,
     BYTES_PER_GB,
     MS_PER_SECOND,
     VALID_PHONETIC_ELEMENTS,
-)
-from .models import (
-    W2VConfig,
-    PreprocessResult,
-    InferenceResult,
-    DecodePredictionResult,
-    ConfidenceResult,
-    InferenceInput,
-    PhoneticTranscript,
-    GPUInferenceResult,
+    DeviceType,
+    TokenType,
 )
 from .engine import Wav2Vec2InferenceEngine, perform_single_audio_inference
+from .models import (
+    ConfidenceResult,
+    DecodePredictionResult,
+    GPUInferenceResult,
+    InferenceInput,
+    InferenceResult,
+    PhoneticTranscript,
+    PreprocessResult,
+    W2VConfig,
+)
 
 __all__ = [
-    "DeviceType",
-    "TokenType",
     "BYTES_PER_GB",
     "MS_PER_SECOND",
     "VALID_PHONETIC_ELEMENTS",
-    "W2VConfig",
-    "PreprocessResult",
-    "InferenceResult",
-    "DecodePredictionResult",
     "ConfidenceResult",
-    "InferenceInput",
-    "PhoneticTranscript",
+    "DecodePredictionResult",
+    "DeviceType",
     "GPUInferenceResult",
+    "InferenceInput",
+    "InferenceResult",
+    "PhoneticTranscript",
+    "PreprocessResult",
+    "TokenType",
+    "W2VConfig",
     "Wav2Vec2InferenceEngine",
     "perform_single_audio_inference",
 ]

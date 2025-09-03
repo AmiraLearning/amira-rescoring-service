@@ -1,29 +1,29 @@
 import time
 import traceback
-from typing import Optional
 
 import numpy as np
 from loguru import logger
 
 try:
-    import tritonclient.http as httpclient  # type: ignore
-    from tritonclient.utils import InferenceServerException  # type: ignore
+    import tritonclient.http as httpclient
+    from tritonclient.utils import InferenceServerException
 
     TRITON_AVAILABLE = True
 except ImportError:
     TRITON_AVAILABLE = False
-    logger.warning(
-        "Triton client not available. Install with: pip install tritonclient[http]"
-    )
+    logger.warning("Triton client not available. Install with: pip install tritonclient[http]")
+
+import torch
+from transformers import Wav2Vec2Processor
 
 from .constants import MS_PER_SECOND, DeviceType
-from .models import (
-    W2VConfig,
-    InferenceInput,
-    GPUInferenceResult,
-    PhoneticTranscript,
-)
 from .decoder import PhonemeDecoder
+from .models import (
+    GPUInferenceResult,
+    InferenceInput,
+    PhoneticTranscript,
+    W2VConfig,
+)
 
 
 class TritonInferenceEngine:
@@ -37,27 +37,38 @@ class TritonInferenceEngine:
 
         self._w2v_config = w2v_config
         self._decoder = PhonemeDecoder()
-
-        # Initialize Triton client
+        self._processor: Wav2Vec2Processor | None = None
         try:
+            # Load only the processor/tokenizer for decoding; model stays on Triton
+            self._processor = Wav2Vec2Processor.from_pretrained(w2v_config.model_path)
+            logger.info("Loaded W2V2 processor for Triton decoding")
+        except Exception as e:
+            logger.warning(f"Failed to load W2V2 processor for decoding (continuing without): {e}")
+
+        try:
+            raw_url = w2v_config.triton_url
+            if not isinstance(raw_url, str) or not raw_url.strip():
+                raise ValueError("Triton URL must be a non-empty https URL")
+            url_lower = raw_url.lower().strip()
+            if url_lower.startswith("http://"):
+                raise ValueError("Insecure Triton URL (http://) is not allowed. Use https://")
+            if not url_lower.startswith("https://"):
+                raise ValueError("Triton URL must start with https://")
+
+            host = raw_url.replace("https://", "", 1)
             self._client = httpclient.InferenceServerClient(
-                url=w2v_config.triton_url.replace("http://", "").replace(
-                    "https://", ""
-                ),
+                url=host,
                 verbose=False,
+                ssl=True,
             )
 
             # Verify server is ready
             if not self._client.is_server_ready():
-                raise ConnectionError(
-                    f"Triton server not ready at {w2v_config.triton_url}"
-                )
+                raise ConnectionError(f"Triton server not ready at {w2v_config.triton_url}")
 
             # Verify model is ready
             if not self._client.is_model_ready(w2v_config.triton_model):
-                raise ConnectionError(
-                    f"Triton model '{w2v_config.triton_model}' not ready"
-                )
+                raise ConnectionError(f"Triton model '{w2v_config.triton_model}' not ready")
 
             logger.info(f"Connected to Triton server at {w2v_config.triton_url}")
 
@@ -111,12 +122,25 @@ class TritonInferenceEngine:
 
             # Decode predictions
             decode_start = time.time()
-            predicted_ids = np.argmax(logits, axis=-1)
+            predicted_ids = np.argmax(logits, axis=-1)  # [B, T]
 
-            # For now, we'll do basic decoding without the full processor
-            # In a real implementation, you'd want to have the vocabulary/tokenizer available
-            result.transcription = ""  # Would need tokenizer to decode properly
-            result.pred_tokens = []  # Would need tokenizer to get tokens
+            # Use local tokenizer to convert IDs to tokens and transcription if available
+            if self._processor is not None:
+                try:
+                    ids_tensor = torch.tensor(predicted_ids, dtype=torch.long)
+                    # Transcription via processor (CTC decode)
+                    transcription = self._processor.batch_decode(ids_tensor)[0]
+                    result.transcription = transcription
+                    # Tokens for phoneme decoding
+                    ids_list = predicted_ids[0].tolist()
+                    result.pred_tokens = self._processor.tokenizer.convert_ids_to_tokens(ids_list)
+                except Exception as e:
+                    logger.warning(f"Decoding with processor failed: {e}")
+                    result.transcription = ""
+                    result.pred_tokens = []
+            else:
+                result.transcription = ""
+                result.pred_tokens = []
 
             result.decode_time_ms = (time.time() - decode_start) * MS_PER_SECOND
 
@@ -128,17 +152,17 @@ class TritonInferenceEngine:
                 probs = exp_logits / np.sum(exp_logits, axis=-1, keepdims=True)
                 max_probs = np.max(probs, axis=-1)[0]  # Remove batch dimension
                 result.max_probs = max_probs
-                result.confidence_calculation_time_ms = (
-                    time.time() - conf_start
-                ) * MS_PER_SECOND
+                result.confidence_calculation_time_ms = (time.time() - conf_start) * MS_PER_SECOND
 
-            # Create phonetic transcript using decoder
-            result.phonetic_transcript = self._decoder.decode(
-                pred_tokens=result.pred_tokens,
-                max_probs=result.max_probs
-                if self._w2v_config.include_confidence
-                else None,
-            )
+            # Create phonetic transcript using decoder (best-effort)
+            try:
+                result.phonetic_transcript = self._decoder.decode(
+                    pred_tokens=result.pred_tokens,
+                    max_probs=result.max_probs if self._w2v_config.include_confidence else None,
+                )
+            except Exception as e:
+                logger.warning(f"Phoneme decoding failed: {e}")
+                result.phonetic_transcript = PhoneticTranscript()
 
             result.total_duration_ms = (time.time() - inference_start) * MS_PER_SECOND
             result.success = True

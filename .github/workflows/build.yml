@@ -6,16 +6,20 @@ on:
   pull_request:
     branches: [main]
 
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   docker-build:
     runs-on: ubuntu-latest
-    
+
     steps:
     - uses: actions/checkout@v4
-    
+
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v3
-    
+
     - name: Build main Docker image
       uses: docker/build-push-action@v5
       with:
@@ -27,12 +31,12 @@ jobs:
         cache-to: type=gha,mode=max
         build-args: |
           BUILDKIT_INLINE_CACHE=1
-    
+
     - name: Test Docker image functionality
       run: |
         # Test basic functionality
         docker run --rm amira-letter-scoring:${{ github.sha }} python main.py --help
-        
+
         # Test Python imports work
         docker run --rm amira-letter-scoring:${{ github.sha }} python -c "
           import my_asr_aligner
@@ -43,13 +47,13 @@ jobs:
   triton-build:
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main'
-    
+
     steps:
     - uses: actions/checkout@v4
-    
+
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v3
-    
+
     - name: Build Triton Docker image
       uses: docker/build-push-action@v5
       with:
@@ -64,18 +68,18 @@ jobs:
 
   rust-build:
     runs-on: ubuntu-latest
-    
+
     steps:
     - uses: actions/checkout@v4
-    
+
     - name: Set up Python
       uses: actions/setup-python@v5
       with:
         python-version: "3.12"
-    
+
     - name: Install Rust toolchain
       uses: dtolnay/rust-toolchain@stable
-    
+
     - name: Cache Rust dependencies
       uses: actions/cache@v4
       with:
@@ -86,25 +90,26 @@ jobs:
         key: ${{ runner.os }}-cargo-${{ hashFiles('my_asr_aligner/Cargo.lock') }}
         restore-keys: |
           ${{ runner.os }}-cargo-
-    
+
     - name: Install uv and maturin
       run: |
         curl -LsSf https://astral.sh/uv/install.sh | sh
+        echo "${HOME}/.local/bin" >> $GITHUB_PATH
         uv tool install maturin
-    
+
     - name: Build wheel with maturin
       working-directory: my_asr_aligner
       run: |
         # Build wheel for distribution
         uv run maturin build --release --out dist
-        
+
         # List built artifacts
         ls -la dist/
-        
+
         # Test wheel installation
         pip install dist/*.whl
         python -c "import my_asr_aligner; print('Wheel installation successful')"
-    
+
     - name: Upload wheel artifacts
       uses: actions/upload-artifact@v4
       with:

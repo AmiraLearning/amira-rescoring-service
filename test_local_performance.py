@@ -3,8 +3,8 @@
 Test the optimized Lambda processor locally to validate blazing fast performance.
 """
 
-import time
 import sys
+import time
 from pathlib import Path
 
 # Add lambda processor to path
@@ -12,18 +12,15 @@ lambda_path = Path(__file__).parent / "lambda" / "parallel_processor"
 sys.path.insert(0, str(lambda_path))
 
 
-def test_cold_start_simulation():
+def test_cold_start_simulation() -> None:
     """Simulate Lambda cold start locally"""
     print("🧪 Testing blazing fast cold start simulation...")
 
     # Simulate fresh Lambda environment
-    import importlib
     import sys
 
     # Clear any cached modules (simulate cold start)
-    modules_to_clear = [
-        m for m in sys.modules.keys() if "torch" in m or "transformers" in m
-    ]
+    modules_to_clear = [m for m in sys.modules.keys() if "torch" in m or "transformers" in m]
     for module in modules_to_clear:
         if module in sys.modules:
             del sys.modules[module]
@@ -33,10 +30,10 @@ def test_cold_start_simulation():
 
     try:
         # Import and initialize (simulate Lambda startup)
-        from index import get_optimized_model, get_config  # type: ignore
-
         # Set required environment variables
         import os
+
+        from index import get_optimized_model
 
         os.environ["RESULTS_BUCKET"] = "test-bucket"
         os.environ["MODEL_PATH"] = "facebook/wav2vec2-base-960h"
@@ -71,8 +68,8 @@ def test_inference_speed(model, processor):
     print("\n🚀 Testing inference speed...")
 
     try:
-        import torch
         import numpy as np
+        import torch
 
         # Create test audio (1 second of random audio)
         test_audio = np.random.randn(16000).astype(np.float32)
@@ -84,9 +81,7 @@ def test_inference_speed(model, processor):
             start_time = time.time()
 
             # Preprocess
-            inputs = processor(
-                test_audio, sampling_rate=16000, return_tensors="pt", padding=True
-            )
+            inputs = processor(test_audio, sampling_rate=16000, return_tensors="pt", padding=True)
 
             # Inference (eager mode - no compilation)
             with torch.no_grad():
@@ -108,7 +103,7 @@ def test_inference_speed(model, processor):
         print(f"❌ Inference test failed: {e}")
 
 
-def test_lambda_handler_locally():
+def test_lambda_handler_locally() -> None:
     """Test the actual Lambda handler locally"""
     print("\n🧪 Testing Lambda handler locally...")
 

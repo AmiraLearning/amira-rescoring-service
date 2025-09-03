@@ -1,14 +1,14 @@
 import json
 import os
 import time
-from typing import Any, AsyncIterator
+from typing import Any
 
 import aioboto3
 import polars as pl
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field
 
-from infra.athena_client import ProductionAthenaClient, AthenaClientConfig
-from infra.sqs_utils import SQSEnqueuer, JobMessage
+from infra.athena_client import AthenaClientConfig, ProductionAthenaClient
+from infra.sqs_utils import JobMessage, SQSEnqueuer
 
 
 class JobEnqueuer(BaseModel):
@@ -76,9 +76,7 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
 
         response = LambdaResponse(
             status_code=200,
-            body=json.dumps(
-                {"enqueued": count, "handlerTime": time.time() - handler_start}
-            ),
+            body=json.dumps({"enqueued": count, "handlerTime": time.time() - handler_start}),
         )
 
         return response.model_dump()
@@ -86,7 +84,5 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
     except Exception as e:
         return LambdaResponse(
             status_code=500,
-            body=json.dumps(
-                {"error": str(e), "handlerTime": time.time() - handler_start}
-            ),
+            body=json.dumps({"error": str(e), "handlerTime": time.time() - handler_start}),
         ).model_dump()

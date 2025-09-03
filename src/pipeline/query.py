@@ -1,15 +1,14 @@
-from pathlib import Path
-from enum import StrEnum
-from typing import Final
-from types import MappingProxyType
 from ast import literal_eval
+from enum import StrEnum
+from pathlib import Path
+from types import MappingProxyType
+from typing import Final
 
-from loguru import logger
 import polars as pl
+from loguru import logger
 
-from utils.config import PipelineConfig
 from infra.athena_client import query_athena
-
+from utils.config import PipelineConfig
 
 ACTIVITY_QUERY: Final[str] = """
     SELECT activityid,
@@ -77,14 +76,10 @@ async def load_activity_data(*, config: PipelineConfig) -> pl.DataFrame:
     result_dir: str = config.result.output_dir
 
     if config.metadata.activity_id:
-        logger.info(
-            f"Loading specific activity via GraphQL: {config.metadata.activity_id}"
-        )
+        logger.info(f"Loading specific activity via GraphQL: {config.metadata.activity_id}")
         from infra.appsync_utils import load_activity_from_graphql
 
-        activity_data = load_activity_from_graphql(
-            activity_id=config.metadata.activity_id
-        )
+        activity_data = load_activity_from_graphql(activity_id=config.metadata.activity_id)
         activity_df: pl.DataFrame = pl.DataFrame(activity_data)
 
         activity_raw_path: Path = Path(result_dir) / "activities.parquet"
@@ -94,9 +89,7 @@ async def load_activity_data(*, config: PipelineConfig) -> pl.DataFrame:
 
         return activity_df
     elif config.metadata.activity_file:
-        logger.info(
-            f"Loading existing activity data from {config.metadata.activity_file}"
-        )
+        logger.info(f"Loading existing activity data from {config.metadata.activity_file}")
         activity_file_path = Path(config.metadata.activity_file)
         if activity_file_path.suffix == ".parquet":
             activity_df = pl.read_parquet(config.metadata.activity_file)
@@ -104,12 +97,8 @@ async def load_activity_data(*, config: PipelineConfig) -> pl.DataFrame:
             activity_df = pl.read_csv(config.metadata.activity_file)
     else:
         logger.info("Fetching activities from data lake")
-        query_start_time = config.metadata.processing_start_time.strftime(
-            "%Y-%m-%d %H:%M:%S"
-        )
-        query_end_time = config.metadata.processing_end_time.strftime(
-            "%Y-%m-%d %H:%M:%S"
-        )
+        query_start_time = config.metadata.processing_start_time.strftime("%Y-%m-%d %H:%M:%S")
+        query_end_time = config.metadata.processing_end_time.strftime("%Y-%m-%d %H:%M:%S")
         logger.info(f"Using time range: {query_start_time} to {query_end_time}")
 
         activity_df = await query_athena(
@@ -171,9 +160,7 @@ def load_story_phrase_data(*, config: PipelineConfig) -> pl.DataFrame:
             f"Unsupported file format: {story_phrase_path.suffix}. Use {FileFormat.PARQUET} or {FileFormat.CSV}"
         )
 
-    REQUIRED_COLUMNS: Final[frozenset[str]] = frozenset(
-        {StoryPhraseColumns.EXPECTED_TEXT}
-    )
+    REQUIRED_COLUMNS: Final[frozenset[str]] = frozenset({StoryPhraseColumns.EXPECTED_TEXT})
     missing_columns: set[str] = set(REQUIRED_COLUMNS) - set(story_phrase_df.columns)
     if missing_columns:
         raise ValueError(f"Missing required columns: {missing_columns}")
@@ -190,7 +177,7 @@ def load_story_phrase_data(*, config: PipelineConfig) -> pl.DataFrame:
 
     logger.info(f"Saving processed story phrases to {story_phrase_path} for future use")
     if story_phrase_path.suffix != FileFormat.PARQUET:
-        logger.info(f"Skipping parquet save due to Object columns in processed data")
+        logger.info("Skipping parquet save due to Object columns in processed data")
 
     logger.info(f"Loaded {story_phrase_df.height} story phrases")
     return story_phrase_df
@@ -220,9 +207,7 @@ async def merge_activities_with_phrases(
     final_count: int = phrase_df.height
 
     if initial_count > final_count:
-        logger.warning(
-            f"Dropped {initial_count - final_count} rows without phrase data"
-        )
+        logger.warning(f"Dropped {initial_count - final_count} rows without phrase data")
 
     logger.info(
         f"Created phrase-level data: {phrase_df.height} phrases from {activity_df.height} activities"

@@ -140,9 +140,7 @@ async def load_and_prepare_data(*, config: PipelineConfig) -> PreparedData:
         activity_df=activity_df, story_phrase_df=story_phrase_df
     )
 
-    logger.info(
-        f"{phrase_df.height} phrases from {activity_df.height} activities to process"
-    )
+    logger.info(f"{phrase_df.height} phrases from {activity_df.height} activities to process")
 
     try:
         engine, _ = await asyncio.gather(preload_task, s3_preload_task)
@@ -262,9 +260,7 @@ async def process_activity(
     # Create combined phonetic transcript
     from src.pipeline.inference.models import PhoneticTranscript
 
-    combined_transcript = PhoneticTranscript(
-        elements=all_elements, confidences=all_confidences
-    )
+    combined_transcript = PhoneticTranscript(elements=all_elements, confidences=all_confidences)
 
     return ProcessedActivity(
         activity_outputs=activity_outputs,
@@ -367,9 +363,7 @@ def perform_alignment(
         ]
 
     # Flatten for summary statistics but keep nested structure for main output
-    flattened_errors = [
-        error for phrase_errors in phrase_errors_nested for error in phrase_errors
-    ]
+    flattened_errors = [error for phrase_errors in phrase_errors_nested for error in phrase_errors]
 
     logger.info(f"Alignment errors by phrase: {phrase_errors_nested}")
 

@@ -1,12 +1,12 @@
+import asyncio
 import json
 import os
 import time
-import asyncio
 from typing import Any
 
 from pydantic import BaseModel, field_validator
 
-from infra.sqs_utils import SQSEnqueuer, JobMessage
+from infra.sqs_utils import JobMessage, SQSEnqueuer
 
 
 class ManualEnqueueRequest(BaseModel):
@@ -44,12 +44,10 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
 
         import aioboto3
 
-        async def enqueue_messages():
+        async def enqueue_messages() -> int:
             session = aioboto3.Session()
             async with session.client("sqs") as sqs_client:
-                enqueuer = SQSEnqueuer(
-                    client=sqs_client, queue_url=os.environ["JOBS_QUEUE_URL"]
-                )
+                enqueuer = SQSEnqueuer(client=sqs_client, queue_url=os.environ["JOBS_QUEUE_URL"])
                 return await enqueuer.enqueue_batch(messages)
 
         count = asyncio.run(enqueue_messages())
@@ -70,7 +68,5 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
     except Exception as e:
         return LambdaResponse(
             status_code=500,
-            body=json.dumps(
-                {"error": str(e), "handlerTime": time.time() - handler_start}
-            ),
+            body=json.dumps({"error": str(e), "handlerTime": time.time() - handler_start}),
         ).model_dump()

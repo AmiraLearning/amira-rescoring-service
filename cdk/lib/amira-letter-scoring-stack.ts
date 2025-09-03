@@ -18,6 +18,7 @@ import * as sns from 'aws-cdk-lib/aws-sns';
 import * as ssm from 'aws-cdk-lib/aws-ssm';
 import * as cw_dash from 'aws-cdk-lib/aws-cloudwatch';
 import * as elbv2 from 'aws-cdk-lib/aws-elasticloadbalancingv2';
+import * as acm from 'aws-cdk-lib/aws-certificatemanager';
 import { Construct } from 'constructs';
 import cwAgentConfig = require('./cw-agent-config.json');
 
@@ -173,6 +174,12 @@ export class AmiraLetterScoringStack extends cdk.Stack {
       default: 'false',
       allowedValues: ['true', 'false'],
       description: 'Whether to enable Triton inference server with GPU resources'
+    });
+
+    const tritonCertArnParam = new cdk.CfnParameter(this, 'TritonCertificateArn', {
+      type: 'String',
+      default: '',
+      description: 'ACM certificate ARN for HTTPS on the Triton ALB (required for TLS)'
     });
 
     // Optional Audio bucket for read-only access
@@ -340,6 +347,11 @@ export class AmiraLetterScoringStack extends cdk.Stack {
       serverAccessLogsBucket: accessLogsBucket,
       serverAccessLogsPrefix: 's3-access-logs/',
       lifecycleRules: [
+        {
+          id: 'IntelligentTieringNow',
+          enabled: true,
+          transitions: [{ storageClass: s3.StorageClass.INTELLIGENT_TIERING, transitionAfter: cdk.Duration.days(0) }]
+        },
         {
           id: 'TransitionToIA',
           enabled: true,
@@ -539,9 +551,10 @@ export class AmiraLetterScoringStack extends cdk.Stack {
       }
     });
 
-    const tritonListener = tritonAlb.addListener('TritonListener', {
-      port: 80,
-      protocol: elbv2.ApplicationProtocol.HTTP,
+    const tritonListener = tritonAlb.addListener('TritonListenerHttps', {
+      port: 443,
+      protocol: elbv2.ApplicationProtocol.HTTPS,
+      certificates: [elbv2.ListenerCertificate.fromArn(tritonCertArnParam.valueAsString)],
       defaultTargetGroups: [tritonTargetGroup]
     });
 
@@ -587,25 +600,25 @@ export class AmiraLetterScoringStack extends cdk.Stack {
     const albRequestMetric = new cw.Metric({
       namespace: 'AWS/ApplicationELB',
       metricName: 'RequestCountPerTarget',
-      dimensionsMap: { 
+      dimensionsMap: {
         LoadBalancer: tritonAlb.loadBalancerFullName,
-        TargetGroup: tritonTargetGroup.targetGroupFullName 
+        TargetGroup: tritonTargetGroup.targetGroupFullName
       },
       statistic: 'Sum',
       period: cdk.Duration.minutes(1)
     });
 
-    scalableTarget.scaleToTrackMetric('TritonRequestTracking', {
+    scalableTarget.scaleToTrackMetric('TritonScaling', {
       customMetric: albRequestMetric,
-      targetValue: 100, // 100 requests per minute per target
-      scaleInCooldown: cdk.Duration.minutes(5),
-      scaleOutCooldown: cdk.Duration.minutes(2)
+      targetValue: 50,
+      scaleInCooldown: cdk.Duration.minutes(2),
+      scaleOutCooldown: cdk.Duration.seconds(30)
     });
 
     // Add output for Triton cluster URL
     new cdk.CfnOutput(this, 'TritonClusterUrl', {
-      value: `http://${tritonAlb.loadBalancerDnsName}`,
-      description: 'URL for Triton GPU inference cluster',
+      value: `https://${tritonAlb.loadBalancerDnsName}`,
+      description: 'HTTPS URL for Triton GPU inference cluster',
       condition: useTritonCondition
     });
 
@@ -764,8 +777,8 @@ export class AmiraLetterScoringStack extends cdk.Stack {
       new cw_dash.GraphWidget({
         title: 'Lambda Invocations/Errors',
         left: [
-          enqueueFn.metricInvocations(),
-          enqueueFn.metricErrors()
+          manualEnqueueFn.metricInvocations(),
+          manualEnqueueFn.metricErrors()
         ],
         right: [
           new cw.Metric({ namespace: 'AWS/Lambda', metricName: 'Invocations', dimensionsMap: { FunctionName: 'EcsDrainOnSpotFn' }, statistic: 'Sum' }),
