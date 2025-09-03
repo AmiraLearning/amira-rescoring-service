@@ -30,3 +30,30 @@ def test_word_level_alignment_with_errors() -> None:
     assert len(words) == len(hyp)
     assert any(errors)
     assert all(c >= 0.0 for c in matched_conf)
+
+
+@pytest.mark.skipif(word_level_alignment is None, reason="aligner extension not built")
+def test_word_level_alignment_pure_insertion_exposed() -> None:
+    expected = ["a_letter"]
+    ref = ["a"]
+    hyp = ["a", "b"]
+    conf = [0.9, 0.33]
+
+    words, errors, matched_conf = word_level_alignment(expected, ref, hyp, conf)
+    assert words == hyp
+    assert len(errors) == 2
+    assert matched_conf[1] == pytest.approx(0.33, rel=1e-6)
+
+
+@pytest.mark.skipif(word_level_alignment is None, reason="aligner extension not built")
+def test_word_level_alignment_confidence_weighting_halves_error_confidence() -> None:
+    expected = ["a_letter"]
+    ref = ["a"]
+    hyp = ["x"]  # invalid phoneme for a_letter -> error
+    conf = [0.8]
+
+    words, errors, matched_conf = word_level_alignment(
+        expected, ref, hyp, conf, enable_confidence_weighting=True
+    )
+    assert errors == [True]
+    assert matched_conf[0] == pytest.approx(0.4, rel=1e-6)

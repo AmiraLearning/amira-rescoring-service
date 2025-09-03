@@ -8,8 +8,8 @@ def test_group_activities_by_id_basic() -> None:
         {
             "activityId": ["a1", "a1", "a2"],
             "phraseIndex": [0, 1, 0],
-            "expected_text": [["cat"], ["sat"], [["dog"]]],
-            "reference_phonemes": [["k", "æ", "t"], ["s", "æ", "t"], [["d", "ɔ", "g"]]],
+            "expected_text": [["cat"], ["sat"], ["dog"]],
+            "reference_phonemes": [["k", "æ", "t"], ["s", "æ", "t"], ["d", "ɔ", "g"]],
         }
     )
 

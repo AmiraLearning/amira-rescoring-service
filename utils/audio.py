@@ -10,7 +10,7 @@ import numpy as np
 import torch
 import torchaudio
 from loguru import logger
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from infra.s3_client import ProductionS3Client, S3OperationResult
 from utils.config import S3_SPEECH_ROOT_PROD
@@ -172,8 +172,7 @@ class PaddedAudioSaveRequest(BaseModel):
     activity_id: str = Field(..., description="Activity identifier for logging")
     phrase_index: int = Field(..., ge=0, description="Phrase index for logging")
 
-    class Config:
-        arbitrary_types_allowed = True
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
 
 class PadAudioRequest(BaseModel):

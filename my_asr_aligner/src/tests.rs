@@ -41,6 +41,52 @@ mod tests {
     }
 
     #[test]
+    fn test_pure_insertion_is_retained_and_confidence_preserved() {
+        let expected_items = vec!["a_letter".to_string()];
+        let ref_phons = vec!["a".to_string()];
+        let hyp_phons = vec!["a".to_string(), "b".to_string()];
+        let confidences = vec![0.9, 0.7];
+
+        let result = word_level_alignment_core(
+            expected_items,
+            ref_phons,
+            hyp_phons.clone(),
+            confidences.clone(),
+        );
+        assert!(result.is_ok());
+
+        let (alignment, errors, confs) = result.unwrap();
+        assert_eq!(alignment.len(), 2);
+        assert_eq!(alignment[0], "a");
+        assert_eq!(alignment[1], "b");
+        assert_eq!(confs[1], 0.7);
+        assert_eq!(errors.len(), 2);
+        assert!(errors[1]);
+    }
+
+    #[test]
+    fn test_substitution_preserves_hyp_confidence_when_accepted() {
+        let expected_items = vec!["a_letter".to_string(), "a_letter".to_string()];
+        let ref_phons = vec!["a".to_string(), "a".to_string()];
+        let hyp_phons = vec!["a".to_string(), "ɛ".to_string()];
+        let confidences = vec![0.9, 0.42];
+
+        let result = word_level_alignment_core(
+            expected_items,
+            ref_phons,
+            hyp_phons.clone(),
+            confidences.clone(),
+        );
+        assert!(result.is_ok());
+        let (alignment, errors, confs) = result.unwrap();
+
+        assert_eq!(alignment.len(), 2);
+        assert_eq!(alignment[1], "ɛ");
+        assert_eq!(errors[1], false);
+        assert!((confs[1] - 0.42).abs() < 1e-6);
+    }
+
+    #[test]
     fn test_error_phonemes() {
         let expected_items = vec!["a_letter".to_string()];
         let ref_phons = vec!["a".to_string()];

@@ -9,6 +9,8 @@
     "test": "jest",
     "cdk": "cdk",
     "clean": "rm -rf dist cdk.out",
+    "lint": "eslint . --ext .ts",
+    "lint:fix": "eslint . --ext .ts --fix",
     "deploy": "cdk deploy -a 'node dist/bin/amira-letter-scoring.js'",
     "destroy": "cdk destroy -a 'node dist/bin/amira-letter-scoring.js'",
     "deploy-parallel": "cdk deploy -a 'node dist/bin/amira-lambda-parallel.js' AmiraLambdaParallelStack",
@@ -17,6 +19,9 @@
   "devDependencies": {
     "@types/jest": "^29.5.5",
     "@types/node": "20.6.2",
+    "@typescript-eslint/eslint-plugin": "^6.0.0",
+    "@typescript-eslint/parser": "^6.0.0",
+    "eslint": "^8.0.0",
     "jest": "^29.7.0",
     "ts-jest": "^29.1.1",
     "typescript": "~5.2.2"

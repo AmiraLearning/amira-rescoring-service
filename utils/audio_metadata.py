@@ -8,7 +8,7 @@ import re
 from typing import Any
 
 from loguru import logger
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from infra.s3_client import ProductionS3Client
 
@@ -30,8 +30,7 @@ class SegmentMetadataResult(BaseModel):
     num_phrases: int
     success: bool
 
-    class Config:
-        arbitrary_types_allowed = True
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
 
 def _parse_segment_filename(filename: str) -> SegmentHead:

@@ -92,10 +92,8 @@ class Wav2Vec2InferenceEngine:
         self._traced_model = None
         logger.info(f"Initializing Wav2Vec2 model from {w2v_config.model_path}...")
 
-        # For cold start optimization, load model and processor in parallel
         if model_instance is None or processor_instance is None:
             self._model, self._processor = self._load_model_and_processor_parallel()
-            # Use provided instances if available
             if model_instance is not None:
                 self._model = model_instance
             if processor_instance is not None:
@@ -119,17 +117,15 @@ class Wav2Vec2InferenceEngine:
         start_time = time.time()
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
-            # Submit both loading tasks
             model_future = executor.submit(
                 Wav2Vec2ForCTC.from_pretrained,
                 self._w2v_config.model_path,
-                use_safetensors=True,  # Use safetensors if available
+                use_safetensors=True,
             )
             processor_future = executor.submit(
                 Wav2Vec2Processor.from_pretrained, self._w2v_config.model_path
             )
 
-            # Wait for both to complete
             model = model_future.result()
             processor = processor_future.result()
 
@@ -205,7 +201,6 @@ class Wav2Vec2InferenceEngine:
         logger.info(f"Model loaded on {self._device}")
         self._log_gpu_memory_usage()
 
-        # Skip expensive optimizations if fast_init is enabled (cold start optimization)
         if self._w2v_config.use_jit_trace and not self._w2v_config.fast_init:
             self._init_jit_trace()
         elif self._w2v_config.fast_init:
@@ -362,7 +357,6 @@ class Wav2Vec2InferenceEngine:
                 audio_array=input_data.audio_array
             )
             result.preprocess_time_ms = preprocess_result.preprocess_time_ms
-            # inference_mode has lower overhead than no_grad for pure inference
             with torch.inference_mode():
                 inference_result: InferenceResult = self._run_model_inference(
                     input_values=preprocess_result.input_values
@@ -415,16 +409,13 @@ class Wav2Vec2InferenceEngine:
             logger.error(f"Traceback: {traceback.format_exc()}")
 
             # TODO ugly code, but it's a workaround for a known issue with MPS
-            # If MPS fails with convolution error, try fallback to CPU
             if "convolution_overrideable not implemented" in str(e) and self._device.type == "mps":
                 logger.warning("MPS convolution failed, falling back to CPU for this inference")
                 try:
-                    # Temporarily move model to CPU
                     original_device = self._device
                     self._device = torch.device("cpu")
                     self._model = self._model.to(self._device)
 
-                    # Retry inference on CPU
                     inference_start = time.time()
                     preprocess_result = self._preprocess_audio(audio_array=input_data.audio_array)
                     result.preprocess_time_ms = preprocess_result.preprocess_time_ms
@@ -445,7 +436,6 @@ class Wav2Vec2InferenceEngine:
                     result.total_duration_ms = (time.time() - inference_start) * MS_PER_SECOND
                     result.success = True
 
-                    # Move model back to original device
                     self._device = original_device
                     self._model = self._model.to(self._device)
                     logger.info("CPU fallback inference successful")
@@ -453,7 +443,7 @@ class Wav2Vec2InferenceEngine:
                 except Exception as fallback_e:
                     logger.error(f"CPU fallback also failed: {fallback_e}")
                     result.success = False
-                    result.error = str(e)  # Original error
+                    result.error = str(e)
             else:
                 result.success = False
                 result.error = str(e)

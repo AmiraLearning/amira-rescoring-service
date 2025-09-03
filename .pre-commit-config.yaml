@@ -26,4 +26,30 @@ repos:
     rev: v6.0.0
     hooks:
       - id: end-of-file-fixer
+        exclude: '^cdk/dist/.*'
       - id: trailing-whitespace
+        exclude: '^cdk/dist/.*'
+
+  # TypeScript/CDK checks
+  - repo: local
+    hooks:
+      - id: cdk-typescript-build
+        name: CDK TypeScript Build
+        entry: bash -c 'cd cdk && npm run build'
+        language: system
+        files: '^cdk/.*\.(ts|js|json)$'
+        pass_filenames: false
+
+      - id: cdk-synth-check
+        name: CDK Synth Validation
+        entry: bash -c 'cd cdk && npx cdk synth --quiet > /dev/null'
+        language: system
+        files: '^cdk/lib/.*\.ts$'
+        pass_filenames: false
+
+      - id: eslint-typescript
+        name: ESLint TypeScript
+        entry: bash -c 'cd cdk && npm run lint'
+        language: system
+        files: '^cdk/.*\.ts$'
+        pass_filenames: false

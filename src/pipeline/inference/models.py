@@ -49,28 +49,55 @@ class W2VConfig(BaseModel):
         if self.use_triton:
             raw: str = self.triton_url
             if not isinstance(raw, str) or not raw.strip():
-                raise ValueError("triton_url must be a non-empty https URL when use_triton=true")
+                raise ValueError(
+                    "triton_url must be a non-empty https URL when use_triton=true (must use HTTPS)"
+                )
             url_lower: str = raw.strip().lower()
             if url_lower.startswith("http://"):
-                raise ValueError("triton_url must use https://, http:// is not allowed")
+                raise ValueError(
+                    "triton_url must use https:// (must use HTTPS), http:// is not allowed"
+                )
             if not url_lower.startswith("https://"):
-                raise ValueError("triton_url must start with https://")
+                raise ValueError("triton_url must start with https:// (must use HTTPS)")
         return self
 
 
 class PreprocessResult(BaseModel):
+    """The result of preprocessing the audio.
+
+    Args:
+        input_values: The input values.
+        preprocess_time_ms: The time taken to preprocess the audio.
+    """
+
     input_values: torch.Tensor
     preprocess_time_ms: float
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
 
 class InferenceResult(BaseModel):
+    """The result of the model inference.
+
+    Args:
+        logits: The logits.
+        model_inference_time_ms: The time taken to run the model inference.
+    """
+
     logits: torch.Tensor
     model_inference_time_ms: float
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
 
 class DecodePredictionResult(BaseModel):
+    """The result of decoding the predictions.
+
+    Args:
+        transcription: The transcription.
+        pred_tokens: The predicted tokens.
+        predicted_ids: The predicted ids.
+        decode_time_ms: The time taken to decode the predictions.
+    """
+
     transcription: str
     pred_tokens: list[str]
     predicted_ids: torch.Tensor
@@ -79,12 +106,27 @@ class DecodePredictionResult(BaseModel):
 
 
 class ConfidenceResult(BaseModel):
+    """The result of calculating the confidence.
+
+    Args:
+        max_probs: The max probabilities.
+        confidence_time_ms: The time taken to calculate the confidence.
+    """
+
     max_probs: np.ndarray
     confidence_time_ms: float
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
 
 class InferenceInput(BaseModel):
+    """The input for the inference.
+
+    Args:
+        audio_array: The audio array.
+        inference_id: The inference id.
+        correlation_id: The correlation id.
+    """
+
     audio_array: np.ndarray
     inference_id: str | None = None
     correlation_id: str | None = None
@@ -92,15 +134,48 @@ class InferenceInput(BaseModel):
 
 
 class PhoneticTranscript(BaseModel):
+    """The phonetic transcript.
+
+    Args:
+        elements: The elements.
+        confidences: The confidences.
+    """
+
     elements: list[str] = Field(default_factory=list)
     confidences: list[float] = Field(default_factory=list)
 
     @field_serializer("confidences")
     def _serialize_confidences(self, value: list[float]) -> list[float]:
+        """Serialize the confidences.
+
+        Args:
+            value: The value to serialize.
+
+        Returns:
+            The serialized value.
+        """
         return list(value)
 
 
 class GPUInferenceResult(BaseModel):
+    """The result of the GPU inference.
+
+    Args:
+        transcription: The transcription.
+        pred_tokens: The predicted tokens.
+        max_probs: The max probabilities.
+        phonetic_transcript: The phonetic transcript.
+        total_duration_ms: The total duration of the inference.
+        preprocess_time_ms: The time taken to preprocess the audio.
+        model_inference_time_ms: The time taken to run the model inference.
+        decode_time_ms: The time taken to decode the predictions.
+        confidence_calculation_time_ms: The time taken to calculate the confidence.
+        device: The device.
+        success: The success.
+        error: The error.
+        inference_id: The inference id.
+    """
+
     transcription: str | None = None
     pred_tokens: list[str] = Field(default_factory=list)
     max_probs: np.ndarray | None = None
@@ -117,6 +192,14 @@ class GPUInferenceResult(BaseModel):
 
     @field_serializer("max_probs")
     def _serialize_max_probs(self, value: np.ndarray | None) -> list[float] | None:
+        """Serialize the max probabilities.
+
+        Args:
+            value: The value to serialize.
+
+        Returns:
+            The serialized value.
+        """
         if value is None:
             return None
         return value.tolist()
@@ -126,11 +209,25 @@ class GPUInferenceResult(BaseModel):
 
 @dataclass(frozen=True)
 class GroupedPhoneticUnits:
+    """The grouped phonetic units.
+
+    Args:
+        tokens: The tokens.
+        confidences: The confidences.
+    """
+
     tokens: list[str]
     confidences: list[float]
 
 
 @dataclass(frozen=True)
 class Segment:
+    """The segment.
+
+    Args:
+        tokens: The tokens.
+        confidences: The confidences.
+    """
+
     tokens: list[str]
     confidences: list[np.ndarray]

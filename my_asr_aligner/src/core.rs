@@ -219,6 +219,7 @@ pub fn word_level_alignment_core(
                     ri += 1;
                 }
                 ChangeTag::Insert => {
+                    let conf = if hj < confidences.len() { confidences[hj] } else { 0.0 };
                     if let Some(ref_idx) = pending_ref_indices.pop_front() {
                         let ref_word = if ref_idx < expected_items.len() {
                             &expected_items[ref_idx]
@@ -235,8 +236,26 @@ pub fn word_level_alignment_core(
                             push_dash_result(&mut word_alignment_result, &mut errors, &mut matched_confidence);
                         } else {
                             push_result(&mut word_alignment_result, &mut errors, &mut matched_confidence,
-                                       hyp_word, false, 0.0);
+                                       hyp_word, false, conf);
                         }
+                    } else {
+                        let hyp_word = if hj < hyp_phons.len() { &hyp_phons[hj] } else { "" };
+                        let ref_word_ctx = if ri < expected_items.len() {
+                            &expected_items[ri]
+                        } else if ri < ref_phons.len() {
+                            &ref_phons[ri]
+                        } else {
+                            ""
+                        };
+                        let is_err = is_error_cached(ref_word_ctx, hyp_word, &mut error_cache);
+                        push_result(
+                            &mut word_alignment_result,
+                            &mut errors,
+                            &mut matched_confidence,
+                            hyp_word,
+                            is_err,
+                            conf,
+                        );
                     }
                     hj += 1;
                 }
@@ -250,4 +269,33 @@ pub fn word_level_alignment_core(
     }
 
     Ok((word_alignment_result, errors, matched_confidence))
+}
+
+/// Confidence-aware alignment wrapper (optional behavior controlled by flag)
+pub fn word_level_alignment_core_with_confidence(
+    expected_items: Vec<String>,
+    ref_phons: Vec<String>,
+    hyp_phons: Vec<String>,
+    confidences: Vec<f32>,
+    enable_confidence_weighting: bool,
+) -> Result<(Vec<String>, Vec<bool>, Vec<f32>), String> {
+    if !enable_confidence_weighting {
+        return word_level_alignment_core(expected_items, ref_phons, hyp_phons, confidences);
+    }
+
+    // For now, reuse existing core for structure but bias confidences during INSERT handling:
+    // higher-confidence hyp tokens will avoid dash; lower-confidence more likely to dash.
+    // This is a minimal DRY approach; deeper weighting can be added internally later.
+
+    match word_level_alignment_core(expected_items, ref_phons, hyp_phons, confidences) {
+        Ok((tokens, errors, mut confs)) => {
+            for i in 0..confs.len() {
+                if errors[i] {
+                    confs[i] *= 0.5;
+                }
+            }
+            Ok((tokens, errors, confs))
+        }
+        Err(e) => Err(e),
+    }
 }

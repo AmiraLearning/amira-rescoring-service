@@ -346,7 +346,10 @@ async def process_activity(
 
 
 def perform_alignment(
-    *, activity_outputs: ActivityOutput | None, phonetic_transcript: PhoneticTranscript | None
+    *,
+    activity_outputs: ActivityOutput | None,
+    phonetic_transcript: PhoneticTranscript | None,
+    enable_confidence_weighting: bool = False,
 ) -> Any:
     """
     Perform alignment and error analysis.
@@ -409,6 +412,7 @@ def perform_alignment(
             ref_phons=all_reference_phonemes,
             hyp_phons=phonetic_transcript.elements,
             confidences=phonetic_transcript.confidences,
+            enable_confidence_weighting=enable_confidence_weighting,
         )
 
         phrase_errors_nested: list[list[bool]] = []
@@ -490,6 +494,7 @@ async def process_single_activity(
     errors: Any = perform_alignment(
         activity_outputs=processed_activity.activity_outputs,
         phonetic_transcript=processed_activity.phonetic_transcript,
+        enable_confidence_weighting=getattr(config, "enable_confidence_weighting", False),
     )
 
     total_ms: float = (time.time() - activity_start) * 1_000.0

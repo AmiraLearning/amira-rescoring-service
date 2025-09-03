@@ -113,6 +113,7 @@ class PipelineConfig(BaseModel):
     w2v2: W2VConfig = Field(default_factory=W2VConfig)
     aws: AwsConfig = Field(default_factory=AwsConfig)
     phrase_to_align: list[int] = Field(default_factory=lambda: [4, 11])
+    enable_confidence_weighting: bool = False
 
     @model_validator(mode="after")
     def validate_config_consistency(self) -> "PipelineConfig":
@@ -198,6 +199,10 @@ def load_config(*, config_path: str | None = None) -> PipelineConfig:
         config.aws.aws_region = region_env
         # Keep alias in sync
         config.aws.region = region_env
+    if os.getenv("ALIGNER_CONFIDENCE_WEIGHTING"):
+        config.enable_confidence_weighting = os.getenv(
+            "ALIGNER_CONFIDENCE_WEIGHTING", "false"
+        ).lower() in {"1", "true", "yes", "on"}
 
     # Validate runtime requirements
     try:
