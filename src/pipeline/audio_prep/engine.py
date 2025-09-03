@@ -130,7 +130,7 @@ class AudioPreparationEngine:
             futures = {pool.submit(_work, p): p.phraseIndex for p in phrases}
             for fut in as_completed(futures):
                 phrase_index = futures[fut]
-                idx, processed_phrase, err = fut.result()
+                _, processed_phrase, err = fut.result()
                 if err is not None:
                     output.phrases_failed += 1
                     logger.error(f"Error processing phrase {phrase_index}: {err}")
@@ -371,7 +371,6 @@ class AudioPreparationEngine:
             f"Processing phrase {phrase_data.phraseIndex} with complete audio for {activity_id}"
         )
 
-        # Use the same logic as regular phrase processing to load the individual phrase slice
         request: PadAudioRequest = PadAudioRequest(
             audio_dir=self._audio_base_dir,
             activity_id=activity_id,

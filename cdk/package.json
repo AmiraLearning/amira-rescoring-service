@@ -2,16 +2,16 @@
   "name": "amira-letter-scoring-cdk",
   "version": "1.0.0",
   "description": "CDK infrastructure for Amira Letter Scoring GPU pipeline",
-  "main": "lib/amira-letter-scoring-stack.js",
+  "main": "dist/amira-letter-scoring-stack.js",
   "scripts": {
     "build": "tsc",
     "watch": "tsc -w",
     "test": "jest",
     "cdk": "cdk",
-    "deploy": "cdk deploy -a 'npx ts-node --prefer-ts-exts bin/amira-letter-scoring.ts'",
-    "destroy": "cdk destroy -a 'npx ts-node --prefer-ts-exts bin/amira-letter-scoring.ts'",
-    "deploy-parallel": "cdk deploy -a 'npx ts-node --prefer-ts-exts bin/amira-lambda-parallel.ts' AmiraLambdaParallelStack",
-    "destroy-parallel": "cdk destroy -a 'npx ts-node --prefer-ts-exts bin/amira-lambda-parallel.ts' AmiraLambdaParallelStack"
+    "deploy": "cdk deploy -a 'node dist/bin/amira-letter-scoring.js'",
+    "destroy": "cdk destroy -a 'node dist/bin/amira-letter-scoring.js'",
+    "deploy-parallel": "cdk deploy -a 'node dist/bin/amira-lambda-parallel.js' AmiraLambdaParallelStack",
+    "destroy-parallel": "cdk destroy -a 'node dist/bin/amira-lambda-parallel.js' AmiraLambdaParallelStack"
   },
   "devDependencies": {
     "@types/jest": "^29.5.5",

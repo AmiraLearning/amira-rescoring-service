@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from typing import Any
 
 import numpy as np
@@ -16,9 +14,8 @@ class PhraseInput(BaseModel):
     studentId: str | None = None
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> PhraseInput:
-        # Extract only the fields that PhraseInput expects
-        filtered_data = {
+    def from_dict(cls, data: dict[str, Any]) -> "PhraseInput":
+        filtered_data: dict[str, Any] = {
             "phraseIndex": data["phraseIndex"],
             "reference_phonemes": data.get("reference_phonemes", []),
             "expected_text": data.get("expected_text", []),

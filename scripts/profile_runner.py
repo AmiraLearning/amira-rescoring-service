@@ -16,10 +16,9 @@ def profile_main(script_args: list[str], output_name: str = "profile") -> None:
 
     output_file = prof_dir / f"{output_name}.prof"
 
-    # Prepare command to profile
     sys.argv = ["main.py", *script_args]
 
-    # Import and run main
+    # TODO nuke this
     sys.path.insert(0, str(Path(__file__).parent.parent))
 
     profiler = cProfile.Profile()

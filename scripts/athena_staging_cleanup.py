@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import argparse
 import os
 from datetime import UTC, datetime, timedelta

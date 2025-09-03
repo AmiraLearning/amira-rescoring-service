@@ -18,8 +18,6 @@ from src.pipeline.pipeline import run_activity_pipeline
 from utils.extract_phrases import extract_phrase_slices_tutor_style
 from utils.logging import emit_emf_metric, setup_logging
 
-# from src.pipeline.inference.engine import Wav2Vec2InferenceEngine, W2VConfig
-
 
 class SQSMessage(BaseModel):
     """SQS message.
@@ -180,8 +178,7 @@ def get_required_env(name: str) -> str:
     if not re.match(r"^[A-Z_][A-Z0-9_]*$", name):
         raise ValueError(f"Invalid environment variable name: {name}")
 
-    value = os.getenv(name)
-    if not value:
+    if not (value := os.getenv(name)):
         raise RuntimeError(f"Missing required environment variable: {name}")
 
     if len(value) > 2048:
@@ -256,11 +253,9 @@ async def process_message(*, msg: SQSMessage, config: WorkerConfig, s3_client: A
             return
 
     try:
-        # Convert worker config to pipeline config and scope to this activity
         pipeline_config = config.to_pipeline_config()
         pipeline_config.metadata.activity_id = msg.activityId
 
-        # Run the full activity pipeline for the single activity
         await run_activity_pipeline(config=pipeline_config)
 
         processing_time = time.time() - start_time

@@ -16,10 +16,8 @@ from infra.s3_client import ProductionS3Client, S3OperationResult
 from utils.config import S3_SPEECH_ROOT_PROD
 from utils.extract_phrases import extract_phrase_slices_tutor_style
 
-# Suppress noisy torchaudio deprecation warnings globally
 warnings.filterwarnings("ignore", category=UserWarning, module=r"torchaudio(\..*)?")
 
-# Use the recommended torchaudio loading function
 try:
     import torchaudio.load_with_torchcodec
 
@@ -447,7 +445,9 @@ def load_complete_audio_in_memory(*, audio_dir: str, activity_id: str) -> np.nda
         Complete audio array or None if loading fails.
     """
     try:
-        complete_audio_path = Path(audio_dir) / "complete_audio" / activity_id / "complete.wav"
+        complete_audio_path: Path = (
+            Path(audio_dir) / "complete_audio" / activity_id / "complete.wav"
+        )
 
         if not complete_audio_path.exists():
             logger.warning(f"Complete audio file not found: {complete_audio_path}")
@@ -499,7 +499,7 @@ def prefetch_activity_phrase_audio(*, audio_dir: str, activity_id: str) -> None:
         activity_id: Activity ID whose phrases to prefetch.
     """
     try:
-        phrase_dir = (
+        phrase_dir: Path = (
             Path(audio_dir) / RECONSTITUTED_AUDIO_SUBDIR / DEFAULT_AUDIO_SUBDIR / activity_id
         )
         if not phrase_dir.exists():

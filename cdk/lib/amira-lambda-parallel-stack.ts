@@ -1,5 +1,6 @@
 import * as cdk from 'aws-cdk-lib';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
+import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import * as sqs from 'aws-cdk-lib/aws-sqs';
 import * as s3 from 'aws-cdk-lib/aws-s3';
 import * as iam from 'aws-cdk-lib/aws-iam';
@@ -8,10 +9,12 @@ import * as targets from 'aws-cdk-lib/aws-events-targets';
 import * as sources from 'aws-cdk-lib/aws-lambda-event-sources';
 import * as kms from 'aws-cdk-lib/aws-kms';
 import * as logs from 'aws-cdk-lib/aws-logs';
+import * as ssm from 'aws-cdk-lib/aws-ssm';
 import * as cw from 'aws-cdk-lib/aws-cloudwatch';
 import * as sns from 'aws-cdk-lib/aws-sns';
 import * as sns_subscriptions from 'aws-cdk-lib/aws-sns-subscriptions';
 import * as cwactions from 'aws-cdk-lib/aws-cloudwatch-actions';
+import * as cr from 'aws-cdk-lib/custom-resources';
 import { Construct } from 'constructs';
 
 export class AmiraLambdaParallelStack extends cdk.Stack {
@@ -58,7 +61,36 @@ export class AmiraLambdaParallelStack extends cdk.Stack {
     const tritonClusterUrlParam = new cdk.CfnParameter(this, 'TritonClusterUrl', {
       type: 'String',
       default: '',
-      description: 'Optional Triton GPU cluster URL for remote inference. Leave blank for CPU-only mode.'
+      description: 'Optional Triton GPU cluster URL for remote inference. Leave blank to auto-resolve from SSM parameter /amira/triton_alb_url.'
+    });
+
+    const enableTritonParam = new cdk.CfnParameter(this, 'EnableTriton', {
+      type: 'String',
+      default: 'false',
+      allowedValues: ['true', 'false'],
+      description: 'Enable calling a Triton cluster (internal ALB) from the processing Lambda'
+    });
+
+    // Optional VPC attachment for calling internal ALB directly
+    const vpcIdParam = new cdk.CfnParameter(this, 'VpcId', {
+      type: 'AWS::EC2::VPC::Id',
+      default: cdk.Aws.NO_VALUE as any,
+      description: 'VPC ID to attach the processing Lambda to (for internal ALB access)'
+    });
+    const privateSubnetIdsCsvParam = new cdk.CfnParameter(this, 'PrivateSubnetIdsCsv', {
+      type: 'List<AWS::EC2::Subnet::Id>',
+      description: 'Private subnet IDs for the Lambda VPC config'
+    });
+    const lambdaSecurityGroupIdParam = new cdk.CfnParameter(this, 'LambdaSecurityGroupId', {
+      type: 'String',
+      default: cdk.Aws.NO_VALUE as any,
+      description: 'Optional existing Security Group ID for the processing Lambda'
+    });
+    const vpcProvided = new cdk.CfnCondition(this, 'VpcProvided', {
+      expression: cdk.Fn.conditionNot(cdk.Fn.conditionEquals(vpcIdParam.valueAsString, ''))
+    });
+    const lambdaSgProvided = new cdk.CfnCondition(this, 'LambdaSgProvided', {
+      expression: cdk.Fn.conditionNot(cdk.Fn.conditionEquals(lambdaSecurityGroupIdParam.valueAsString, ''))
     });
 
     // KMS key for encryption
@@ -68,12 +100,22 @@ export class AmiraLambdaParallelStack extends cdk.Stack {
     });
 
     // Results bucket
+    const accessLogsBucket = new s3.Bucket(this, 'LambdaAccessLogsBucket', {
+      versioned: false,
+      blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
+      encryption: s3.BucketEncryption.S3_MANAGED,
+      enforceSSL: true,
+      removalPolicy: cdk.RemovalPolicy.RETAIN
+    });
+
     const resultsBucket = new s3.Bucket(this, 'ResultsBucket', {
       versioned: false,
       blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
       encryption: s3.BucketEncryption.KMS,
       encryptionKey: kmsKey,
       bucketKeyEnabled: true,
+      serverAccessLogsBucket: accessLogsBucket,
+      serverAccessLogsPrefix: 's3-access-logs/',
       enforceSSL: true,
       lifecycleRules: [
         {
@@ -100,6 +142,22 @@ export class AmiraLambdaParallelStack extends cdk.Stack {
       ],
       removalPolicy: cdk.RemovalPolicy.RETAIN
     });
+    resultsBucket.addToResourcePolicy(new iam.PolicyStatement({
+      sid: 'DenyInsecureTransport',
+      effect: iam.Effect.DENY,
+      principals: [new iam.AnyPrincipal()],
+      actions: ['s3:*'],
+      resources: [resultsBucket.bucketArn, `${resultsBucket.bucketArn}/*`],
+      conditions: { Bool: { 'aws:SecureTransport': 'false' } }
+    }));
+    resultsBucket.addToResourcePolicy(new iam.PolicyStatement({
+      sid: 'DenyUnEncryptedObjectUploads',
+      effect: iam.Effect.DENY,
+      principals: [new iam.AnyPrincipal()],
+      actions: ['s3:PutObject'],
+      resources: [`${resultsBucket.bucketArn}/*`],
+      conditions: { StringNotEquals: { 's3:x-amz-server-side-encryption': 'aws:kms' } }
+    }));
 
     // SQS Dead Letter Queue
     const dlq = new sqs.Queue(this, 'ProcessingDLQ', {
@@ -111,7 +169,7 @@ export class AmiraLambdaParallelStack extends cdk.Stack {
 
     // Main SQS queue for tasks
     const tasksQueue = new sqs.Queue(this, 'TasksQueue', {
-      visibilityTimeout: cdk.Duration.minutes(15),
+      visibilityTimeout: cdk.Duration.hours(2),
       deadLetterQueue: { queue: dlq, maxReceiveCount: 3 },
       encryption: sqs.QueueEncryption.KMS,
       encryptionMasterKey: kmsKey,
@@ -134,6 +192,35 @@ export class AmiraLambdaParallelStack extends cdk.Stack {
     const tritonUrlProvided = new cdk.CfnCondition(this, 'TritonUrlProvided', {
       expression: cdk.Fn.conditionNot(cdk.Fn.conditionEquals(tritonClusterUrlParam.valueAsString, ''))
     });
+    const useTritonCond = new cdk.CfnCondition(this, 'UseTritonCond', {
+      expression: cdk.Fn.conditionEquals(enableTritonParam.valueAsString, 'true')
+    });
+
+    // Custom resource to fail fast if SSM /amira/triton_alb_url is missing when Triton URL param is blank
+    const ssmParamName = '/amira/triton_alb_url';
+    const ssmParamArn = cdk.Arn.format({ service: 'ssm', resource: 'parameter', resourceName: 'amira/triton_alb_url' }, this);
+    const tritonUrlSsmCheck = new cr.AwsCustomResource(this, 'TritonUrlSsmCheck', {
+      onCreate: {
+        service: 'SSM',
+        action: 'getParameter',
+        parameters: { Name: ssmParamName },
+        physicalResourceId: cr.PhysicalResourceId.of('TritonUrlSsmCheck')
+      },
+      onUpdate: {
+        service: 'SSM',
+        action: 'getParameter',
+        parameters: { Name: ssmParamName },
+        physicalResourceId: cr.PhysicalResourceId.of('TritonUrlSsmCheck')
+      },
+      policy: cr.AwsCustomResourcePolicy.fromSdkCalls({ resources: [ssmParamArn] })
+    });
+    const ssmCheckCond = new cdk.CfnCondition(this, 'SsmCheckWhenUsingTritonAndNoUrl', {
+      expression: cdk.Fn.conditionAnd(cdk.Fn.conditionEquals(enableTritonParam.valueAsString, 'true'), cdk.Fn.conditionEquals(tritonClusterUrlParam.valueAsString, ''))
+    });
+    const customResourceCfn = tritonUrlSsmCheck.node.defaultChild as cdk.CfnCustomResource;
+    if (customResourceCfn && customResourceCfn.cfnOptions) {
+      customResourceCfn.cfnOptions.condition = ssmCheckCond;
+    }
 
     // Processing Lambda function as Docker image (pre-cached model)
     const processingLambda = new lambda.DockerImageFunction(this, 'ProcessingFunction', {
@@ -141,7 +228,7 @@ export class AmiraLambdaParallelStack extends cdk.Stack {
       code: lambda.DockerImageCode.fromImageAsset('../lambda/parallel_processor'),
       timeout: cdk.Duration.minutes(15),
       memorySize: 10240,
-      reservedConcurrentExecutions: 200,
+      // Removed reserved concurrency to avoid unintended throttling during tests
       deadLetterQueue: dlq,
       tracing: lambda.Tracing.ACTIVE,
       environment: {
@@ -156,8 +243,18 @@ export class AmiraLambdaParallelStack extends cdk.Stack {
         USE_FLOAT16: 'true',
         INCLUDE_CONFIDENCE: 'true',
         TEST_MODE: 'false',
-        USE_TRITON: cdk.Token.asString(cdk.Fn.conditionIf(tritonUrlProvided.logicalId, 'true', 'false')),
-        TRITON_URL: tritonClusterUrlParam.valueAsString,
+        USE_TRITON: enableTritonParam.valueAsString,
+        TRITON_URL: cdk.Token.asString(
+          cdk.Fn.conditionIf(
+            useTritonCond.logicalId,
+            cdk.Fn.conditionIf(
+              tritonUrlProvided.logicalId,
+              tritonClusterUrlParam.valueAsString,
+              ssm.StringParameter.valueForStringParameter(this, '/amira/triton_alb_url')
+            ),
+            ''
+          )
+        ),
         TRITON_MODEL: 'w2v2',
         PYTHONOPTIMIZE: '2',
         TORCH_NUM_THREADS: '6',
@@ -167,10 +264,39 @@ export class AmiraLambdaParallelStack extends cdk.Stack {
       }
     });
 
+    // VPC configuration is handled directly in CFN since CDK validation conflicts with conditional parameters
+    const subnetsList = privateSubnetIdsCsvParam.valueAsList;
+    const cfnFunc = processingLambda.node.defaultChild as lambda.CfnFunction;
+    cfnFunc.vpcConfig = cdk.Token.asAny(cdk.Fn.conditionIf(
+      vpcProvided.logicalId,
+      {
+        SecurityGroupIds: cdk.Token.asList(cdk.Fn.conditionIf(lambdaSgProvided.logicalId, [lambdaSecurityGroupIdParam.valueAsString], cdk.Aws.NO_VALUE as any)),
+        SubnetIds: subnetsList
+      },
+      cdk.Aws.NO_VALUE
+    ));
+
+    // Enforce: if VpcId is provided, LambdaSecurityGroupId must be provided
+    new cdk.CfnRule(this, 'VpcRequiresLambdaSg', {
+      ruleCondition: cdk.Fn.conditionAnd(cdk.Fn.conditionNot(cdk.Fn.conditionEquals(vpcIdParam.valueAsString, '')), cdk.Fn.conditionEquals(enableTritonParam.valueAsString, 'true')),
+      assertions: [
+        {
+          assert: cdk.Fn.conditionNot(cdk.Fn.conditionEquals(lambdaSecurityGroupIdParam.valueAsString, '')),
+          assertDescription: 'When VpcId is provided, LambdaSecurityGroupId must also be provided.'
+        }
+      ]
+    });
+
     // SQS Event Source for Lambda
+    const maxEventSourceConcurrencyParam = new cdk.CfnParameter(this, 'MaxEventSourceConcurrency', {
+      type: 'Number',
+      default: 10,
+      description: 'SQS event source max concurrency for the processing Lambda'
+    });
+
     const eventSource = new sources.SqsEventSource(tasksQueue, {
       batchSize: 1,
-      maxConcurrency: 10,
+      maxConcurrency: maxEventSourceConcurrencyParam.valueAsNumber,
       reportBatchItemFailures: true,
       maxBatchingWindow: cdk.Duration.seconds(0),
     });
@@ -339,10 +465,7 @@ export class AmiraLambdaParallelStack extends cdk.Stack {
       runtime: lambda.Runtime.PYTHON_3_12,
       handler: 'athena_staging_cleanup.main',
       code: lambda.Code.fromAsset('../scripts'),
-      timeout: cdk.Duration.minutes(5),
-      environment: {
-        AWS_REGION: cdk.Stack.of(this).region,
-      }
+      timeout: cdk.Duration.minutes(5)
     });
     (cleanupLambda.node.defaultChild as lambda.CfnFunction).cfnOptions.condition = cleanupEnabled;
 

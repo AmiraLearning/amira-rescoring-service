@@ -128,7 +128,7 @@ export class AmiraLetterScoringStack extends cdk.Stack {
 
     const natGatewayCountParam = new cdk.CfnParameter(this, 'NatGatewayCount', {
       type: 'Number',
-      default: 1,
+      default: 2,
       description: 'Number of NAT Gateways to create (set 0 to save cost with VPC endpoints)'
     });
 
@@ -239,57 +239,114 @@ export class AmiraLetterScoringStack extends cdk.Stack {
       ]
     });
 
+    // Toggle for Interface VPC Endpoints (can be disabled to reduce costs)
+    const enableInterfaceEndpointsParam = new cdk.CfnParameter(this, 'EnableInterfaceEndpoints', {
+      type: 'String',
+      default: 'true',
+      allowedValues: ['true', 'false'],
+      description: 'Enable creation of Interface VPC Endpoints (ECR, CW Logs, SQS, SSM, STS, Secrets, KMS)'
+    });
+    const endpointsEnabled = new cdk.CfnCondition(this, 'InterfaceEndpointsEnabled', {
+      expression: cdk.Fn.conditionEquals(enableInterfaceEndpointsParam.valueAsString, 'true')
+    });
+
     // VPC Endpoints to reduce NAT egress
     vpc.addGatewayEndpoint('S3Endpoint', {
       service: ec2.GatewayVpcEndpointAwsService.S3,
       subnets: [{ subnets: vpc.privateSubnets }]
     });
-    vpc.addInterfaceEndpoint('EcrApiEndpoint', {
+    const ecrApiEp = vpc.addInterfaceEndpoint('EcrApiEndpoint', {
       service: ec2.InterfaceVpcEndpointAwsService.ECR,
       subnets: { subnets: vpc.privateSubnets }
     });
-    vpc.addInterfaceEndpoint('EcrDockerEndpoint', {
+    const ecrDockerEp = vpc.addInterfaceEndpoint('EcrDockerEndpoint', {
       service: ec2.InterfaceVpcEndpointAwsService.ECR_DOCKER,
       subnets: { subnets: vpc.privateSubnets }
     });
-    vpc.addInterfaceEndpoint('CloudWatchLogsEndpoint', {
+    const cwLogsEp = vpc.addInterfaceEndpoint('CloudWatchLogsEndpoint', {
       service: ec2.InterfaceVpcEndpointAwsService.CLOUDWATCH_LOGS,
       subnets: { subnets: vpc.privateSubnets }
     });
-    vpc.addInterfaceEndpoint('SqsEndpoint', {
+    const sqsEp = vpc.addInterfaceEndpoint('SqsEndpoint', {
       service: ec2.InterfaceVpcEndpointAwsService.SQS,
       subnets: { subnets: vpc.privateSubnets }
     });
-    vpc.addInterfaceEndpoint('SsmEndpoint', {
+    const ssmEp = vpc.addInterfaceEndpoint('SsmEndpoint', {
       service: ec2.InterfaceVpcEndpointAwsService.SSM,
       subnets: { subnets: vpc.privateSubnets }
     });
-    vpc.addInterfaceEndpoint('SsmMessagesEndpoint', {
+    const ssmMsgsEp = vpc.addInterfaceEndpoint('SsmMessagesEndpoint', {
       service: ec2.InterfaceVpcEndpointAwsService.SSM_MESSAGES,
       subnets: { subnets: vpc.privateSubnets }
     });
-    vpc.addInterfaceEndpoint('Ec2MessagesEndpoint', {
+    const ec2MsgsEp = vpc.addInterfaceEndpoint('Ec2MessagesEndpoint', {
       service: ec2.InterfaceVpcEndpointAwsService.EC2_MESSAGES,
       subnets: { subnets: vpc.privateSubnets }
     });
-    vpc.addInterfaceEndpoint('StsEndpoint', {
+    const stsEp = vpc.addInterfaceEndpoint('StsEndpoint', {
       service: ec2.InterfaceVpcEndpointAwsService.STS,
       subnets: { subnets: vpc.privateSubnets }
     });
+    const secretsEp = vpc.addInterfaceEndpoint('SecretsManagerEndpoint', {
+      service: ec2.InterfaceVpcEndpointAwsService.SECRETS_MANAGER,
+      subnets: { subnets: vpc.privateSubnets }
+    });
+    const kmsEp = vpc.addInterfaceEndpoint('KmsEndpoint', {
+      service: ec2.InterfaceVpcEndpointAwsService.KMS,
+      subnets: { subnets: vpc.privateSubnets }
+    });
 
-    // Security group for ECS tasks
-    const securityGroup = new ec2.SecurityGroup(this, 'AmiraLetterScoringSecurityGroup', {
+    (ecrApiEp.node.defaultChild as ec2.CfnVPCEndpoint).cfnOptions.condition = endpointsEnabled;
+    (ecrDockerEp.node.defaultChild as ec2.CfnVPCEndpoint).cfnOptions.condition = endpointsEnabled;
+    (cwLogsEp.node.defaultChild as ec2.CfnVPCEndpoint).cfnOptions.condition = endpointsEnabled;
+    (sqsEp.node.defaultChild as ec2.CfnVPCEndpoint).cfnOptions.condition = endpointsEnabled;
+    (ssmEp.node.defaultChild as ec2.CfnVPCEndpoint).cfnOptions.condition = endpointsEnabled;
+    (ssmMsgsEp.node.defaultChild as ec2.CfnVPCEndpoint).cfnOptions.condition = endpointsEnabled;
+    (ec2MsgsEp.node.defaultChild as ec2.CfnVPCEndpoint).cfnOptions.condition = endpointsEnabled;
+    (stsEp.node.defaultChild as ec2.CfnVPCEndpoint).cfnOptions.condition = endpointsEnabled;
+    (secretsEp.node.defaultChild as ec2.CfnVPCEndpoint).cfnOptions.condition = endpointsEnabled;
+    (kmsEp.node.defaultChild as ec2.CfnVPCEndpoint).cfnOptions.condition = endpointsEnabled;
+
+    // Security groups split: ALB and ECS tasks
+    const albSecurityGroup = new ec2.SecurityGroup(this, 'AmiraAlbSecurityGroup', {
+      vpc,
+      description: 'Security group for internal ALB fronting Triton TLS proxy',
+      allowAllOutbound: true
+    });
+    // Restrict ALB ingress: allow either from a specific client SG, or fallback to VPC CIDR
+    const albClientSgParam = new cdk.CfnParameter(this, 'AlbClientSecurityGroupId', {
+      type: 'String',
+      default: '',
+      description: 'Optional Security Group ID allowed to access ALB:443. Leave blank to default to VPC CIDR.'
+    });
+    const clientSgProvided = new cdk.CfnCondition(this, 'AlbClientSgProvided', {
+      expression: cdk.Fn.conditionNot(cdk.Fn.conditionEquals(albClientSgParam.valueAsString, ''))
+    });
+    const ingressFromClientSg = new ec2.CfnSecurityGroupIngress(this, 'AlbIngressFromClientSg', {
+      groupId: albSecurityGroup.securityGroupId,
+      ipProtocol: 'tcp',
+      fromPort: 443,
+      toPort: 443,
+      sourceSecurityGroupId: albClientSgParam.valueAsString
+    });
+    ingressFromClientSg.cfnOptions.condition = clientSgProvided;
+    const ingressFromVpcCidr = new ec2.CfnSecurityGroupIngress(this, 'AlbIngressFromVpcCidr', {
+      groupId: albSecurityGroup.securityGroupId,
+      ipProtocol: 'tcp',
+      fromPort: 443,
+      toPort: 443,
+      cidrIp: vpc.vpcCidrBlock
+    });
+    ingressFromVpcCidr.cfnOptions.condition = new cdk.CfnCondition(this, 'AlbClientSgNotProvided', {
+      expression: cdk.Fn.conditionEquals(albClientSgParam.valueAsString, '')
+    });
+
+    const ecsSecurityGroup = new ec2.SecurityGroup(this, 'AmiraEcsSecurityGroup', {
       vpc,
       description: 'Security group for Amira Letter Scoring ECS tasks',
       allowAllOutbound: true
     });
-
-    // Allow ALB to reach TLS proxy sidecar over 8443 within the same SG
-    securityGroup.addIngressRule(
-      securityGroup,
-      ec2.Port.tcp(8443),
-      'Allow ALB to reach TLS proxy over 8443'
-    );
+    ecsSecurityGroup.addIngressRule(albSecurityGroup, ec2.Port.tcp(8443), 'Allow ALB to reach TLS proxy over 8443');
 
     // ECS Cluster with GPU instances
     const cluster = new ecs.Cluster(this, 'AmiraLetterScoringCluster', {
@@ -305,49 +362,15 @@ export class AmiraLetterScoringStack extends cdk.Stack {
     instanceRole.addManagedPolicy(iam.ManagedPolicy.fromAwsManagedPolicyName('service-role/AmazonEC2ContainerServiceforEC2Role'));
     instanceRole.addManagedPolicy(iam.ManagedPolicy.fromAwsManagedPolicyName('AmazonSSMManagedInstanceCore'));
 
-    // Launch template for GPU instances (A10G)
-    const launchTemplate = new ec2.LaunchTemplate(this, 'GpuLaunchTemplate', {
-      instanceType: ec2.InstanceType.of(ec2.InstanceClass.G5, ec2.InstanceSize.XLARGE4), // g5.4xlarge has A10G GPU
-      machineImage: ecs.EcsOptimizedImage.amazonLinux2(ecs.AmiHardwareType.GPU),
-      userData: ec2.UserData.forLinux(),
-      securityGroup,
-      role: instanceRole,
-      requireImdsv2: true,
-      spotOptions: {
-        requestType: ec2.SpotRequestType.ONE_TIME,
-        interruptionBehavior: ec2.SpotInstanceInterruption.STOP
-      }
-    });
+    // Create multiple ASGs for diversified Spot capacity across different instance types
+    const { asg: autoScalingGroup, capacityProvider: capacityProvider } = this.createAsgAndCapacityProvider(this, 'GpuG54xlarge', vpc, ec2.InstanceType.of(ec2.InstanceClass.G5, ec2.InstanceSize.XLARGE4), ecsSecurityGroup, instanceRole);
+    cluster.addAsgCapacityProvider(capacityProvider);
 
-    // Auto Scaling Group for GPU instances
-    const autoScalingGroup = new autoscaling.AutoScalingGroup(this, 'GpuAutoScalingGroup', {
-      vpc,
-      launchTemplate,
-      minCapacity: 0,
-      maxCapacity: 10,
-      desiredCapacity: 0,
-      vpcSubnets: {
-        subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS
-      },
-      capacityRebalance: true
-    });
-
-    // Add capacity provider to cluster
-    const capacityProvider = new ecs.AsgCapacityProvider(this, 'GpuCapacityProvider', {
-      autoScalingGroup,
-      enableManagedScaling: true,
-      enableManagedTerminationProtection: true,
-      targetCapacityPercent: 100,
-      machineImageType: ecs.MachineImageType.AMAZON_LINUX_2
-    });
-    // Additional ASGs for diversified Spot capacity
-    const { asg: asgG5xlarge, capacityProvider: cpG5xlarge } = this.createAsgAndCapacityProvider(this, 'GpuG5xlarge', vpc, ec2.InstanceType.of(ec2.InstanceClass.G5, ec2.InstanceSize.XLARGE), securityGroup, instanceRole);
+    const { asg: asgG5xlarge, capacityProvider: cpG5xlarge } = this.createAsgAndCapacityProvider(this, 'GpuG5xlarge', vpc, ec2.InstanceType.of(ec2.InstanceClass.G5, ec2.InstanceSize.XLARGE), ecsSecurityGroup, instanceRole);
     cluster.addAsgCapacityProvider(cpG5xlarge);
 
-    const { asg: asgG52xlarge, capacityProvider: cpG52xlarge } = this.createAsgAndCapacityProvider(this, 'GpuG52xlarge', vpc, ec2.InstanceType.of(ec2.InstanceClass.G5, ec2.InstanceSize.XLARGE2), securityGroup, instanceRole);
+    const { asg: asgG52xlarge, capacityProvider: cpG52xlarge } = this.createAsgAndCapacityProvider(this, 'GpuG52xlarge', vpc, ec2.InstanceType.of(ec2.InstanceClass.G5, ec2.InstanceSize.XLARGE2), ecsSecurityGroup, instanceRole);
     cluster.addAsgCapacityProvider(cpG52xlarge);
-
-    cluster.addAsgCapacityProvider(capacityProvider);
 
     // S3 access logs bucket
     const accessLogsBucket = new s3.Bucket(this, 'AccessLogsBucket', {
@@ -366,7 +389,7 @@ export class AmiraLetterScoringStack extends cdk.Stack {
 
     // Results bucket (source of truth) with SSE-KMS, bucket key, access logs, and lifecycle
     const resultsBucket = new s3.Bucket(this, 'ResultsBucket', {
-      versioned: false,
+      versioned: true,
       blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
       encryption: s3.BucketEncryption.KMS,
       encryptionKey: resultsBucketKey,
@@ -378,16 +401,6 @@ export class AmiraLetterScoringStack extends cdk.Stack {
           id: 'IntelligentTieringNow',
           enabled: true,
           transitions: [{ storageClass: s3.StorageClass.INTELLIGENT_TIERING, transitionAfter: cdk.Duration.days(0) }]
-        },
-        {
-          id: 'TransitionToIA',
-          enabled: true,
-          transitions: [{ storageClass: s3.StorageClass.INFREQUENT_ACCESS, transitionAfter: cdk.Duration.days(30) }]
-        },
-        {
-          id: 'TransitionToGlacier',
-          enabled: true,
-          transitions: [{ storageClass: s3.StorageClass.GLACIER_INSTANT_RETRIEVAL, transitionAfter: cdk.Duration.days(120) }]
         }
       ],
       removalPolicy: cdk.RemovalPolicy.RETAIN,
@@ -397,7 +410,7 @@ export class AmiraLetterScoringStack extends cdk.Stack {
       sid: 'DenyInsecureTransport',
       effect: iam.Effect.DENY,
       principals: [new iam.AnyPrincipal()],
-      actions: ['s3:*'],
+      actions: ['s3:GetObject', 's3:PutObject', 's3:ListBucket', 's3:DeleteObject', 's3:DeleteObjectVersion'],
       resources: [resultsBucket.bucketArn, `${resultsBucket.bucketArn}/*`],
       conditions: { Bool: { 'aws:SecureTransport': 'false' } }
     }));
@@ -501,6 +514,17 @@ export class AmiraLetterScoringStack extends cdk.Stack {
       encryptionKey: resultsBucketKey
     });
 
+    // VPC Flow Logs
+    const vpcFlowLogGroup = new logs.LogGroup(this, 'VpcFlowLogs', {
+      retention: logs.RetentionDays.ONE_MONTH,
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
+      encryptionKey: resultsBucketKey
+    });
+    vpc.addFlowLog('FlowLogsAll', {
+      destination: ec2.FlowLogDestination.toCloudWatchLogs(vpcFlowLogGroup),
+      trafficType: ec2.FlowLogTrafficType.ALL
+    });
+
     // ECS Task Definition
     const taskDefinition = new ecs.Ec2TaskDefinition(this, 'AmiraLetterScoringTaskDef', {
       family: `amira-letter-scoring-${cdk.Stack.of(this).stackName}`,
@@ -527,6 +551,13 @@ export class AmiraLetterScoringStack extends cdk.Stack {
     });
 
     // TLS proxy sidecar to terminate TLS inside the task and proxy to Triton over localhost:8000
+    const requireTargetTlsSecretParam = new cdk.CfnParameter(this, 'RequireTargetTlsSecret', {
+      type: 'String',
+      default: 'false',
+      allowedValues: ['true', 'false'],
+      description: 'Require TLS cert/key secret for sidecar (disallow self-signed)'
+    });
+
     const tlsProxyContainer = taskDefinition.addContainer('TlsProxyContainer', {
       image: ecs.ContainerImage.fromRegistry('nginx:1.25-alpine'),
       memoryReservationMiB: 128,
@@ -536,6 +567,7 @@ export class AmiraLetterScoringStack extends cdk.Stack {
       environment: {
         ENABLE_HTTP2: enableTargetHttp2Param.valueAsString,
         SSL_CIPHERS: targetSslCiphersParam.valueAsString,
+        REQUIRE_TLS_SECRET: requireTargetTlsSecretParam.valueAsString,
       },
       command: [
         'sh',
@@ -544,6 +576,7 @@ export class AmiraLetterScoringStack extends cdk.Stack {
           'set -e',
           'apk add --no-cache openssl',
           'mkdir -p /etc/nginx/certs /etc/nginx/conf.d',
+          'if [ "$REQUIRE_TLS_SECRET" = "true" ] && { [ -z "${TLS_CERT:-}" ] || [ -z "${TLS_KEY:-}" ]; }; then echo "TLS cert/key secret required" >&2; exit 1; fi',
           'if [ -n "${TLS_CERT:-}" ] && [ -n "${TLS_KEY:-}" ]; then echo "$TLS_CERT" > /etc/nginx/certs/tls.crt && echo "$TLS_KEY" > /etc/nginx/certs/tls.key; else openssl req -x509 -nodes -days 3650 -newkey rsa:2048 -subj "/CN=localhost" -keyout /etc/nginx/certs/tls.key -out /etc/nginx/certs/tls.crt; fi',
           "HTTP2_DIRECTIVE='' && [ \"$ENABLE_HTTP2\" = \"true\" ] && HTTP2_DIRECTIVE=' http2' || true",
           "CIPHERS_DIRECTIVE='' && [ -n \"$SSL_CIPHERS\" ] && CIPHERS_DIRECTIVE=\\\"  ssl_ciphers $SSL_CIPHERS;\\\" || true",
@@ -553,29 +586,23 @@ export class AmiraLetterScoringStack extends cdk.Stack {
       ],
     });
 
-    // Conditionally wire Secrets Manager secret with {cert,key} to TLS_CERT/TLS_KEY env for sidecar
+    // Conditionally add Secrets Manager secrets to TLS proxy container using L2 constructs
     const targetCertProvided = new cdk.CfnCondition(this, 'TritonTargetCertProvided', {
       expression: cdk.Fn.conditionNot(cdk.Fn.conditionEquals(tritonTargetCertSecretArnParam.valueAsString, ''))
     });
+
+    // Secrets are handled directly in CloudFormation due to conditional logic requirements
+
+    // Apply condition to the underlying CloudFormation resources for the secrets
     const cfnTaskDef = taskDefinition.node.defaultChild as ecs.CfnTaskDefinition;
-    const containerDefs = cfnTaskDef.containerDefinitions as any[];
-    const updatedDefs = containerDefs.map((def) => {
-      if (def.name === 'TlsProxyContainer') {
-        const certValueFrom = cdk.Fn.join('', [tritonTargetCertSecretArnParam.valueAsString, ':cert::']);
-        const keyValueFrom = cdk.Fn.join('', [tritonTargetCertSecretArnParam.valueAsString, ':key::']);
-        const secretsIf: any = cdk.Fn.conditionIf(
-          targetCertProvided.logicalId,
-          [
-            { name: 'TLS_CERT', valueFrom: certValueFrom },
-            { name: 'TLS_KEY', valueFrom: keyValueFrom },
-          ],
-          cdk.Aws.NO_VALUE
-        );
-        def.secrets = secretsIf;
-      }
-      return def;
-    });
-    cfnTaskDef.addPropertyOverride('ContainerDefinitions', updatedDefs);
+    cfnTaskDef.addPropertyOverride('ContainerDefinitions.1.Secrets', cdk.Fn.conditionIf(
+      targetCertProvided.logicalId,
+      [
+        { name: 'TLS_CERT', valueFrom: `${tritonTargetCertSecretArnParam.valueAsString}:cert::` },
+        { name: 'TLS_KEY', valueFrom: `${tritonTargetCertSecretArnParam.valueAsString}:key::` }
+      ],
+      cdk.Aws.NO_VALUE
+    ));
 
     // DCGM exporter for GPU metrics
     const dcgmContainer = taskDefinition.addContainer('DcgmExporterContainer', {
@@ -611,8 +638,10 @@ export class AmiraLetterScoringStack extends cdk.Stack {
     const tritonAlb = new elbv2.ApplicationLoadBalancer(this, 'TritonLoadBalancer', {
       vpc,
       internetFacing: false, // Internal ALB since Lambda will call it
-      securityGroup
+      securityGroup: albSecurityGroup,
+      deletionProtection: true
     });
+    tritonAlb.logAccessLogs(accessLogsBucket, 'alb-access-logs/');
 
     const tritonTargetGroup = new elbv2.ApplicationTargetGroup(this, 'TritonTargetGroup', {
       vpc,
@@ -622,16 +651,17 @@ export class AmiraLetterScoringStack extends cdk.Stack {
       healthCheck: {
         path: '/v2/health/ready',
         protocol: elbv2.Protocol.HTTPS,
-        healthyThresholdCount: 2,
-        unhealthyThresholdCount: 3,
+        healthyThresholdCount: 3,
+        unhealthyThresholdCount: 5,
         timeout: cdk.Duration.seconds(10),
-        interval: cdk.Duration.seconds(15)
+        interval: cdk.Duration.seconds(30)
       }
     });
 
     const tritonListener = tritonAlb.addListener('TritonListenerHttps', {
       port: 443,
       protocol: elbv2.ApplicationProtocol.HTTPS,
+      sslPolicy: elbv2.SslPolicy.TLS12_EXT,
       certificates: [elbv2.ListenerCertificate.fromArn(tritonCertArnParam.valueAsString)],
       defaultTargetGroups: [tritonTargetGroup]
     });
@@ -642,7 +672,7 @@ export class AmiraLetterScoringStack extends cdk.Stack {
       taskDefinition,
       serviceName: 'triton-inference-service',
       desiredCount: 0, // Start with 0, scale up based on ALB requests
-      securityGroups: [securityGroup],
+      securityGroups: [ecsSecurityGroup],
       vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
       capacityProviderStrategies: [{
         capacityProvider: capacityProvider.capacityProviderName,
@@ -723,11 +753,52 @@ export class AmiraLetterScoringStack extends cdk.Stack {
       minAdjustmentMagnitude: 1
     });
 
+    // GPU utilization-based scaling for optimal resource management
+    // Scale out when GPU utilization is high to prevent bottlenecks
+    // Scale in when GPU utilization is low to reduce costs
+    const gpuUtilForScaling = new cw.Metric({
+      namespace: 'CWAgent',
+      metricName: 'DCGM_FI_DEV_GPU_UTIL',
+      statistic: 'Average',
+      period: cdk.Duration.minutes(1)
+    });
+    scalableTarget.scaleOnMetric('GpuUtilScaling', {
+      metric: gpuUtilForScaling,
+      scalingSteps: [
+        { lower: 70, change: +1 },   // Add 1 task when GPU utilization > 70%
+        { lower: 90, change: +2 },   // Add 2 more tasks when GPU utilization > 90%
+        { upper: 30, change: -1 }    // Remove 1 task when GPU utilization < 30%
+      ],
+      adjustmentType: appscaling.AdjustmentType.CHANGE_IN_CAPACITY,
+      cooldown: cdk.Duration.minutes(2),
+      minAdjustmentMagnitude: 1
+    });
+
     // Add output for Triton cluster URL
     new cdk.CfnOutput(this, 'TritonClusterUrl', {
       value: `https://${tritonAlb.loadBalancerDnsName}`,
       description: 'HTTPS URL for Triton GPU inference cluster',
       condition: useTritonCondition
+    });
+
+    // Publish Triton URL to SSM for cross-stack linking
+    new ssm.StringParameter(this, 'TritonAlbUrlParam', {
+      parameterName: '/amira/triton_alb_url',
+      stringValue: `https://${tritonAlb.loadBalancerDnsName}`
+    });
+
+    // Publish VPC and subnet attributes for cross-stack Lambda attachment
+    new ssm.StringParameter(this, 'VpcIdParam', {
+      parameterName: '/amira/vpc_id',
+      stringValue: vpc.vpcId
+    });
+    new ssm.StringParameter(this, 'VpcPrivateSubnetIdsParam', {
+      parameterName: '/amira/vpc_private_subnet_ids',
+      stringValue: vpc.privateSubnets.map(s => s.subnetId).join(',')
+    });
+    new ssm.StringParameter(this, 'AlbSecurityGroupIdParam', {
+      parameterName: '/amira/alb_sg_id',
+      stringValue: albSecurityGroup.securityGroupId
     });
 
     // GPU cluster monitoring and alarms
@@ -845,6 +916,15 @@ export class AmiraLetterScoringStack extends cdk.Stack {
       comparisonOperator: cw.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD
     });
     tritonFailuresHigh.addAlarmAction(alarmAction);
+
+    // Alarm for DLQ depth in GPU stack
+    const jobsDlqDepthAlarm = new cw.Alarm(this, 'JobsDlqDepthAlarm', {
+      metric: dlq.metricApproximateNumberOfMessagesVisible(),
+      threshold: 1,
+      evaluationPeriods: 1,
+      comparisonOperator: cw.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD
+    });
+    jobsDlqDepthAlarm.addAlarmAction(alarmAction);
 
     // Dashboard for GPU and Triton
     const dashboard = new cw_dash.Dashboard(this, 'AmiraGpuTritonDashboard', { dashboardName: 'AmiraGpuTriton' });

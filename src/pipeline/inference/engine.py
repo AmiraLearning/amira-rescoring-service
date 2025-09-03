@@ -1,10 +1,8 @@
-from __future__ import annotations
-
 import asyncio
 import os
 import time
 import traceback
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import torch
@@ -32,12 +30,12 @@ from .models import (
     W2VConfig,
 )
 
-_cached_engines: dict[str, Wav2Vec2InferenceEngine | TritonInferenceEngine] = {}
+_cached_engines: dict[str, "Wav2Vec2InferenceEngine | TritonInferenceEngine"] = {}
 
 
 async def preload_inference_engine_async(
     *, w2v_config: W2VConfig, warmup: bool = False
-) -> Wav2Vec2InferenceEngine | TritonInferenceEngine:
+) -> "Wav2Vec2InferenceEngine | TritonInferenceEngine":
     """Asynchronously preload the inference engine.
 
     Args:
@@ -48,8 +46,8 @@ async def preload_inference_engine_async(
         Inference engine instance (either Wav2Vec2InferenceEngine or TritonInferenceEngine).
     """
 
-    def _build() -> Wav2Vec2InferenceEngine | TritonInferenceEngine:
-        engine: Wav2Vec2InferenceEngine | TritonInferenceEngine
+    def _build() -> "Wav2Vec2InferenceEngine | TritonInferenceEngine":
+        engine: Any
         if w2v_config.use_triton:
             from .triton_engine import TritonInferenceEngine
 
@@ -461,7 +459,9 @@ class Wav2Vec2InferenceEngine:
         return result
 
 
-def get_cached_engine(*, w2v_config: W2VConfig) -> Wav2Vec2InferenceEngine | TritonInferenceEngine:
+def get_cached_engine(
+    *, w2v_config: W2VConfig
+) -> "Wav2Vec2InferenceEngine | TritonInferenceEngine":
     """Get or create a cached inference engine for Lambda optimization.
 
     Args:
@@ -491,7 +491,7 @@ def perform_single_audio_inference(
     model_instance: Wav2Vec2ForCTC | None = None,
     processor_instance: Wav2Vec2Processor | None = None,
     inference_id: str | None = None,
-    engine: Wav2Vec2InferenceEngine | TritonInferenceEngine | None = None,
+    engine: "Wav2Vec2InferenceEngine | TritonInferenceEngine | None" = None,
     use_cache: bool = False,
 ) -> GPUInferenceResult:
     """Perform a single audio inference.

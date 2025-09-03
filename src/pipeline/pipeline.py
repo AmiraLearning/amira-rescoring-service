@@ -7,6 +7,7 @@ Activity pipeline:
 4. Perform alignment and error analysis
 5. Update activity fields
 """
+# TODO too monolithic and mixed with bare dicts
 
 import asyncio
 import os
@@ -92,7 +93,7 @@ class PreparedData:
     engine: Any = None
 
 
-async def load_and_prepare_data(*, config: PipelineConfig) -> PreparedData:
+async def load_and_prepare_data(*, config: PipelineConfig | None) -> PreparedData:
     """
     Load activity and story phrase data and merge them.
 
@@ -187,7 +188,7 @@ async def process_activity(
     *,
     activity_id: str,
     phrases_input: list[PhraseInput],
-    config: PipelineConfig,
+    config: PipelineConfig | None,
     engine: Any = None,
 ) -> ProcessedActivity:
     """
@@ -219,11 +220,9 @@ async def process_activity(
         phrases_input=phrase_inputs, activity_id=activity_id, config=config
     )
 
-    # Process each phrase individually instead of concatenating
     all_elements = []
     all_confidences = []
 
-    # Ensure a single engine instance is reused per activity when preload isn't available
     engine_local = engine
     if engine_local is None:
         try:
@@ -300,7 +299,7 @@ async def process_activity(
 
 
 def perform_alignment(
-    *, activity_outputs: ActivityOutput, phonetic_transcript: PhoneticTranscript
+    *, activity_outputs: ActivityOutput | None, phonetic_transcript: PhoneticTranscript | None
 ) -> Any:
     """
     Perform alignment and error analysis.

@@ -46,7 +46,6 @@ def main() -> None:
     """Test cold start optimizations."""
     logger.info("Testing cold start optimizations")
 
-    # Baseline configuration
     baseline_config = W2VConfig(
         model_path=DEFAULT_MODEL_PATH, use_torch_compile=False, use_jit_trace=False, fast_init=False
     )
