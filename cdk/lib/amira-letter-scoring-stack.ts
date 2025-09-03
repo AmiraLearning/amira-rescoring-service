@@ -182,6 +182,26 @@ export class AmiraLetterScoringStack extends cdk.Stack {
       description: 'ACM certificate ARN for HTTPS on the Triton ALB (required for TLS)'
     });
 
+    // Optional TLS cert/key for target sidecar via Secrets Manager (expects JSON with fields: cert, key)
+    const tritonTargetCertSecretArnParam = new cdk.CfnParameter(this, 'TritonTargetCertSecretArn', {
+      type: 'String',
+      default: '',
+      description: 'Optional Secrets Manager ARN containing JSON with fields {"cert","key"} for sidecar TLS'
+    });
+
+    // TLS tuning for sidecar
+    const enableTargetHttp2Param = new cdk.CfnParameter(this, 'EnableTargetHttp2', {
+      type: 'String',
+      default: 'true',
+      allowedValues: ['true', 'false'],
+      description: 'Enable HTTP/2 on TLS sidecar listener'
+    });
+    const targetSslCiphersParam = new cdk.CfnParameter(this, 'TargetSslCiphers', {
+      type: 'String',
+      default: '',
+      description: 'Optional OpenSSL cipher suite string for TLS sidecar (empty for default)'
+    });
+
     // Optional Audio bucket for read-only access
     const audioBucketNameParam = new cdk.CfnParameter(this, 'AudioBucketName', {
       type: 'String',
@@ -263,6 +283,13 @@ export class AmiraLetterScoringStack extends cdk.Stack {
       description: 'Security group for Amira Letter Scoring ECS tasks',
       allowAllOutbound: true
     });
+
+    // Allow ALB to reach TLS proxy sidecar over 8443 within the same SG
+    securityGroup.addIngressRule(
+      securityGroup,
+      ec2.Port.tcp(8443),
+      'Allow ALB to reach TLS proxy over 8443'
+    );
 
     // ECS Cluster with GPU instances
     const cluster = new ecs.Cluster(this, 'AmiraLetterScoringCluster', {
@@ -499,6 +526,57 @@ export class AmiraLetterScoringStack extends cdk.Stack {
       }
     });
 
+    // TLS proxy sidecar to terminate TLS inside the task and proxy to Triton over localhost:8000
+    const tlsProxyContainer = taskDefinition.addContainer('TlsProxyContainer', {
+      image: ecs.ContainerImage.fromRegistry('nginx:1.25-alpine'),
+      memoryReservationMiB: 128,
+      cpu: 128,
+      logging: ecs.LogDriver.awsLogs({ logGroup, streamPrefix: 'tls-proxy' }),
+      portMappings: [{ containerPort: 8443 }],
+      environment: {
+        ENABLE_HTTP2: enableTargetHttp2Param.valueAsString,
+        SSL_CIPHERS: targetSslCiphersParam.valueAsString,
+      },
+      command: [
+        'sh',
+        '-c',
+        [
+          'set -e',
+          'apk add --no-cache openssl',
+          'mkdir -p /etc/nginx/certs /etc/nginx/conf.d',
+          'if [ -n "${TLS_CERT:-}" ] && [ -n "${TLS_KEY:-}" ]; then echo "$TLS_CERT" > /etc/nginx/certs/tls.crt && echo "$TLS_KEY" > /etc/nginx/certs/tls.key; else openssl req -x509 -nodes -days 3650 -newkey rsa:2048 -subj "/CN=localhost" -keyout /etc/nginx/certs/tls.key -out /etc/nginx/certs/tls.crt; fi',
+          "HTTP2_DIRECTIVE='' && [ \"$ENABLE_HTTP2\" = \"true\" ] && HTTP2_DIRECTIVE=' http2' || true",
+          "CIPHERS_DIRECTIVE='' && [ -n \"$SSL_CIPHERS\" ] && CIPHERS_DIRECTIVE=\\\"  ssl_ciphers $SSL_CIPHERS;\\\" || true",
+          "printf 'server {\\n  listen 8443 ssl%s;\\n  ssl_certificate /etc/nginx/certs/tls.crt;\\n  ssl_certificate_key /etc/nginx/certs/tls.key;\\n  ssl_protocols TLSv1.2 TLSv1.3;\\n%s\\n  location / {\\n    proxy_pass http://127.0.0.1:8000;\\n    proxy_set_header Host $host;\\n    proxy_set_header X-Forwarded-Proto $scheme;\\n    proxy_set_header X-Forwarded-For $remote_addr;\\n  }\\n}\\n' \"$HTTP2_DIRECTIVE\" \"$CIPHERS_DIRECTIVE\" > /etc/nginx/conf.d/default.conf",
+          "nginx -g 'daemon off;'",
+        ].join(' && '),
+      ],
+    });
+
+    // Conditionally wire Secrets Manager secret with {cert,key} to TLS_CERT/TLS_KEY env for sidecar
+    const targetCertProvided = new cdk.CfnCondition(this, 'TritonTargetCertProvided', {
+      expression: cdk.Fn.conditionNot(cdk.Fn.conditionEquals(tritonTargetCertSecretArnParam.valueAsString, ''))
+    });
+    const cfnTaskDef = taskDefinition.node.defaultChild as ecs.CfnTaskDefinition;
+    const containerDefs = cfnTaskDef.containerDefinitions as any[];
+    const updatedDefs = containerDefs.map((def) => {
+      if (def.name === 'TlsProxyContainer') {
+        const certValueFrom = cdk.Fn.join('', [tritonTargetCertSecretArnParam.valueAsString, ':cert::']);
+        const keyValueFrom = cdk.Fn.join('', [tritonTargetCertSecretArnParam.valueAsString, ':key::']);
+        const secretsIf: any = cdk.Fn.conditionIf(
+          targetCertProvided.logicalId,
+          [
+            { name: 'TLS_CERT', valueFrom: certValueFrom },
+            { name: 'TLS_KEY', valueFrom: keyValueFrom },
+          ],
+          cdk.Aws.NO_VALUE
+        );
+        def.secrets = secretsIf;
+      }
+      return def;
+    });
+    cfnTaskDef.addPropertyOverride('ContainerDefinitions', updatedDefs);
+
     // DCGM exporter for GPU metrics
     const dcgmContainer = taskDefinition.addContainer('DcgmExporterContainer', {
       image: ecs.ContainerImage.fromEcrRepository(dcgmExporterRepository, dcgmImageTagParam.valueAsString),
@@ -538,12 +616,12 @@ export class AmiraLetterScoringStack extends cdk.Stack {
 
     const tritonTargetGroup = new elbv2.ApplicationTargetGroup(this, 'TritonTargetGroup', {
       vpc,
-      port: 8000,
-      protocol: elbv2.ApplicationProtocol.HTTP,
+      port: 8443,
+      protocol: elbv2.ApplicationProtocol.HTTPS,
       targetType: elbv2.TargetType.IP,
       healthCheck: {
         path: '/v2/health/ready',
-        protocol: elbv2.Protocol.HTTP,
+        protocol: elbv2.Protocol.HTTPS,
         healthyThresholdCount: 2,
         unhealthyThresholdCount: 3,
         timeout: cdk.Duration.seconds(10),

@@ -5,6 +5,7 @@ from gql import Client, gql
 from gql.transport.requests import RequestsHTTPTransport
 from loguru import logger
 from pydantic import BaseModel
+from tenacity import retry, stop_after_attempt, wait_exponential_jitter
 
 from utils.config import AwsConfig  # TODO rename to AWSConfig
 
@@ -158,24 +159,23 @@ def set_activity_fields(
 
     timeout_s: int = int(os.getenv("APPSYNC_TIMEOUT", "60"))
     max_attempts: int = int(os.getenv("APPSYNC_MAX_ATTEMPTS", "3"))
-    client: Client = Client(
-        transport=RequestsHTTPTransport(
-            url=_GRAPHQL_ENDPOINT_URL,
-            headers={"x-api-key": _GRAPHQL_ENDPOINT_KEY},
-            timeout=timeout_s,
-        )
+    transport = RequestsHTTPTransport(
+        url=_GRAPHQL_ENDPOINT_URL,
+        headers={"x-api-key": _GRAPHQL_ENDPOINT_KEY},
+        timeout=timeout_s,
     )
+    client: Client = Client(transport=transport)
+
+    @retry(
+        stop=stop_after_attempt(max(1, max_attempts)),
+        wait=wait_exponential_jitter(exp_base=2, max=10),
+        reraise=True,
+    )
+    def _do_update() -> dict[str, Any]:
+        return client.execute(UPDATE_ACTIVITY_FIELDS_MUTATION, variable_values=variables.dict())
 
     try:
-        for attempt in range(max(1, max_attempts)):
-            try:
-                response = client.execute(
-                    UPDATE_ACTIVITY_FIELDS_MUTATION, variable_values=variables.dict()
-                )
-                break
-            except Exception:
-                if attempt == max_attempts - 1:
-                    raise
+        response = _do_update()
     except Exception as e:
         if _GRAPHQL_ALLOW_MOCK:
             logger.info(
@@ -263,7 +263,6 @@ def get_activity(*, activity_id: str) -> dict[str, Any]:
         The response data from the AppSync API.
     """
     # TODO unused imports
-    import time
 
     variables = {"activityId": [activity_id]}
 
@@ -282,19 +281,18 @@ def get_activity(*, activity_id: str) -> dict[str, Any]:
         headers={"x-api-key": _GRAPHQL_ENDPOINT_KEY},
         timeout=timeout_s,
     )
-    # TODO use tenacity
-
     client: Client = Client(transport=transport)
 
-    for attempt in range(max(1, max_attempts)):
-        try:
-            response: dict[str, Any] = client.execute(GET_ACTIVITY_QUERY, variable_values=variables)
-            return response
-        except Exception as e:
-            if attempt == 2:  # Last attempt
-                raise
-            logger.warning(f"GraphQL attempt {attempt + 1} failed, retrying: {e}")
-            time.sleep(2**attempt)  # Exponential backoff
+    @retry(
+        stop=stop_after_attempt(max(1, max_attempts)),
+        wait=wait_exponential_jitter(exp_base=2, max=10),
+        reraise=True,
+    )
+    def _do_get() -> dict[str, Any]:
+        return client.execute(GET_ACTIVITY_QUERY, variable_values=variables)
+
+    response = _do_get()
+    return response
 
     # This should never be reached due to the raise in the loop, but satisfies mypy
     raise RuntimeError("Failed to get activity after all retry attempts")

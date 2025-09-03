@@ -46,8 +46,13 @@ def apply_lambda_optimizations() -> None:
         torch.set_num_interop_threads(2)
         torch.backends.cudnn.benchmark = False
 
-        if hasattr(torch.backends, "openmp") and torch.backends.openmp.is_available():
-            torch.backends.openmp.enabled = True
+        if (
+            hasattr(torch.backends, "openmp")
+            and hasattr(torch.backends.openmp, "is_available")
+            and torch.backends.openmp.is_available()
+        ):
+            if hasattr(torch.backends.openmp, "enabled"):
+                torch.backends.openmp.enabled = True
 
         _optimizations_applied = True
 

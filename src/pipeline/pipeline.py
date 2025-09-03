@@ -432,6 +432,7 @@ async def process_single_activity(
     """
     Process a single activity through CPU and GPU stages.
     """
+    activity_start: float = time.time()
     processed_activity: ProcessedActivity = await process_activity(
         activity_id=activity_id,
         phrases_input=phrases_input,
@@ -443,6 +444,22 @@ async def process_single_activity(
         activity_outputs=processed_activity.activity_outputs,
         phonetic_transcript=processed_activity.phonetic_transcript,
     )
+
+    total_ms: float = (time.time() - activity_start) * 1000.0
+    try:
+        phrase_count: int = len(processed_activity.activity_outputs.phrases)
+        emit_emf_metric(
+            namespace="Amira/Activity",
+            metrics={
+                "ActivityTotalMs": total_ms,
+                "Phrases": float(phrase_count),
+            },
+            dimensions={
+                "ActivityId": str(activity_id),
+            },
+        )
+    except Exception:
+        pass
 
     activity_response: dict[str, Any] = {"data": {"updateActivity": {"activityId": activity_id}}}
     logger.info(f"Skipping AppSync upload - would set fields: {errors}")

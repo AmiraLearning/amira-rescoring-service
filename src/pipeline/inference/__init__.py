@@ -1,3 +1,5 @@
+from typing import Any
+
 from .constants import (
     BYTES_PER_GB,
     MS_PER_SECOND,
@@ -5,7 +7,6 @@ from .constants import (
     DeviceType,
     TokenType,
 )
-from .engine import Wav2Vec2InferenceEngine, perform_single_audio_inference
 from .models import (
     ConfidenceResult,
     DecodePredictionResult,
@@ -34,3 +35,14 @@ __all__ = [
     "Wav2Vec2InferenceEngine",
     "perform_single_audio_inference",
 ]
+
+
+def __getattr__(name: str) -> Any:
+    if name in {"Wav2Vec2InferenceEngine", "perform_single_audio_inference"}:
+        from .engine import Wav2Vec2InferenceEngine, perform_single_audio_inference
+
+        return {
+            "Wav2Vec2InferenceEngine": Wav2Vec2InferenceEngine,
+            "perform_single_audio_inference": perform_single_audio_inference,
+        }[name]
+    raise AttributeError(name)

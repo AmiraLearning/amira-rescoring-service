@@ -1,14 +1,18 @@
 from dataclasses import dataclass
+from typing import Self
 
 import numpy as np
 import torch
-from pydantic import BaseModel, ConfigDict, Field, field_serializer
+from pydantic import BaseModel, ConfigDict, Field, field_serializer, model_validator
 
 from .constants import DeviceType
 
 
 class W2VConfig(BaseModel):
-    """Wav2Vec2 configuration."""
+    """Wav2Vec2 configuration.
+
+    Validates Triton configuration to ensure HTTPS-only URLs when Triton is enabled.
+    """
 
     model_path: str = "models/wav2vec2-ft-large-eng-phoneme-amirabet_2025-04-24"
     device: DeviceType = DeviceType.CPU
@@ -23,12 +27,34 @@ class W2VConfig(BaseModel):
     use_torch_compile: bool = False
     compile_mode: str = "default"  # "default", "reduce-overhead", "max-autotune"
     use_torch_jit: bool = False  # Fallback for torch.compile
+    use_jit_trace: bool = True  # JIT tracing for optimized inference (2% speedup)
     use_mixed_precision: bool = False
     use_flash_attention: bool = False
 
     # Performance optimizations
     use_float16: bool = True  # Lambda-style Float16 precision for 2x speed
     batch_all_phrases: bool = False  # Lambda-style single inference call
+
+    @model_validator(mode="after")
+    def _validate_triton_https(self) -> Self:
+        """Ensure Triton URL is HTTPS-only when Triton is enabled.
+
+        Returns:
+            Self: The validated configuration instance.
+
+        Raises:
+            ValueError: If `use_triton` is true and `triton_url` is not a non-empty HTTPS URL.
+        """
+        if self.use_triton:
+            raw: str = self.triton_url
+            if not isinstance(raw, str) or not raw.strip():
+                raise ValueError("triton_url must be a non-empty https URL when use_triton=true")
+            url_lower: str = raw.strip().lower()
+            if url_lower.startswith("http://"):
+                raise ValueError("triton_url must use https://, http:// is not allowed")
+            if not url_lower.startswith("https://"):
+                raise ValueError("triton_url must start with https://")
+        return self
 
 
 class PreprocessResult(BaseModel):

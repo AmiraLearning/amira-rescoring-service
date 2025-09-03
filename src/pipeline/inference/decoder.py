@@ -94,28 +94,31 @@ class PhonemeDecoder:
 
         grouped_tokens: list[str] = []
         averaged_confidences: list[float] = []
+
+        has_confidences = segment.confidences is not None and len(segment.confidences) > 0
+
         current_token: str = segment.tokens[0]
         current_confidences: list[float] = []
 
-        if segment.confidences is not None and len(segment.confidences) > 0:
+        if has_confidences:
             current_confidences.append(float(segment.confidences[0].item()))
 
         for index in range(1, len(segment.tokens)):
             next_token: str = segment.tokens[index]
             if current_token == next_token:
-                if segment.confidences is not None and len(segment.confidences) > index:
+                if has_confidences and len(segment.confidences) > index:
                     current_confidences.append(float(segment.confidences[index].item()))
             else:
                 grouped_tokens.append(current_token)
-                if segment.confidences is not None and len(current_confidences) > 0:
+                if has_confidences and current_confidences:
                     averaged_confidences.append(sum(current_confidences) / len(current_confidences))
                 current_token = next_token
                 current_confidences = []
-                if segment.confidences is not None and len(segment.confidences) > index:
+                if has_confidences and len(segment.confidences) > index:
                     current_confidences.append(float(segment.confidences[index].item()))
 
         grouped_tokens.append(current_token)
-        if segment.confidences is not None and len(current_confidences) > 0:
+        if has_confidences and current_confidences:
             averaged_confidences.append(sum(current_confidences) / len(current_confidences))
 
         return GroupedPhoneticUnits(tokens=grouped_tokens, confidences=averaged_confidences)

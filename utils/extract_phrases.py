@@ -162,13 +162,11 @@ async def extract_phrase_slices_tutor_style(
         if folder.is_dir()
     ]
 
-    # Check if folder exists AND contains phrase files
-    activity_folder = audio_paths.dataset_dir_full_path / audio_paths.stage_activity_id
-    needs_processing = True
+    activity_folder: Path = audio_paths.dataset_dir_full_path / audio_paths.stage_activity_id
+    needs_processing: bool = True
 
     if activity_folder.exists():
-        # Check if any phrase files exist
-        phrase_files = list(activity_folder.glob("phrase_*.wav"))
+        phrase_files: list[Path] = list(activity_folder.glob("phrase_*.wav"))
         if phrase_files:
             logger.info(
                 f"Found {len(phrase_files)} existing phrase files for {audio_paths.stage_activity_id}, skipping regeneration"
@@ -179,8 +177,7 @@ async def extract_phrase_slices_tutor_style(
                 f"Folder exists but no phrase files found for {audio_paths.stage_activity_id}, will regenerate"
             )
     elif activity_id in existing_folders:
-        # Handle activity_id != stage_activity_id case
-        old_folder = audio_paths.dataset_dir_full_path / activity_id
+        old_folder: Path = audio_paths.dataset_dir_full_path / activity_id
         phrase_files = list(old_folder.glob("phrase_*.wav"))
         if phrase_files:
             logger.info(

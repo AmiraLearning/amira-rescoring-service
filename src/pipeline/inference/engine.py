@@ -32,6 +32,8 @@ from .models import (
     W2VConfig,
 )
 
+_cached_engines: dict[str, Wav2Vec2InferenceEngine | TritonInferenceEngine] = {}
+
 
 async def preload_inference_engine_async(
     *, w2v_config: W2VConfig, warmup: bool = False
@@ -67,6 +69,7 @@ class Wav2Vec2InferenceEngine:
     _device: torch.device
     _model: Wav2Vec2ForCTC
     _processor: Wav2Vec2Processor
+    _traced_model: torch.jit.ScriptModule | None
 
     def __init__(
         self,
@@ -86,6 +89,7 @@ class Wav2Vec2InferenceEngine:
             Exception: If model loading or device initialization fails
         """
         self._w2v_config = w2v_config
+        self._traced_model = None
         logger.info(f"Initializing Wav2Vec2 model from {w2v_config.model_path}...")
 
         self._processor = (
@@ -125,14 +129,26 @@ class Wav2Vec2InferenceEngine:
             num_threads_env = os.getenv("TORCH_NUM_THREADS")
             interop_threads_env = os.getenv("TORCH_NUM_INTEROP_THREADS")
             if not num_threads_env:
-                default_threads = max(1, (os.cpu_count() or 8) // 2)
-                torch.set_num_threads(default_threads)
+                try:
+                    default_threads = max(1, (os.cpu_count() or 8) // 2)
+                    torch.set_num_threads(default_threads)
+                except RuntimeError:
+                    pass
             else:
-                torch.set_num_threads(int(num_threads_env))
+                try:
+                    torch.set_num_threads(int(num_threads_env))
+                except RuntimeError:
+                    pass
             if not interop_threads_env:
-                torch.set_num_interop_threads(2)
+                try:
+                    torch.set_num_interop_threads(2)
+                except RuntimeError:
+                    pass
             else:
-                torch.set_num_interop_threads(int(interop_threads_env))
+                try:
+                    torch.set_num_interop_threads(int(interop_threads_env))
+                except RuntimeError:
+                    pass
         except (ValueError, TypeError) as e:
             logger.warning(f"Failed to configure torch threading: {e}")
 
@@ -141,7 +157,8 @@ class Wav2Vec2InferenceEngine:
         if self._w2v_config.use_torch_compile:
             try:
                 compile_mode = self._w2v_config.compile_mode or "default"
-                self._model = torch.compile(self._model, mode=compile_mode)
+                compiled_model = torch.compile(self._model, mode=compile_mode)
+                self._model = compiled_model
                 logger.info(f"Enabled torch.compile with mode={compile_mode}")
             except Exception as e:
                 logger.warning(f"torch.compile unavailable or failed; continuing without it: {e}")
@@ -159,6 +176,19 @@ class Wav2Vec2InferenceEngine:
         logger.info(f"Model loaded on {self._device}")
         self._log_gpu_memory_usage()
 
+        if self._w2v_config.use_jit_trace:
+            self._init_jit_trace()
+
+    def _init_jit_trace(self) -> None:
+        """Initialize JIT traced model for optimized inference."""
+        try:
+            dummy_input: torch.Tensor = torch.zeros((1, 16000), device=self._device)
+            self._traced_model = torch.jit.trace(self._model, dummy_input)
+            logger.info("JIT trace optimization enabled")
+        except Exception as e:
+            logger.warning(f"JIT trace failed, using regular model: {e}")
+            self._traced_model = None
+
     def _preprocess_audio(self, *, audio_array: np.ndarray) -> PreprocessResult:
         """Preprocess the audio array.
 
@@ -172,7 +202,7 @@ class Wav2Vec2InferenceEngine:
         inputs: BatchFeature = self._processor(
             [audio_array], sampling_rate=16_000, return_tensors="pt", padding=False
         )
-        input_values: torch.Tensor = inputs.input_values.to(self._device)
+        input_values: torch.Tensor = inputs.input_values.to(self._device, non_blocking=True)
         return PreprocessResult(
             input_values=input_values,
             preprocess_time_ms=(time.time() - preprocess_start) * MS_PER_SECOND,
@@ -189,13 +219,33 @@ class Wav2Vec2InferenceEngine:
         """
         model_start: float = time.time()
         logger.debug(f"Starting model inference on device: {self._device.type}")
-        if self._device.type == "cuda":
+
+        model_to_use = self._traced_model if self._traced_model is not None else self._model
+
+        use_amp: bool = bool(getattr(self._w2v_config, "use_mixed_precision", False))
+        if self._device.type == "cuda" and use_amp:
             with torch.autocast(device_type="cuda"):
                 logger.debug("Running model with CUDA autocast")
-                logits = self._model(input_values).logits
+                logits = model_to_use(input_values)
+                if not isinstance(logits, torch.Tensor):
+                    logits = logits.logits
+        elif self._device.type == "mps" and use_amp and hasattr(torch, "autocast"):
+            try:
+                with torch.autocast(device_type="mps"):
+                    logger.debug("Running model with MPS autocast")
+                    logits = model_to_use(input_values)
+                    if not isinstance(logits, torch.Tensor):
+                        logits = logits.logits
+            except Exception:
+                logger.debug("MPS autocast unavailable; running without autocast")
+                logits = model_to_use(input_values)
+                if not isinstance(logits, torch.Tensor):
+                    logits = logits.logits
         else:
             logger.debug("Running model without autocast")
-            logits = self._model(input_values).logits
+            logits = model_to_use(input_values)
+            if not isinstance(logits, torch.Tensor):
+                logits = logits.logits
         logger.debug(f"Model inference completed in {(time.time() - model_start) * 1000:.1f}ms")
         return InferenceResult(
             logits=logits,
@@ -213,11 +263,11 @@ class Wav2Vec2InferenceEngine:
         """
         decode_start: float = time.time()
         predicted_ids: torch.Tensor = torch.argmax(logits, dim=-1)
+
+        predicted_ids_cpu = predicted_ids[0].cpu()
         pred_tokens: list[str] = []
         if hasattr(self._processor, "tokenizer") and self._processor.tokenizer:
-            pred_tokens = self._processor.tokenizer.convert_ids_to_tokens(
-                predicted_ids[0].cpu().numpy()
-            )
+            pred_tokens = self._processor.tokenizer.convert_ids_to_tokens(predicted_ids_cpu.numpy())
         transcription: str = self._processor.batch_decode(predicted_ids)[0]
         return DecodePredictionResult(
             transcription=transcription,
@@ -236,8 +286,9 @@ class Wav2Vec2InferenceEngine:
             ConfidenceResult: The confidence result.
         """
         conf_start: float = time.time()
-        probs: torch.Tensor = torch.nn.functional.softmax(input=logits, dim=-1)
-        max_probs: np.ndarray = torch.max(probs, dim=-1)[0][0].cpu().numpy()
+        with torch.inference_mode():
+            max_probs_tensor = torch.max(torch.nn.functional.softmax(logits, dim=-1), dim=-1)[0][0]
+            max_probs: np.ndarray = max_probs_tensor.cpu().numpy()
         return ConfidenceResult(
             max_probs=max_probs,
             confidence_time_ms=(time.time() - conf_start) * MS_PER_SECOND,
@@ -373,6 +424,29 @@ class Wav2Vec2InferenceEngine:
         return result
 
 
+def get_cached_engine(*, w2v_config: W2VConfig) -> Wav2Vec2InferenceEngine | TritonInferenceEngine:
+    """Get or create a cached inference engine for Lambda optimization.
+
+    Args:
+        w2v_config: The Wav2Vec2 configuration.
+
+    Returns:
+        Cached inference engine instance.
+    """
+    cache_key = f"{w2v_config.model_path}_{w2v_config.use_triton}_{w2v_config.use_torch_compile}_{w2v_config.use_jit_trace}"
+
+    if cache_key not in _cached_engines:
+        if w2v_config.use_triton:
+            from .triton_engine import TritonInferenceEngine
+
+            _cached_engines[cache_key] = TritonInferenceEngine(w2v_config=w2v_config)
+        else:
+            _cached_engines[cache_key] = Wav2Vec2InferenceEngine(w2v_config=w2v_config)
+        logger.info(f"Cached new inference engine with key: {cache_key}")
+
+    return _cached_engines[cache_key]
+
+
 def perform_single_audio_inference(
     *,
     audio_array: np.ndarray,
@@ -381,6 +455,7 @@ def perform_single_audio_inference(
     processor_instance: Wav2Vec2Processor | None = None,
     inference_id: str | None = None,
     engine: Wav2Vec2InferenceEngine | TritonInferenceEngine | None = None,
+    use_cache: bool = False,
 ) -> GPUInferenceResult:
     """Perform a single audio inference.
 
@@ -391,12 +466,15 @@ def perform_single_audio_inference(
         processor_instance: The processor instance.
         inference_id: The inference ID.
         engine: Pre-initialized engine instance (optional).
+        use_cache: Whether to use global engine caching (useful for Lambda).
 
     Returns:
         GPUInferenceResult: The inference result.
     """
     if engine is None:
-        if w2v_config.use_triton:
+        if use_cache:
+            engine = get_cached_engine(w2v_config=w2v_config)
+        elif w2v_config.use_triton:
             from .triton_engine import TritonInferenceEngine
 
             engine = TritonInferenceEngine(w2v_config=w2v_config)

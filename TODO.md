@@ -88,6 +88,24 @@ This document turns our backlog into a focused, outcome‑oriented roadmap. Each
   - Memory: ~30–40% fewer allocations
   - Speed: ~20–30% typical speedup; better constants in worst case
 
+- Advanced optimizations (future)
+  1. Algorithm improvements
+     - Consider Wagner-Fischer dynamic programming as alternative to Myers diff for better worst-case complexity
+     - Implement phonetic similarity scoring beyond exact matching (e.g., Levenshtein distance on IPA features)
+  2. Data structure improvements
+     - Make phoneme mappings configurable via JSON/YAML instead of hardcoded HashMap
+     - Add weighted acceptance rules based on empirical mispronunciation frequency data
+  3. Parallelization
+     - Use Rayon for parallel batch processing of multiple activities
+     - SIMD optimizations for string comparisons on large batches
+  4. Testing & quality
+     - Add property-based testing with proptest crate for edge case discovery
+     - Fuzzing harness for input validation
+     - Performance regression benchmarks in CI
+  5. Better abstractions
+     - Extract common result-building patterns (push to results, errors, confidence arrays)
+     - Create PhonemeMatch enum (Exact, Accepted, Error) for cleaner control flow
+
 ## TLS for Triton (End‑to‑End)
 - Sidecar TLS (quickest path)
   - Add Nginx/Envoy sidecar; self‑signed cert at startup; HTTPS target group + health checks

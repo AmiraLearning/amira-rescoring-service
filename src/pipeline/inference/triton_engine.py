@@ -13,8 +13,7 @@ except ImportError:
     TRITON_AVAILABLE = False
     logger.warning("Triton client not available. Install with: pip install tritonclient[http]")
 
-import torch
-from transformers import Wav2Vec2Processor
+from utils.logging import emit_emf_metric
 
 from .constants import MS_PER_SECOND, DeviceType
 from .decoder import PhonemeDecoder
@@ -37,9 +36,10 @@ class TritonInferenceEngine:
 
         self._w2v_config = w2v_config
         self._decoder = PhonemeDecoder()
-        self._processor: Wav2Vec2Processor | None = None
+        self._processor = None
         try:
-            # Load only the processor/tokenizer for decoding; model stays on Triton
+            from transformers import Wav2Vec2Processor
+
             self._processor = Wav2Vec2Processor.from_pretrained(w2v_config.model_path)
             logger.info("Loaded W2V2 processor for Triton decoding")
         except Exception as e:
@@ -62,11 +62,9 @@ class TritonInferenceEngine:
                 ssl=True,
             )
 
-            # Verify server is ready
             if not self._client.is_server_ready():
                 raise ConnectionError(f"Triton server not ready at {w2v_config.triton_url}")
 
-            # Verify model is ready
             if not self._client.is_model_ready(w2v_config.triton_model):
                 raise ConnectionError(f"Triton model '{w2v_config.triton_model}' not ready")
 
@@ -87,28 +85,24 @@ class TritonInferenceEngine:
         """
         result = GPUInferenceResult(
             inference_id=input_data.inference_id,
-            device=DeviceType.GPU,  # Triton runs on GPU
+            device=DeviceType.GPU,
         )
 
         try:
             inference_start = time.time()
 
-            # Prepare input for Triton
             preprocess_start = time.time()
             audio_input = input_data.audio_array.astype(np.float32)
             if audio_input.ndim == 1:
-                audio_input = audio_input[np.newaxis, :]  # Add batch dimension
+                audio_input = audio_input[np.newaxis, :]
 
             result.preprocess_time_ms = (time.time() - preprocess_start) * MS_PER_SECOND
 
-            # Create Triton input
             triton_input = httpclient.InferInput("INPUT__0", audio_input.shape, "FP32")
             triton_input.set_data_from_numpy(audio_input)
 
-            # Create Triton output request
             triton_output = httpclient.InferRequestedOutput("OUTPUT__0")
 
-            # Run inference
             model_start = time.time()
             response = self._client.infer(
                 model_name=self._w2v_config.triton_model,
@@ -117,25 +111,29 @@ class TritonInferenceEngine:
             )
             result.model_inference_time_ms = (time.time() - model_start) * MS_PER_SECOND
 
-            # Get logits from response
             logits = response.as_numpy("OUTPUT__0")
 
-            # Decode predictions
             decode_start = time.time()
-            predicted_ids = np.argmax(logits, axis=-1)  # [B, T]
+            predicted_ids = np.argmax(logits, axis=-1)
 
-            # Use local tokenizer to convert IDs to tokens and transcription if available
             if self._processor is not None:
                 try:
-                    ids_tensor = torch.tensor(predicted_ids, dtype=torch.long)
-                    # Transcription via processor (CTC decode)
-                    transcription = self._processor.batch_decode(ids_tensor)[0]
-                    result.transcription = transcription
-                    # Tokens for phoneme decoding
-                    ids_list = predicted_ids[0].tolist()
-                    result.pred_tokens = self._processor.tokenizer.convert_ids_to_tokens(ids_list)
-                except Exception as e:
-                    logger.warning(f"Decoding with processor failed: {e}")
+                    try:
+                        import torch
+
+                        ids_tensor = torch.tensor(predicted_ids, dtype=torch.long)
+                        transcription = self._processor.batch_decode(ids_tensor)[0]
+                        result.transcription = transcription
+                        ids_list = predicted_ids[0].tolist()
+                        if hasattr(self._processor, "tokenizer") and self._processor.tokenizer:
+                            result.pred_tokens = self._processor.tokenizer.convert_ids_to_tokens(
+                                ids_list
+                            )
+                    except Exception as e:  # pragma: no cover - optional decoding path
+                        logger.warning(f"Decoding with processor failed: {e}")
+                        result.transcription = ""
+                        result.pred_tokens = []
+                except Exception:
                     result.transcription = ""
                     result.pred_tokens = []
             else:
@@ -144,17 +142,14 @@ class TritonInferenceEngine:
 
             result.decode_time_ms = (time.time() - decode_start) * MS_PER_SECOND
 
-            # Calculate confidence if requested
             if self._w2v_config.include_confidence:
                 conf_start = time.time()
-                # Apply softmax to get probabilities
                 exp_logits = np.exp(logits - np.max(logits, axis=-1, keepdims=True))
                 probs = exp_logits / np.sum(exp_logits, axis=-1, keepdims=True)
-                max_probs = np.max(probs, axis=-1)[0]  # Remove batch dimension
+                max_probs = np.max(probs, axis=-1)[0]
                 result.max_probs = max_probs
                 result.confidence_calculation_time_ms = (time.time() - conf_start) * MS_PER_SECOND
 
-            # Create phonetic transcript using decoder (best-effort)
             try:
                 result.phonetic_transcript = self._decoder.decode(
                     pred_tokens=result.pred_tokens,
@@ -166,16 +161,63 @@ class TritonInferenceEngine:
 
             result.total_duration_ms = (time.time() - inference_start) * MS_PER_SECOND
             result.success = True
+            try:
+                emit_emf_metric(
+                    namespace="Amira/Inference",
+                    metrics={
+                        "InferenceTotalMs": result.total_duration_ms,
+                        "PreprocessMs": result.preprocess_time_ms or 0.0,
+                        "ModelMs": result.model_inference_time_ms or 0.0,
+                        "DecodeMs": result.decode_time_ms or 0.0,
+                        "IncludeConfidence": 1.0 if self._w2v_config.include_confidence else 0.0,
+                        "Success": 1.0,
+                    },
+                    dimensions={
+                        "Device": result.device.value
+                        if hasattr(result.device, "value")
+                        else str(result.device)
+                    },
+                )
+            except Exception:
+                pass
 
         except InferenceServerException as e:
             logger.error(f"Triton inference error: {e}")
             result.success = False
             result.error = f"Triton inference error: {e}"
+            try:
+                emit_emf_metric(
+                    namespace="Amira/Inference",
+                    metrics={
+                        "Success": 0.0,
+                    },
+                    dimensions={
+                        "Device": result.device.value
+                        if hasattr(result.device, "value")
+                        else str(result.device)
+                    },
+                )
+            except Exception:
+                pass
         except Exception as e:
             logger.error(f"Error during Triton inference: {e}")
             logger.error(f"Traceback: {traceback.format_exc()}")
             result.success = False
             result.error = str(e)
+            try:
+                emit_emf_metric(
+                    namespace="Amira/Inference",
+                    metrics={
+                        "Success": 0.0,
+                    },
+                    dimensions={
+                        "Device": result.device.value
+                        if hasattr(result.device, "value")
+                        else str(result.device)
+                    },
+                )
+            except Exception:
+                pass
 
         return result
 
