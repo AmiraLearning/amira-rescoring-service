@@ -4,6 +4,8 @@
 - Troubleshooting: `docs/TROUBLESHOOTING.md`
 - Data Contracts: `docs/DATA_CONTRACTS.md`
 - Deployment: `docs/DEPLOYMENT.md`
+- OIDC Deployments: `docs/OIDC_DEPLOYMENTS.md`
+- Rollback & Change Review: `docs/ROLLBACK_CHANGE_REVIEW.md`
 - Schemas: `docs/schemas/`
 
 # Amira Letter Scoring Pipeline
