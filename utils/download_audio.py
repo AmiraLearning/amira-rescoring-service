@@ -11,24 +11,19 @@ from loguru import logger
 from pydantic import BaseModel
 
 from infra.s3_client import ProductionS3Client
-from utils.config import (
-    RECONSTITUTED_PHRASE_AUDIO,
-    S3_SPEECH_ROOT_PROD,
-    S3_SPEECH_ROOT_STAGE,
+from utils.config import RECONSTITUTED_PHRASE_AUDIO
+from utils.phrase_slicing import PhraseSlicer
+from utils.s3_audio_operations import (
+    bucket_for as _bucket_for,
 )
-from utils.phrase_slicing import PhraseSlicer, s3_find
+from utils.s3_audio_operations import (
+    get_segment_file_names as _get_segment_files,
+)
 
 
 def resolve_bucket(stage_source: bool) -> str:
-    """Resolve S3 bucket name based on environment.
-
-    Args:
-        stage_source: True for staging environment, False for production
-
-    Returns:
-        S3 bucket name string
-    """
-    return S3_SPEECH_ROOT_STAGE if stage_source else S3_SPEECH_ROOT_PROD
+    """Resolve S3 bucket name based on environment (delegates to shared helper)."""
+    return _bucket_for(stage_source=stage_source)
 
 
 class DatasetLayout(BaseModel):
@@ -88,24 +83,10 @@ def iter_wav_files(*, directory: Path) -> list[Path]:
 async def get_segment_file_names(
     *, activity_id: str, s3_client: ProductionS3Client, stage_source: bool = False
 ) -> list[str]:
-    """Get the file names of all the audio segments for an activity
-
-    Args:
-        activity_id: Activity ID to process
-        s3_client: S3 client to use
-        stage_source: Whether the source activity is from staging
-
-    Returns:
-        List of file names of the audio segments for the activity
-    """
-    keys: list[str] = []
-    bucket: str = resolve_bucket(stage_source)
-    for obj in await s3_find(bucket=bucket, prefix=f"{activity_id}/", s3_client=s3_client):
-        if ".wav" in obj.key and "complete" not in obj.key:
-            keys.append(obj.key)
-        else:
-            logger.error(f"skipping non-phrase key under s3://{bucket}/{activity_id}: {obj.key}")
-    return keys
+    """Get the file names of all the audio segments for an activity (shared helper)."""
+    return await _get_segment_files(
+        activity_id=activity_id, s3_client=s3_client, stage_source=stage_source
+    )
 
 
 async def download_tutor_style_audio(

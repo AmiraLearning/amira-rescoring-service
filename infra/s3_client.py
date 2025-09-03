@@ -6,6 +6,7 @@ optimizations for system-wide use.
 """
 
 import asyncio
+import os
 import time
 from collections.abc import Awaitable
 from dataclasses import dataclass
@@ -18,13 +19,13 @@ from loguru import logger
 from pydantic import BaseModel, Field
 from rich.progress import Progress
 
-DEFAULT_MAX_CONNECTIONS: Final[int] = 1000  # Increased for cloud deployment
-DEFAULT_MAX_CONNECTIONS_PER_HOST: Final[int] = 500  # Increased for cloud deployment
-DEFAULT_CONNECTION_TIMEOUT: Final[int] = 60
-DEFAULT_READ_TIMEOUT: Final[int] = 300
-DEFAULT_MAX_CONCURRENT_DOWNLOADS: Final[int] = 500  # Massive concurrency for cloud
-DEFAULT_MAX_CONCURRENT_UPLOADS: Final[int] = 200  # Increased upload concurrency
-DEFAULT_MAX_CONCURRENT_OPERATIONS: Final[int] = 1000  # Total operations for cloud
+DEFAULT_MAX_CONNECTIONS: Final[int] = 128
+DEFAULT_MAX_CONNECTIONS_PER_HOST: Final[int] = 64
+DEFAULT_CONNECTION_TIMEOUT: Final[int] = 30
+DEFAULT_READ_TIMEOUT: Final[int] = 180
+DEFAULT_MAX_CONCURRENT_DOWNLOADS: Final[int] = 64
+DEFAULT_MAX_CONCURRENT_UPLOADS: Final[int] = 32
+DEFAULT_MAX_CONCURRENT_OPERATIONS: Final[int] = 128
 DEFAULT_MULTIPART_THRESHOLD: Final[int] = 64 * 1024 * 1024  # 64MB
 DEFAULT_MULTIPART_CHUNKSIZE: Final[int] = 16 * 1024 * 1024  # 16MB
 DEFAULT_MAX_RETRIES: Final[int] = 5
@@ -146,6 +147,128 @@ class HighPerformanceS3Config(BaseModel):
     use_head_for_progress: bool = Field(
         default=False, description="Issue HEAD to set progress totals before downloads"
     )
+
+    @classmethod
+    def _get_int_env(cls, name: str, default: int) -> int:
+        try:
+            return int(os.getenv(name, str(default)))
+        except Exception:
+            return default
+
+    @classmethod
+    def _get_float_env(cls, name: str, default: float) -> float:
+        try:
+            return float(os.getenv(name, str(default)))
+        except Exception:
+            return default
+
+    @classmethod
+    def _get_bool_env(cls, name: str, default: bool) -> bool:
+        v = os.getenv(name)
+        if v is None:
+            return default
+        return v.lower() in {"1", "true", "yes", "on"}
+
+    @classmethod
+    def _clamp(cls, value: int, lo: int, hi: int) -> int:
+        return max(lo, min(hi, value))
+
+    @classmethod
+    def _clamp_float(cls, value: float, lo: float, hi: float) -> float:
+        return max(lo, min(hi, value))
+
+    @classmethod
+    def _apply_env_overrides(cls, self: "HighPerformanceS3Config") -> None:
+        self.max_connections = cls._clamp(
+            cls._get_int_env("S3_MAX_CONNECTIONS", self.max_connections or DEFAULT_MAX_CONNECTIONS),
+            50,
+            5000,
+        )
+        self.max_connections_per_host = cls._clamp(
+            cls._get_int_env(
+                "S3_MAX_CONNECTIONS_PER_HOST",
+                self.max_connections_per_host or DEFAULT_MAX_CONNECTIONS_PER_HOST,
+            ),
+            20,
+            2000,
+        )
+        self.connection_timeout = cls._clamp(
+            cls._get_int_env(
+                "S3_CONNECTION_TIMEOUT", self.connection_timeout or DEFAULT_CONNECTION_TIMEOUT
+            ),
+            10,
+            300,
+        )
+        self.read_timeout = cls._clamp(
+            cls._get_int_env("S3_READ_TIMEOUT", self.read_timeout or DEFAULT_READ_TIMEOUT), 30, 1800
+        )
+        self.max_concurrent_downloads = cls._clamp(
+            cls._get_int_env(
+                "S3_MAX_CONCURRENT_DOWNLOADS",
+                self.max_concurrent_downloads or DEFAULT_MAX_CONCURRENT_DOWNLOADS,
+            ),
+            10,
+            2000,
+        )
+        self.max_concurrent_uploads = cls._clamp(
+            cls._get_int_env(
+                "S3_MAX_CONCURRENT_UPLOADS",
+                self.max_concurrent_uploads or DEFAULT_MAX_CONCURRENT_UPLOADS,
+            ),
+            5,
+            1000,
+        )
+        self.max_concurrent_operations = cls._clamp(
+            cls._get_int_env(
+                "S3_MAX_CONCURRENT_OPERATIONS",
+                self.max_concurrent_operations or DEFAULT_MAX_CONCURRENT_OPERATIONS,
+            ),
+            20,
+            5000,
+        )
+        self.multipart_threshold = cls._clamp(
+            cls._get_int_env(
+                "S3_MULTIPART_THRESHOLD", self.multipart_threshold or DEFAULT_MULTIPART_THRESHOLD
+            ),
+            5 * 1024 * 1024,
+            1024 * 1024 * 1024,
+        )
+        self.multipart_chunksize = cls._clamp(
+            cls._get_int_env(
+                "S3_MULTIPART_CHUNKSIZE", self.multipart_chunksize or DEFAULT_MULTIPART_CHUNKSIZE
+            ),
+            5 * 1024 * 1024,
+            100 * 1024 * 1024,
+        )
+        self.max_retries = cls._clamp(
+            cls._get_int_env("S3_MAX_RETRIES", self.max_retries or DEFAULT_MAX_RETRIES), 1, 10
+        )
+        self.retry_backoff_base = cls._clamp_float(
+            cls._get_float_env(
+                "S3_RETRY_BACKOFF_BASE", self.retry_backoff_base or DEFAULT_RETRY_BACKOFF_BASE
+            ),
+            0.01,
+            1.0,
+        )
+        self.retry_backoff_max = cls._clamp_float(
+            cls._get_float_env(
+                "S3_RETRY_BACKOFF_MAX", self.retry_backoff_max or DEFAULT_RETRY_BACKOFF_MAX
+            ),
+            1.0,
+            300.0,
+        )
+        self.buffer_size = cls._clamp(
+            cls._get_int_env("S3_BUFFER_SIZE", self.buffer_size or 8192), 1024, 65536
+        )
+        self.client_pool_size = cls._clamp(
+            cls._get_int_env("S3_CLIENT_POOL_SIZE", self.client_pool_size or 20), 5, 100
+        )
+        self.use_head_for_progress = cls._get_bool_env(
+            "S3_USE_HEAD_FOR_PROGRESS", self.use_head_for_progress or False
+        )
+
+    def model_post_init(self, __context: Any) -> None:
+        self._apply_env_overrides(self)
 
 
 class ProductionS3Client:
@@ -347,7 +470,7 @@ class ProductionS3Client:
 
                 try:
                     if operation.local_path is None:
-                        raise ValueError("local_path is required for download operations")
+                        raise ValueError("local_path is required for upload operations")
                     local_path = Path(operation.local_path)
                     local_path.parent.mkdir(parents=True, exist_ok=True)
 

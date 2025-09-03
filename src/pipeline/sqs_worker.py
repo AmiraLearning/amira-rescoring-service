@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import json
 import os
 import re
@@ -15,6 +16,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from src.pipeline.pipeline import run_activity_pipeline
 from utils.extract_phrases import extract_phrase_slices_tutor_style
+from utils.logging import emit_emf_metric, setup_logging
 
 # from src.pipeline.inference.engine import Wav2Vec2InferenceEngine, W2VConfig
 
@@ -318,10 +320,35 @@ async def handle_sqs_message(
 
             start_ts = time.time()
 
+            async def _process_with_heartbeat() -> None:
+                heartbeat_interval = max(30, int(config.visibility_timeout * 0.5))
+
+                async def _heartbeat_task() -> None:
+                    try:
+                        while True:
+                            await asyncio.sleep(heartbeat_interval)
+                            await sqs_client.change_message_visibility(
+                                QueueUrl=config.queue_url,
+                                ReceiptHandle=receipt,
+                                VisibilityTimeout=config.visibility_timeout,
+                            )
+                    except asyncio.CancelledError:
+                        return
+                    except Exception as e:
+                        logger.warning(f"Heartbeat extension failed: {e}")
+
+                hb_task = asyncio.create_task(_heartbeat_task())
+                try:
+                    with logger.contextualize(correlationId=message_id, activityId=msg.activityId):
+                        await process_message(msg=msg, config=config, s3_client=s3_client)
+                finally:
+                    hb_task.cancel()
+                    with contextlib.suppress(Exception):
+                        await hb_task
+
             try:
                 await asyncio.wait_for(
-                    process_message(msg=msg, config=config, s3_client=s3_client),
-                    timeout=config.max_processing_time,
+                    _process_with_heartbeat(), timeout=config.max_processing_time
                 )
             except TimeoutError:
                 logger.error(f"Processing timeout for message {message_id}")
@@ -342,6 +369,20 @@ async def handle_sqs_message(
 
             await sqs_client.delete_message(QueueUrl=config.queue_url, ReceiptHandle=receipt)
             logger.info(f"Successfully processed and deleted message {message_id}")
+            try:
+                emit_emf_metric(
+                    namespace="Amira/Worker",
+                    metrics={
+                        "MessagesProcessed": 1.0,
+                        "ProcessingTimeMs": processing_time * 1000.0,
+                    },
+                    dimensions={
+                        "Queue": config.queue_url.split("/")[-1],
+                        "Region": config.aws_region,
+                    },
+                )
+            except Exception:
+                pass
             return
 
         except Exception as e:
@@ -428,13 +469,7 @@ async def poll_and_process_messages(
 
 def main() -> None:
     """Main entry point for the SQS worker."""
-    logger.remove()
-    logger.add(
-        sys.stdout,
-        level="INFO",
-        format="{time:YYYY-MM-DD HH:mm:ss} | {level} | {name}:{function}:{line} | {message}",
-        serialize=True,
-    )
+    setup_logging(service="sqs-worker")
 
     try:
         config = WorkerConfig.from_env()

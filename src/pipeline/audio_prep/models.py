@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 import numpy as np
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from utils.audio import DEFAULT_SAMPLING_RATE
 
@@ -43,8 +43,7 @@ class ProcessedPhraseOutput(BaseModel):
     storyId: str | None = None
     studentId: str | None = None
 
-    class Config:
-        arbitrary_types_allowed = True
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
 
 class ActivityOutput(BaseModel):
@@ -55,5 +54,4 @@ class ActivityOutput(BaseModel):
     phrases_processed: int = 0
     phrases_failed: int = 0
 
-    class Config:
-        arbitrary_types_allowed = True
+    model_config = ConfigDict(arbitrary_types_allowed=True)

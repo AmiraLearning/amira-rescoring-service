@@ -9,7 +9,7 @@ import sys
 from pathlib import Path
 
 
-def profile_main(script_args: list[str], output_name: str = "profile"):
+def profile_main(script_args: list[str], output_name: str = "profile") -> None:
     """Profile main.py with given arguments and save to prof/ directory."""
     prof_dir = Path(__file__).parent.parent / "prof"
     prof_dir.mkdir(exist_ok=True)

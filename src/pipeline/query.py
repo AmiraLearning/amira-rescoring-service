@@ -175,9 +175,14 @@ def load_story_phrase_data(*, config: PipelineConfig) -> pl.DataFrame:
     if columns_to_process:
         story_phrase_df = story_phrase_df.with_columns(columns_to_process)
 
-    logger.info(f"Saving processed story phrases to {story_phrase_path} for future use")
-    if story_phrase_path.suffix != FileFormat.PARQUET:
-        logger.info("Skipping parquet save due to Object columns in processed data")
+    if story_phrase_path.suffix == FileFormat.PARQUET:
+        logger.info(
+            "Story phrases loaded in parquet format; skipping re-save as it is already optimized"
+        )
+    else:
+        logger.info(
+            "Processed story phrases contain Object columns; skip parquet save to avoid schema issues"
+        )
 
     logger.info(f"Loaded {story_phrase_df.height} story phrases")
     return story_phrase_df

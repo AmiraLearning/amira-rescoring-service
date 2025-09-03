@@ -11,6 +11,7 @@ from pydantic import BaseModel
 from src.pipeline.inference.models import W2VConfig
 from src.pipeline.pipeline import run_activity_pipeline
 from utils.config import PipelineConfig
+from utils.logging import setup_logging
 
 
 class LambdaProcessingResult(BaseModel):
@@ -202,6 +203,7 @@ def publish_batch_metrics(successes: int, failures: int, total_time: float) -> N
 
 
 def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
+    setup_logging(service="lambda-parallel-processor")
     handler_start = time.time()
 
     try:

@@ -1,6 +1,7 @@
 import time
 from typing import Any
 
+from loguru import logger
 from pydantic import BaseModel, Field
 
 
@@ -30,7 +31,7 @@ class SQSEnqueuer:
             try:
                 await self.client.send_message_batch(QueueUrl=self.queue_url, Entries=entries)
                 count += len(batch)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.error(f"Failed to enqueue batch starting at {i}: {e}")
 
         return count

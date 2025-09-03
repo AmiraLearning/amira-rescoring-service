@@ -23,6 +23,7 @@ models/
 *.log
 
 audio/
+2025_letter_sound_scoring/
 
 # Profiling output
 prof/

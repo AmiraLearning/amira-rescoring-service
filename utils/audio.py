@@ -1,3 +1,4 @@
+import os
 import threading
 import warnings
 import wave
@@ -96,8 +97,14 @@ def _load_audio_file(*, file_path: Path) -> tuple[torch.Tensor, int]:
         signal.alarm(10)
 
     try:
-        if False:
-            pass
+        use_torchcodec_env = os.getenv("AUDIO_USE_TORCHCODEC", "auto").lower()
+        use_torchcodec: bool = (
+            _USE_TORCHCODEC
+            if use_torchcodec_env == "auto"
+            else use_torchcodec_env in {"1", "true", "yes", "on"}
+        )
+        if use_torchcodec and _USE_TORCHCODEC:
+            result = torchaudio.load_with_torchcodec(str(file_path))
         else:
             import warnings
 
@@ -176,7 +183,7 @@ class PadAudioRequest(BaseModel):
 
     audio_dir: str = Field(..., description="Base audio directory")
     activity_id: str = Field(..., description="Activity ID")
-    phrase_index: int = Field(..., ge=0, le=11, description="Phrase index (0-11)")
+    phrase_index: int = Field(..., ge=0, description="Phrase index (>= 0)")
     padded_seconds: int = Field(
         DEFAULT_PADDED_SECONDS, gt=0, description="Seconds to pad from adjacent phrases"
     )
@@ -404,6 +411,7 @@ def _concatenate_audio_segments(
     Returns:
         Concatenated audio tensor.
     """
+    padded_seconds = max(0, min(int(padded_seconds), 30))
     segments: list[torch.Tensor | None] = [
         _load_audio_segment(
             request=AudioSegmentRequest(

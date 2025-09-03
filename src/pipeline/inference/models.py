@@ -2,7 +2,7 @@ from dataclasses import dataclass
 
 import numpy as np
 import torch
-from pydantic import BaseModel, Field, field_serializer
+from pydantic import BaseModel, ConfigDict, Field, field_serializer
 
 from .constants import DeviceType
 
@@ -34,17 +34,13 @@ class W2VConfig(BaseModel):
 class PreprocessResult(BaseModel):
     input_values: torch.Tensor
     preprocess_time_ms: float
-
-    class Config:
-        arbitrary_types_allowed = True
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
 
 class InferenceResult(BaseModel):
     logits: torch.Tensor
     model_inference_time_ms: float
-
-    class Config:
-        arbitrary_types_allowed = True
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
 
 class DecodePredictionResult(BaseModel):
@@ -52,25 +48,19 @@ class DecodePredictionResult(BaseModel):
     pred_tokens: list[str]
     predicted_ids: torch.Tensor
     decode_time_ms: float
-
-    class Config:
-        arbitrary_types_allowed = True
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
 
 class ConfidenceResult(BaseModel):
     max_probs: np.ndarray
     confidence_time_ms: float
-
-    class Config:
-        arbitrary_types_allowed = True
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
 
 class InferenceInput(BaseModel):
     audio_array: np.ndarray
     inference_id: str | None = None
-
-    class Config:
-        arbitrary_types_allowed = True
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
 
 class PhoneticTranscript(BaseModel):
@@ -103,8 +93,7 @@ class GPUInferenceResult(BaseModel):
             return None
         return value.tolist()
 
-    class Config:
-        arbitrary_types_allowed = True
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
 
 @dataclass(frozen=True)

@@ -814,7 +814,7 @@ export class AmiraLetterScoringStack extends cdk.Stack {
       targets: [new targets.LambdaFunction(drainFn)]
     });
 
-    // Outputs for GPU cluster
+    // Outputs for GPU cluster and dashboard link
     new cdk.CfnOutput(this, 'TritonRepositoryUri', {
       value: tritonRepository.repositoryUri,
       description: 'Triton ECR Repository URI',
@@ -830,6 +830,12 @@ export class AmiraLetterScoringStack extends cdk.Stack {
     new cdk.CfnOutput(this, 'TritonServiceName', {
       value: service.serviceName,
       description: 'Triton ECS Service Name',
+      condition: useTritonCondition
+    });
+
+    new cdk.CfnOutput(this, 'GpuDashboardUrl', {
+      value: `https://${this.region}.console.aws.amazon.com/cloudwatch/home?region=${this.region}#dashboards:name=${dashboard.dashboardName}`,
+      description: 'CloudWatch GPU/Triton Dashboard URL',
       condition: useTritonCondition
     });
   }

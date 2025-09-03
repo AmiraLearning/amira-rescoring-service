@@ -1,3 +1,5 @@
+import os
+
 import numpy as np
 from loguru import logger
 
@@ -134,6 +136,7 @@ class PhonemeDecoder:
         index: int = 0
         track_confidence: bool = bool(grouped_segment_units.confidences)
 
+        robust_env = os.getenv("DECODER_ROBUST_MODE", "false").lower() in {"1", "true", "yes", "on"}
         while index < len(grouped_segment_units.tokens):
             longest_match: LongestMatchResult = self._phonetic_trie.find_longest_match(
                 tokens=grouped_segment_units.tokens, start_index=index
@@ -152,6 +155,10 @@ class PhonemeDecoder:
                     f"{index} in segment: "
                     f"{''.join(grouped_segment_units.tokens[index:])}"
                 )
+                if robust_env:
+                    logger.warning(message)
+                    index += 1
+                    continue
                 logger.error(message)
                 raise ValueError(message)
 

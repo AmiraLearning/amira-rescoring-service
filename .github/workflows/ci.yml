@@ -26,4 +26,4 @@ jobs:
       - name: Ruff format check
         run: ruff format --check .
       - name: Mypy
-        run: mypy src utils infra lambda main.py || true
+        run: mypy src utils infra lambda main.py

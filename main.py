@@ -10,6 +10,7 @@ from loguru import logger
 from src.pipeline.pipeline import run_activity_pipeline
 from utils.cleanup import cleanup_pipeline_data
 from utils.config import PipelineConfig, load_config
+from utils.logging import setup_logging
 
 app: typer.Typer = typer.Typer(
     help="Run CPU-GPU Parallel LNS Scoring Pipeline", no_args_is_help=True
@@ -75,15 +76,22 @@ def run(
         "--use-complete-audio",
         help="Use complete.wav from S3 instead of reconstituted phrase audio",
     ),
+    use_local_activity: bool = typer.Option(
+        False,
+        "--use-local-activity",
+        help="Use local activities.parquet instead of GraphQL",
+    ),
 ) -> None:
     """Run the CPU-GPU Parallel LNS Scoring Pipeline."""
+    setup_logging(service="cli")
     typer.echo("Scoring Pipeline Runner\n========================")
     typer.echo("This script runs the scoring pipeline for letter names and sounds.\n")
 
     success: bool = False
+    config_obj: PipelineConfig | None = None
 
     try:
-        config_obj: PipelineConfig = load_config(config_path=config_path)
+        config_obj = load_config(config_path=config_path)
 
         if activity_id:
             config_obj.metadata.activity_id = activity_id
@@ -92,6 +100,11 @@ def run(
         if use_complete_audio:
             config_obj.audio.use_complete_audio = use_complete_audio
             typer.echo("Using complete.wav audio method")
+
+        if use_local_activity:
+            config_obj.metadata.activity_file = "2025_letter_sound_scoring/activities.parquet"
+            config_obj.metadata.activity_id = None
+            typer.echo("Using local activities.parquet file")
 
         success = asyncio.run(run_pipeline_core(config=config_obj))
 
@@ -106,11 +119,9 @@ def run(
         logger.error(traceback.format_exc())
 
     finally:
-        if cleanup:
+        if cleanup and config_obj is not None:
             try:
                 cleanup_pipeline_data(config=config_obj)
-            except NameError:
-                pass  # config_obj was never defined due to early failure
             except Exception as e:
                 typer.echo(f"Cleanup failed: {e}", err=True)
                 logger.error(f"Cleanup failed: {e}")

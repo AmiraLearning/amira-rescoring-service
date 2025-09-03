@@ -11,6 +11,8 @@ import torch
 from loguru import logger
 from transformers import BatchFeature, Wav2Vec2ForCTC, Wav2Vec2Processor
 
+from utils.logging import emit_emf_metric
+
 if TYPE_CHECKING:
     from .triton_engine import TritonInferenceEngine
 
@@ -92,11 +94,12 @@ class Wav2Vec2InferenceEngine:
             else Wav2Vec2Processor.from_pretrained(w2v_config.model_path)
         )
 
-        self._model = (
+        base_model = (
             model_instance
             if model_instance
             else Wav2Vec2ForCTC.from_pretrained(w2v_config.model_path)
         )
+        self._model = base_model
 
         self._init_device()
         self._decoder = PhonemeDecoder()
@@ -134,6 +137,14 @@ class Wav2Vec2InferenceEngine:
             logger.warning(f"Failed to configure torch threading: {e}")
 
         self._model = self._model.to(self._device)
+
+        if self._w2v_config.use_torch_compile:
+            try:
+                compile_mode = self._w2v_config.compile_mode or "default"
+                self._model = torch.compile(self._model, mode=compile_mode)
+                logger.info(f"Enabled torch.compile with mode={compile_mode}")
+            except Exception as e:
+                logger.warning(f"torch.compile unavailable or failed; continuing without it: {e}")
 
         if self._device.type == "cpu" and os.getenv("W2V2_QUANTIZE", "false").lower() == "true":
             try:
@@ -258,7 +269,7 @@ class Wav2Vec2InferenceEngine:
             if self._device.type == "cuda":
                 result.device = DeviceType.GPU
             elif self._device.type == "mps":
-                result.device = DeviceType.GPU
+                result.device = DeviceType.MPS
             else:
                 result.device = DeviceType.CPU
             inference_start: float = time.time()
@@ -291,10 +302,29 @@ class Wav2Vec2InferenceEngine:
             result.total_duration_ms = (time.time() - inference_start) * MS_PER_SECOND
             result.success = True
             self._log_gpu_memory_usage()
+            try:
+                emit_emf_metric(
+                    namespace="Amira/Inference",
+                    metrics={
+                        "InferenceTotalMs": result.total_duration_ms,
+                        "PreprocessMs": result.preprocess_time_ms,
+                        "ModelMs": result.model_inference_time_ms,
+                        "DecodeMs": result.decode_time_ms,
+                    },
+                    dimensions={
+                        "Device": result.device.value
+                        if hasattr(result.device, "value")
+                        else str(result.device),
+                        "IncludeConfidence": str(self._w2v_config.include_confidence).lower(),
+                    },
+                )
+            except Exception:
+                pass
         except Exception as e:  # pragma: no cover
             logger.error(f"Error during inference: {e}")
             logger.error(f"Traceback: {traceback.format_exc()}")
 
+            # TODO ugly code, but it's a workaround for a known issue with MPS
             # If MPS fails with convolution error, try fallback to CPU
             if "convolution_overrideable not implemented" in str(e) and self._device.type == "mps":
                 logger.warning("MPS convolution failed, falling back to CPU for this inference")

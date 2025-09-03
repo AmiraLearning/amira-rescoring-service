@@ -130,7 +130,7 @@ export class AmiraLambdaParallelStack extends cdk.Stack {
       code: lambda.DockerImageCode.fromImageAsset('../lambda/parallel_processor'),
       timeout: cdk.Duration.minutes(15),
       memorySize: 10240,
-      reservedConcurrentExecutions: 1000,
+      reservedConcurrentExecutions: 200,
       deadLetterQueue: dlq,
       tracing: lambda.Tracing.ACTIVE,
       environment: {
@@ -140,7 +140,7 @@ export class AmiraLambdaParallelStack extends cdk.Stack {
         AUDIO_BUCKET: audioBucketNameParam.valueAsString,
         KMS_KEY_ID: kmsKey.keyId,
         SLACK_WEBHOOK_URL: slackWebhookParam.valueAsString,
-        MAX_CONCURRENCY: '1', // TODO take a closer look at this
+        MAX_CONCURRENCY: '10', // Tuned for initial alignment; adjust via env if needed
         BATCH_ALL_PHRASES: 'true',
         USE_FLOAT16: 'true',
         INCLUDE_CONFIDENCE: 'true',
@@ -159,7 +159,7 @@ export class AmiraLambdaParallelStack extends cdk.Stack {
     // SQS Event Source for Lambda
     const eventSource = new sources.SqsEventSource(tasksQueue, {
       batchSize: 1,
-      maxConcurrency: 100,
+      maxConcurrency: 10,
       reportBatchItemFailures: true,
       maxBatchingWindow: cdk.Duration.seconds(0),
     });
@@ -367,6 +367,13 @@ export class AmiraLambdaParallelStack extends cdk.Stack {
       comparisonOperator: cw.ComparisonOperator.GREATER_THAN_THRESHOLD
     });
 
+    const queueAgeAlarm = new cw.Alarm(this, 'QueueAgeAlarm', {
+      metric: tasksQueue.metricApproximateAgeOfOldestMessage(),
+      threshold: 300,
+      evaluationPeriods: 3,
+      comparisonOperator: cw.ComparisonOperator.GREATER_THAN_THRESHOLD
+    });
+
     // Job completion detection - queue empty AND no active Lambda executions
     const concurrentExecutionsMetric = new cw.Metric({
       namespace: 'AWS/Lambda',
@@ -401,6 +408,7 @@ export class AmiraLambdaParallelStack extends cdk.Stack {
     processingErrorsAlarm.addAlarmAction(alertAction);
     queueDepthAlarm.addAlarmAction(alertAction);
     jobCompletionAlarm.addAlarmAction(alertAction);
+    queueAgeAlarm.addAlarmAction(alertAction);
 
     // CloudWatch Dashboard
     const dashboard = new cw.Dashboard(this, 'ParallelProcessingDashboard', {
@@ -443,6 +451,16 @@ export class AmiraLambdaParallelStack extends cdk.Stack {
             metricName: 'JobsFailed',
             statistic: 'Sum'
           })
+        ],
+        width: 12
+      }),
+      new cw.GraphWidget({
+        title: 'ProcessingTime (ms)',
+        left: [
+          new cw.Metric({ namespace: 'Amira/Jobs', metricName: 'ProcessingTime', statistic: 'Average' })
+        ],
+        right: [
+          new cw.Metric({ namespace: 'Amira/Jobs', metricName: 'ProcessingTime', statistic: 'p95' })
         ],
         width: 12
       })

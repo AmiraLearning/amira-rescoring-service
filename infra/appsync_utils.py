@@ -156,16 +156,26 @@ def set_activity_fields(
             return {"data": {"updateActivity": {"activityId": activity_id}}}
         raise RuntimeError("APPSYNC_URL and APPSYNC_API_KEY must be set")
 
+    timeout_s: int = int(os.getenv("APPSYNC_TIMEOUT", "60"))
+    max_attempts: int = int(os.getenv("APPSYNC_MAX_ATTEMPTS", "3"))
     client: Client = Client(
         transport=RequestsHTTPTransport(
-            url=_GRAPHQL_ENDPOINT_URL, headers={"x-api-key": _GRAPHQL_ENDPOINT_KEY}
+            url=_GRAPHQL_ENDPOINT_URL,
+            headers={"x-api-key": _GRAPHQL_ENDPOINT_KEY},
+            timeout=timeout_s,
         )
     )
 
     try:
-        response: dict[str, Any] = client.execute(
-            UPDATE_ACTIVITY_FIELDS_MUTATION, variable_values=variables.dict()
-        )
+        for attempt in range(max(1, max_attempts)):
+            try:
+                response = client.execute(
+                    UPDATE_ACTIVITY_FIELDS_MUTATION, variable_values=variables.dict()
+                )
+                break
+            except Exception:
+                if attempt == max_attempts - 1:
+                    raise
     except Exception as e:
         if _GRAPHQL_ALLOW_MOCK:
             logger.info(
@@ -200,9 +210,12 @@ def query_activities_with_filter(
             return {"data": {"activities": []}}
         raise RuntimeError("APPSYNC_URL and APPSYNC_API_KEY must be set")
 
+    timeout_s: int = int(os.getenv("APPSYNC_TIMEOUT", "60"))
     client: Client = Client(
         transport=RequestsHTTPTransport(
-            url=_GRAPHQL_ENDPOINT_URL, headers={"x-api-key": _GRAPHQL_ENDPOINT_KEY}
+            url=_GRAPHQL_ENDPOINT_URL,
+            headers={"x-api-key": _GRAPHQL_ENDPOINT_KEY},
+            timeout=timeout_s,
         )
     )
 
@@ -227,9 +240,12 @@ def introspect_schema() -> dict[str, Any]:
             return {"data": {"__schema": {}}}
         raise RuntimeError("APPSYNC_URL and APPSYNC_API_KEY must be set")
 
+    timeout_s: int = int(os.getenv("APPSYNC_TIMEOUT", "60"))
     client: Client = Client(
         transport=RequestsHTTPTransport(
-            url=_GRAPHQL_ENDPOINT_URL, headers={"x-api-key": _GRAPHQL_ENDPOINT_KEY}
+            url=_GRAPHQL_ENDPOINT_URL,
+            headers={"x-api-key": _GRAPHQL_ENDPOINT_KEY},
+            timeout=timeout_s,
         )
     )
 
@@ -259,16 +275,18 @@ def get_activity(*, activity_id: str) -> dict[str, Any]:
             return {"getActivity": []}
         raise RuntimeError("APPSYNC_URL and APPSYNC_API_KEY must be set")
 
+    timeout_s: int = int(os.getenv("APPSYNC_TIMEOUT", "60"))
+    max_attempts: int = int(os.getenv("APPSYNC_MAX_ATTEMPTS", "3"))
     transport = RequestsHTTPTransport(
         url=_GRAPHQL_ENDPOINT_URL,
         headers={"x-api-key": _GRAPHQL_ENDPOINT_KEY},
-        timeout=60,
+        timeout=timeout_s,
     )
     # TODO use tenacity
 
     client: Client = Client(transport=transport)
 
-    for attempt in range(3):
+    for attempt in range(max(1, max_attempts)):
         try:
             response: dict[str, Any] = client.execute(GET_ACTIVITY_QUERY, variable_values=variables)
             return response

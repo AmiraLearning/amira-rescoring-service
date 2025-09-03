@@ -20,6 +20,7 @@ PHONETIC_ELEMENTS_PATH: Final[Path] = _phonetic_elements_path
 class DeviceType(StrEnum):
     CPU = "cpu"
     GPU = "cuda"
+    MPS = "mps"
 
 
 class TokenType(StrEnum):

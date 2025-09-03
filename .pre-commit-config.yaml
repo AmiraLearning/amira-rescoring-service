@@ -15,6 +15,7 @@ repos:
           - pydantic>=2
           - types-requests
           - boto3-stubs
+          - types-PyYAML
         files: "^(src/|utils/|infra/|lambda/|main.py)"
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v6.0.0

@@ -1,3 +1,40 @@
+## Runbook (Operations)
+
+### Dashboards
+- AmiraLambdaParallel: end-to-end queue and Lambda processor metrics
+- AmiraGpuTriton: GPU/Triton service metrics (if GPU path enabled)
+
+### Alarms (SNS: AlertsTopic / OpsAlarmTopic)
+- QueueDepthAlarm: SQS visible messages > threshold
+- QueueAgeAlarm: Oldest message age > 5 minutes
+- ProcessingErrorsAlarm: Lambda errors sustained
+- JobCompletionDetected: queue empty and no active executions
+- Gpu/Triton alarms: GPU util low/high; p95 latency; queue latency; failures
+
+### On-call Playbook
+1) QueueDepth/QueueAge
+   - Check SQS dashboard and Lambda throttles
+   - If throttling: reduce batch size, add reserved concurrency, or slow enqueuer
+   - If DLQ growing: inspect DLQ payloads; fix and replay
+2) ProcessingErrorsAlarm
+   - Open Lambda logs for recent error; correlate with correlationId in logs
+   - If AppSync issues, verify APPSYNC_URL/API_KEY and network access
+3) Triton Latency/Failures
+   - Check ALB 5xx and target health
+   - Scale out ECS service; verify model warm/readiness
+4) JobCompletionDetected
+   - Confirm expected empty queue window
+   - Trigger downstream consumers if applicable
+
+### Key Environment Variables
+- PIPELINE_MAX_CONCURRENCY, AUDIO_PREP_MAX_WORKERS
+- DECODER_ROBUST_MODE, AUDIO_USE_TORCHCODEC
+- S3_* envs for client tuning
+- APPSYNC_URL/APPSYNC_API_KEY/APPSYNC_TIMEOUT/APPSYNC_MAX_ATTEMPTS/APPSYNC_ALLOW_MOCK
+
+### Metric Namespaces
+- AWS/SQS, AWS/Lambda, AWS/ApplicationELB, ECS/ContainerInsights, CWAgent (DCGM, Triton), Amira/Jobs
+
 # Amira Letter Scoring Pipeline
 
 A GPU-accelerated machine learning pipeline for scoring letter names and sounds using Wav2Vec2 models. Supports both Lambda-only CPU processing and distributed GPU inference with Triton servers.

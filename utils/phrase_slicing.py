@@ -351,12 +351,12 @@ async def get_segment_metadata(
             if phrase_index not in slices_by_phrase.keys():
                 slices_by_phrase[phrase_index] = {"last_segment": {}, "segments": {}}
 
-            slices_by_phrase[phrase_index]["segments"][sequence_number] = segment_file.split("/")[
-                -1
-            ]
+            slices_by_phrase[phrase_index]["segments"][sequence_number] = (
+                segment_meta.segment_file.split("/")[-1]
+            )
             if last_segment:
                 slices_by_phrase[phrase_index]["last_segment"] = {
-                    "file_name": segment_file,
+                    "file_name": segment_meta.segment_file,
                     "sequence_number": sequence_number,
                 }
 

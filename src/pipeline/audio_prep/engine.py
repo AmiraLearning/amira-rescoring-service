@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 import numpy as np
@@ -19,6 +20,7 @@ from utils.audio import (
     prefetch_activity_phrase_audio,
 )
 from utils.config import PipelineConfig
+from utils.logging import emit_emf_metric
 
 from .models import (
     ActivityInput,
@@ -50,11 +52,6 @@ class AudioPreparationEngine:
             ValueError: If config is None or invalid
             Exception: If S3 client initialization fails
         """
-        if config is None:
-            raise ValueError("Configuration parameter is required")
-
-        if not hasattr(config, "audio") or config.audio is None:
-            raise ValueError("Configuration must contain valid audio settings")
         self._config = config
         self._audio_base_dir: str = str(config.audio.audio_dir)
         self._environment: str = config.aws.audio_env
@@ -102,7 +99,11 @@ class AudioPreparationEngine:
 
         from concurrent.futures import ThreadPoolExecutor, as_completed
 
-        max_workers: int = 8
+        try:
+            max_workers_env = int(os.getenv("AUDIO_PREP_MAX_WORKERS", "8"))
+            max_workers: int = max(1, max_workers_env)
+        except Exception:
+            max_workers = 8
 
         def _work(
             phrase: PhraseInput,
@@ -146,6 +147,19 @@ class AudioPreparationEngine:
             logger.info(
                 f"Activity {activity_id} prepared with {output.phrases_processed}/{len(phrases)} phrases"
             )
+            try:
+                emit_emf_metric(
+                    namespace="Amira/AudioPrep",
+                    metrics={
+                        "PhrasesProcessed": float(output.phrases_processed),
+                        "PhrasesFailed": float(output.phrases_failed),
+                    },
+                    dimensions={
+                        "AuditMode": str(self._save_padded_audio).lower(),
+                    },
+                )
+            except Exception:
+                pass
         else:
             output.error_message = f"No valid audio found for activity {activity_id}"
             logger.warning(f"Activity {activity_id} has no valid audio - all audio files are empty")

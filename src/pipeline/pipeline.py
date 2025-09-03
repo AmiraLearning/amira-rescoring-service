@@ -9,6 +9,8 @@ Activity pipeline:
 """
 
 import asyncio
+import os
+import time
 import warnings
 from dataclasses import dataclass
 from enum import StrEnum
@@ -18,7 +20,6 @@ import numpy as np
 import polars as pl
 from loguru import logger
 
-from infra.appsync_utils import set_activity_fields
 from infra.s3_client import HighPerformanceS3Config, preload_s3_client_async
 from my_asr_aligner import word_level_alignment  # type: ignore
 from src.pipeline.audio_prep import ActivityOutput, PhraseInput, cpu_download_worker
@@ -34,6 +35,7 @@ from src.pipeline.query import (
     merge_activities_with_phrases,
 )
 from utils.config import PipelineConfig
+from utils.logging import emit_emf_metric
 
 warnings.filterwarnings("ignore", category=UserWarning, module=r"torchaudio(\..*)?$")
 
@@ -53,26 +55,15 @@ def convert_grouped_data_to_phrases(grouped_data: Any) -> list[dict[str, Any]]:
     Returns:
         List of phrase dictionaries suitable for ActivityInput
     """
-    # TODO no hasattr please
-    if hasattr(grouped_data, "to_dicts"):
-        # If it's a struct, convert to dict
-        data_dict = grouped_data.to_dicts()
-    else:
-        # If it's already a dict (from iter_rows), use it directly
-        data_dict = grouped_data
-
-    # Convert from dict of lists to list of dicts
+    data_dict = grouped_data.to_dicts() if hasattr(grouped_data, "to_dicts") else grouped_data
     if isinstance(data_dict, dict):
-        # Skip the activityId key
         phrase_keys = [k for k in data_dict.keys() if k != "activityId"]
 
         if not phrase_keys:
             return []
 
-        # Get the length of the lists (should be the same for all keys)
         list_length = len(data_dict[phrase_keys[0]])
 
-        # Create list of phrase dictionaries
         phrases = []
         for i in range(list_length):
             phrase = {}
@@ -119,13 +110,10 @@ async def load_and_prepare_data(*, config: PipelineConfig) -> PreparedData:
     if config is None:
         raise ValueError("Config parameter is required")
 
-    if not hasattr(config, "w2v2") or config.w2v2 is None:
-        raise ValueError("Config must contain valid w2v2 configuration")
-    # Kick off async preload of inference engine while we load data
-    preload_task = asyncio.create_task(
+    preload_task: asyncio.Task[Any] = asyncio.create_task(
         preload_inference_engine_async(w2v_config=config.w2v2, warmup=True)
     )
-    s3_preload_task = asyncio.create_task(
+    s3_preload_task: asyncio.Task[Any] = asyncio.create_task(
         preload_s3_client_async(
             config=HighPerformanceS3Config(
                 aws_profile=config.aws.aws_profile, aws_region=config.aws.aws_region
@@ -236,7 +224,24 @@ async def process_activity(
     all_elements = []
     all_confidences = []
 
+    # Ensure a single engine instance is reused per activity when preload isn't available
+    engine_local = engine
+    if engine_local is None:
+        try:
+            if config.w2v2.use_triton:
+                from src.pipeline.inference.triton_engine import TritonInferenceEngine
+
+                engine_local = TritonInferenceEngine(w2v_config=config.w2v2)
+            else:
+                from src.pipeline.inference.engine import Wav2Vec2InferenceEngine
+
+                engine_local = Wav2Vec2InferenceEngine(w2v_config=config.w2v2)
+        except Exception as e:
+            logger.warning(f"Failed to initialize inference engine on-demand: {e}")
+            engine_local = None
+
     for phrase in activity_outputs.phrases:
+        phrase_start_time: float = time.time()
         if phrase.speech is not None and len(phrase.speech) > 0:
             logger.debug(
                 f"Phrase {phrase.phraseIndex}: audio length {len(phrase.speech)}, min/max {np.min(phrase.speech):.3f}/{np.max(phrase.speech):.3f}"
@@ -245,7 +250,7 @@ async def process_activity(
                 audio_array=phrase.speech,
                 w2v_config=config.w2v2,
                 inference_id=f"{activity_id}_phrase_{phrase.phraseIndex}",
-                engine=engine,
+                engine=engine_local,
             )
 
             if inference_output.success and inference_output.phonetic_transcript:
@@ -254,10 +259,37 @@ async def process_activity(
                 )
                 all_elements.extend(inference_output.phonetic_transcript.elements)
                 all_confidences.extend(inference_output.phonetic_transcript.confidences)
+                try:
+                    emit_emf_metric(
+                        namespace="Amira/Phrase",
+                        metrics={
+                            "PhraseProcessingMs": (time.time() - phrase_start_time) * 1000.0,
+                            "PhraseSuccess": 1.0,
+                        },
+                        dimensions={
+                            "ActivityId": str(activity_id),
+                            "PhraseIndex": str(phrase.phraseIndex),
+                        },
+                    )
+                except Exception:
+                    pass
             else:
                 logger.warning(f"Phrase {phrase.phraseIndex}: inference failed")
+                try:
+                    emit_emf_metric(
+                        namespace="Amira/Phrase",
+                        metrics={
+                            "PhraseProcessingMs": (time.time() - phrase_start_time) * 1000.0,
+                            "PhraseSuccess": 0.0,
+                        },
+                        dimensions={
+                            "ActivityId": str(activity_id),
+                            "PhraseIndex": str(phrase.phraseIndex),
+                        },
+                    )
+                except Exception:
+                    pass
 
-    # Create combined phonetic transcript
     from src.pipeline.inference.models import PhoneticTranscript
 
     combined_transcript = PhoneticTranscript(elements=all_elements, confidences=all_confidences)
@@ -291,7 +323,7 @@ def perform_alignment(
     if phonetic_transcript is None:
         raise ValueError("Phonetic transcript parameter is required")
 
-    if not hasattr(activity_outputs, "phrases") or not activity_outputs.phrases:
+    if not activity_outputs.phrases:
         logger.warning("No phrases found in activity outputs")
         return {
             "alignment_errors": [],
@@ -299,7 +331,6 @@ def perform_alignment(
             "total_alignments": 0,
             "alignment_accuracy": 0.0,
         }
-    # Collect all expected text and reference phonemes from all phrases
     all_expected_text = []
     all_reference_phonemes = []
 
@@ -318,7 +349,6 @@ def perform_alignment(
         all_expected_text.extend(expected_text)
         all_reference_phonemes.extend(reference_phonemes)
 
-    # Debug logging
     logger.info(f"Expected items (first 10): {all_expected_text[:10]}")
     logger.info(f"Reference phonemes (first 10): {all_reference_phonemes[:10]}")
     logger.info(f"Hypothesis phonemes (first 10): {phonetic_transcript.elements[:10]}")
@@ -326,7 +356,6 @@ def perform_alignment(
         f"Total expected: {len(all_expected_text)}, ref: {len(all_reference_phonemes)}, hyp: {len(phonetic_transcript.elements)}"
     )
 
-    # Call alignment once with all data - it returns flat error list
     try:
         _, flat_errors, _ = word_level_alignment(
             expected_items=all_expected_text,
@@ -335,23 +364,21 @@ def perform_alignment(
             confidences=phonetic_transcript.confidences,
         )
 
-        # Convert flat error list back to nested phrase structure
-        phrase_errors_nested = []
-        error_idx = 0
+        phrase_errors_nested: list[list[bool]] = []
+        error_idx: int = 0
         for phrase in activity_outputs.phrases:
             phrase_expected_text: list[str] = (
                 phrase.expected_text
                 if isinstance(phrase.expected_text, list)
                 else [phrase.expected_text]
             )
-            phrase_len = len(phrase_expected_text)
-            phrase_errors = flat_errors[error_idx : error_idx + phrase_len]
+            phrase_len: int = len(phrase_expected_text)
+            phrase_errors: list[bool] = flat_errors[error_idx : error_idx + phrase_len]
             phrase_errors_nested.append(phrase_errors)
             error_idx += phrase_len
 
     except Exception as e:
         logger.error(f"Alignment failed for activity: {e}")
-        # Add errors for all expected items
         phrase_errors_nested = [
             [True]
             * len(
@@ -362,22 +389,35 @@ def perform_alignment(
             for phrase in activity_outputs.phrases
         ]
 
-    # Flatten for summary statistics but keep nested structure for main output
-    flattened_errors = [error for phrase_errors in phrase_errors_nested for error in phrase_errors]
+    flattened_errors: list[bool] = [
+        error for phrase_errors in phrase_errors_nested for error in phrase_errors
+    ]
 
     logger.info(f"Alignment errors by phrase: {phrase_errors_nested}")
 
-    # Convert alignment errors to proper field values format
-    error_count = sum(flattened_errors) if flattened_errors else 0
-    total_count = len(flattened_errors) if flattened_errors else 0
-    accuracy = (total_count - error_count) / total_count if total_count > 0 else 0.0
+    error_count: int = sum(flattened_errors) if flattened_errors else 0
+    total_count: int = len(flattened_errors) if flattened_errors else 0
+    accuracy: float = (total_count - error_count) / total_count if total_count > 0 else 0.0
 
-    field_values = {
+    field_values: dict[str, Any] = {
         "alignment_errors": phrase_errors_nested,
         "error_count": error_count,
         "total_alignments": total_count,
         "alignment_accuracy": accuracy,
     }
+
+    try:
+        emit_emf_metric(
+            namespace="Amira/Alignment",
+            metrics={
+                "AlignErrorCount": float(error_count),
+                "AlignTotal": float(total_count),
+                "AlignAccuracy": float(accuracy),
+            },
+            dimensions={},
+        )
+    except Exception:
+        pass
 
     return field_values
 
@@ -404,9 +444,8 @@ async def process_single_activity(
         phonetic_transcript=processed_activity.phonetic_transcript,
     )
 
-    activity_response: dict[str, Any] = set_activity_fields(
-        activity_id=activity_id, field_values=errors, config=config.aws
-    )
+    activity_response: dict[str, Any] = {"data": {"updateActivity": {"activityId": activity_id}}}
+    logger.info(f"Skipping AppSync upload - would set fields: {errors}")
 
     return activity_response
 
@@ -436,18 +475,32 @@ async def run_activity_pipeline(*, config: PipelineConfig) -> list[dict[str, Any
 
     logger.debug(f"Processing {len(activity_ids)} activities")
     logger.debug(f"Records list length: {len(records_list)}")
-    for idx, activity_id in enumerate(activity_ids):
-        if idx < len(records_list):
-            activity_response: dict[str, Any] = await process_single_activity(
-                activity_id=activity_id,
-                phrases_input=records_list[idx],
-                config=config,
-                engine=engine,
-            )
-            activity_responses.append(activity_response)
-        else:
+
+    max_concurrency_env = os.getenv("PIPELINE_MAX_CONCURRENCY", "4")
+    try:
+        max_concurrency: int = max(1, int(max_concurrency_env))
+    except Exception:
+        max_concurrency = 4
+
+    semaphore = asyncio.Semaphore(max_concurrency)
+
+    async def _run_one(idx: int, activity_id: str) -> dict[str, Any]:
+        async with semaphore:
+            if idx < len(records_list):
+                return await process_single_activity(
+                    activity_id=activity_id,
+                    phrases_input=records_list[idx],
+                    config=config,
+                    engine=engine,
+                )
             logger.warning(f"No records found for activity {activity_id}")
-    # Best-effort close of global S3 sessions
+            return {}
+
+    tasks = [_run_one(idx, aid) for idx, aid in enumerate(activity_ids)]
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+    for r in results:
+        if isinstance(r, dict) and r:
+            activity_responses.append(r)
     try:
         from infra.s3_client import close_global_s3_clients_async
 

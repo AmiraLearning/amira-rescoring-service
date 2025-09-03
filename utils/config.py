@@ -3,7 +3,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Final
 
-import yaml  # type: ignore
+import yaml
 from loguru import logger
 from pydantic import BaseModel, Field, field_validator, model_validator
 
