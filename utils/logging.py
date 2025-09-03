@@ -35,6 +35,22 @@ def setup_logging(*, service: str | None = None) -> None:
     if service:
         logger.configure(extra={"service": service})
 
+    # Optional sampling filter
+    try:
+        sampling_rate_env: str = os.getenv("LOG_SAMPLING_RATE", "1.0")
+        sampling_rate: float = max(0.0, min(1.0, float(sampling_rate_env)))
+        if sampling_rate < 1.0:
+            import random
+
+            from loguru import Record
+
+            def _sample(record: Record) -> bool:
+                return random.random() < sampling_rate
+
+            logger.add(sys.stdout, filter=_sample)
+    except Exception:
+        pass
+
 
 def _get_sampling_rate(env_name: str, default: float) -> float:
     try:

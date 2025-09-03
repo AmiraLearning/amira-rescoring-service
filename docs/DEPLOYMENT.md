@@ -8,12 +8,14 @@
 - TritonCertificateArn: ACM cert for ALB 443
 - TritonTargetCertSecretArn: Optional sidecar TLS cert/key secret
 - UseTriton / TritonClusterUrl: Enable remote inference from Lambda
+ - EnableTargetHttp2 / TargetSslCiphers: TLS tuning options for sidecar
 
 ## Steps
 1. Ensure ECR images are published (app, triton, cw-agent, dcgm)
 2. Deploy ECS stack with TLS params
 3. Deploy Lambda parallel stack with queue/bucket params
 4. Verify dashboards and alarms are active
+ 5. (Optional) Provide `TritonTargetCertSecretArn` with {cert,key} to use managed certs; tasks will hot-load on restart
 
 ## Rollback
 - Use CloudFormation stack rollback

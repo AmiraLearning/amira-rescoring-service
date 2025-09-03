@@ -59,6 +59,9 @@ cd cdk && npm install && cd ..
 
 # Build Rust extension (if needed)
 cd my_asr_aligner && maturin develop --release && cd ..
+
+# macOS only: patch torchcodec rpath for FFmpeg (run once)
+bash fix.sh  # Adds FFmpeg RPATH to torchcodec dylibs on macOS
 ```
 
 ### 2. Deploy Lambda-only Pipeline

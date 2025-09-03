@@ -735,6 +735,29 @@ export class AmiraLetterScoringStack extends cdk.Stack {
     // SNS notifications for alarms
     const alarmTopic = new sns.Topic(this, 'OpsAlarmTopic', { displayName: 'Triton GPU Cluster Alarms' });
     const alarmAction = new cwactions.SnsAction(alarmTopic);
+    // Optional Secrets Manager rotation alarm (if secret ARN provided)
+    const rotationAlarmEmailParam = new cdk.CfnParameter(this, 'RotationAlarmEmail', {
+      type: 'String',
+      default: '',
+      description: 'Optional email for Secrets Manager rotation failure alarms'
+    });
+    const rotationAlarmEmailProvided = new cdk.CfnCondition(this, 'RotationAlarmEmailProvided', {
+      expression: cdk.Fn.conditionNot(cdk.Fn.conditionEquals(rotationAlarmEmailParam.valueAsString, ''))
+    });
+    const rotationFailuresMetric = new cw.Metric({
+      namespace: 'AWS/SecretsManager',
+      metricName: 'RotationEnabled',
+      statistic: 'Minimum',
+      period: cdk.Duration.minutes(5)
+    });
+    const rotationAlarm = new cw.Alarm(this, 'SecretsRotationDisabled', {
+      metric: rotationFailuresMetric,
+      threshold: 1,
+      evaluationPeriods: 1,
+      comparisonOperator: cw.ComparisonOperator.LESS_THAN_THRESHOLD,
+      alarmDescription: 'Secrets Manager rotation disabled or failing'
+    });
+    rotationAlarm.addAlarmAction(alarmAction);
 
     // Optional email subscription parameter
     const alarmEmailParam = new cdk.CfnParameter(this, 'AlarmEmail', {

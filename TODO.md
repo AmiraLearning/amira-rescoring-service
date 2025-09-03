@@ -2,62 +2,13 @@
 
 This document turns our backlog into a focused, outcome‑oriented roadmap. Each phase lists goals, concrete deliverables, and acceptance criteria. Timeboxes are indicative for prioritization, not commitments.
 
-## Phase 0 — Foundations (Done / Ongoing)
-- Image‑based Lambda with pre‑cached model, no VPC, low cold‑start
-  - Acceptance: `AmiraLambdaParallelStack` deploys; first invocation < ~60s when ECR cached
-- Parallelism via platform scale, not in‑function concurrency
-  - MAX_CONCURRENCY=1; SQS batchSize=1
-- Strict HTTPS to ALB and HTTPS‑only Triton client
-  - Acceptance: Triton ALB on 443 with ACM cert; client rejects `http://`
-- CI hardening: Node 20, uv caching, concurrency groups, OIDC deploys
-  - Acceptance: All workflows green on main; no overlapping deploys
-
-## Phase 1 — Performance & Latency (Week 1–2)
-- Lambda handler efficiency
-  - Reuse global config and clients across warm invocations (Done)
-  - BATCH_ALL_PHRASES=true for single‑call inference per activity (Done)
-  - Acceptance: p50 end‑to‑end per activity reduced vs. baseline
-- Rust aligner speedups (see section below)
-  - Acceptance: 20–30% wall‑clock improvement on typical inputs; reduced allocations
-
 ## Phase 2 — TLS End‑to‑End for Triton Targets (Week 2)
  - Productionization (optional)
   - Secrets Manager for cert/key; rotation runbook and alarms
   - Acceptance: Certs rotated without downtime; alarms on expiry
 
-## Phase 3 — Observability & SLOs (Week 2–3)
-- Metrics
-  - Lambda: preprocess/model/decode/total durations; batch sizes; failures; SQS handle times
-  - ECS/Triton: request rate, p95 latency, decode errors, empty‑token rate; DCGM GPU metrics
-  - Acceptance: Dashboards visualize key SLIs; alarms on SLO breach paths
-- Tracing & logs
-  - Correlation IDs across Athena→S3→Lambda/ECS
-  - Structured logs with sampling policy
-  - Acceptance: A single request trace reconstructs the full path
-
-## Phase 4 — Data Contracts (Week 3–4)
-- Versioned schemas
-  - AppSync mutation IO; S3 Parquet results; segment/manifest schemas
-  - Contract tests in CI, compatibility checks on change
-  - Acceptance: CI fails on incompatible schema changes
-
 ## Phase 5 — Cost & Scaling (Week 4)
  - Autoscaling and backpressure
-  - ECS scaling on RequestCountPerTarget
-  - Lambda reserved concurrency + SQS redrive and DLQ alarms
- - Storage lifecycle and cleanup
-  - Athena staging cleanup guarantees
-  - Acceptance: No unbounded S3/NAT costs; alarms on anomalies
-
-## Phase 6 — Tests & Quality Gates (Week 4–5)
-- Unit tests
-  - Phoneme pipeline: `decoder.py`, `phonetics.py`
-  - Rust bindings round‑trip (`my_asr_aligner`) with goldens
-- Engine tests
-  - CPU path incl. MPS→CPU fallback; Triton path with fake logits
-- Integration tests
-  - E2E CPU path with mocked S3/Athena; activity merge correctness
-- Coverage: ≥80% core logic with CI gating on critical paths
 
 ---
 

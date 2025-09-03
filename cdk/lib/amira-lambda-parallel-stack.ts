@@ -309,6 +309,64 @@ export class AmiraLambdaParallelStack extends cdk.Stack {
     });
     scheduleRule.addTarget(new targets.LambdaFunction(enqueueLambda));
 
+    // Optional Athena staging cleanup Lambda + schedule
+    const enableAthenaCleanupParam = new cdk.CfnParameter(this, 'EnableAthenaCleanup', {
+      type: 'String',
+      default: 'false',
+      allowedValues: ['true', 'false'],
+      description: 'Enable scheduled Athena staging cleanup (optional)'
+    });
+    const athenaCleanupBucketParam = new cdk.CfnParameter(this, 'AthenaCleanupBucket', {
+      type: 'String',
+      default: '',
+      description: 'S3 bucket for Athena staging results'
+    });
+    const athenaCleanupPrefixParam = new cdk.CfnParameter(this, 'AthenaCleanupPrefix', {
+      type: 'String',
+      default: 'athena_staging',
+      description: 'S3 prefix for Athena staging results'
+    });
+    const athenaCleanupAgeDaysParam = new cdk.CfnParameter(this, 'AthenaCleanupAgeDays', {
+      type: 'Number',
+      default: 7,
+      description: 'Delete staging objects older than N days'
+    });
+    const cleanupEnabled = new cdk.CfnCondition(this, 'AthenaCleanupEnabled', {
+      expression: cdk.Fn.conditionEquals(enableAthenaCleanupParam.valueAsString, 'true')
+    });
+
+    const cleanupLambda = new lambda.Function(this, 'AthenaStagingCleanup', {
+      runtime: lambda.Runtime.PYTHON_3_12,
+      handler: 'athena_staging_cleanup.main',
+      code: lambda.Code.fromAsset('../scripts'),
+      timeout: cdk.Duration.minutes(5),
+      environment: {
+        AWS_REGION: cdk.Stack.of(this).region,
+      }
+    });
+    (cleanupLambda.node.defaultChild as lambda.CfnFunction).cfnOptions.condition = cleanupEnabled;
+
+    cleanupLambda.addToRolePolicy(new iam.PolicyStatement({
+      actions: ['s3:ListBucket', 's3:DeleteObject', 's3:DeleteObjectVersion'],
+      resources: [
+        cdk.Arn.format({ service: 's3', resource: athenaCleanupBucketParam.valueAsString }, this),
+        cdk.Arn.format({ service: 's3', resource: `${athenaCleanupBucketParam.valueAsString}/*` }, this)
+      ]
+    }));
+
+    const cleanupRule = new events.Rule(this, 'AthenaCleanupSchedule', {
+      description: 'Scheduled Athena staging cleanup',
+      schedule: events.Schedule.cron({ minute: '0', hour: '3' })
+    });
+    (cleanupRule.node.defaultChild as events.CfnRule).cfnOptions.condition = cleanupEnabled;
+    cleanupRule.addTarget(new targets.LambdaFunction(cleanupLambda, {
+      event: events.RuleTargetInput.fromObject({
+        bucket: athenaCleanupBucketParam.valueAsString,
+        prefix: athenaCleanupPrefixParam.valueAsString,
+        age_days: athenaCleanupAgeDaysParam.valueAsNumber,
+      })
+    }));
+
     // Manual trigger Lambda
     const manualTriggerLambda = new lambda.Function(this, 'ManualTriggerFunction', {
       runtime: lambda.Runtime.PYTHON_3_12,

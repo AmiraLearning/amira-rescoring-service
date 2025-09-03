@@ -1,3 +1,8 @@
+# Purpose: On macOS, torchcodec's core dylibs may not have an RPATH to FFmpeg libs,
+# causing import/runtime errors. Run this once after creating your venv and installing
+# dependencies (or any time torchcodec is rebuilt) to add the FFmpeg RPATH.
+# Usage: bash fix.sh
+
 # Define the path to your FFmpeg libraries
 FFMPEG_LIB_PATH="$(brew --prefix ffmpeg)/lib"
 
