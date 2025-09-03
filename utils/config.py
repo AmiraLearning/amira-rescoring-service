@@ -31,6 +31,7 @@ class PipelineMetadataConfig(BaseModel):
     activity_file: str | None = None
     activity_id: str | None = None
     limit: int = 5
+    correlation_id: str | None = None
 
 
 class ResultConfig(BaseModel):

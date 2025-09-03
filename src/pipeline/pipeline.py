@@ -457,6 +457,11 @@ async def process_single_activity(
             },
             dimensions={
                 "ActivityId": str(activity_id),
+                **(
+                    {"CorrelationId": str(config.metadata.correlation_id)}
+                    if getattr(config.metadata, "correlation_id", None)
+                    else {}
+                ),
             },
         )
     except Exception:

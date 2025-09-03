@@ -34,6 +34,7 @@ class W2VConfig(BaseModel):
     # Performance optimizations
     use_float16: bool = True  # Lambda-style Float16 precision for 2x speed
     batch_all_phrases: bool = False  # Lambda-style single inference call
+    fast_init: bool = False  # Skip expensive optimizations during init for cold start
 
     @model_validator(mode="after")
     def _validate_triton_https(self) -> Self:

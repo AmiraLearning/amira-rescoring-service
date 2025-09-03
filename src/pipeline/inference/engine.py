@@ -92,21 +92,50 @@ class Wav2Vec2InferenceEngine:
         self._traced_model = None
         logger.info(f"Initializing Wav2Vec2 model from {w2v_config.model_path}...")
 
-        self._processor = (
-            processor_instance
-            if processor_instance
-            else Wav2Vec2Processor.from_pretrained(w2v_config.model_path)
-        )
-
-        base_model = (
-            model_instance
-            if model_instance
-            else Wav2Vec2ForCTC.from_pretrained(w2v_config.model_path)
-        )
-        self._model = base_model
+        # For cold start optimization, load model and processor in parallel
+        if model_instance is None or processor_instance is None:
+            self._model, self._processor = self._load_model_and_processor_parallel()
+            # Use provided instances if available
+            if model_instance is not None:
+                self._model = model_instance
+            if processor_instance is not None:
+                self._processor = processor_instance
+        else:
+            self._model = model_instance
+            self._processor = processor_instance
 
         self._init_device()
         self._decoder = PhonemeDecoder()
+
+    def _load_model_and_processor_parallel(self) -> tuple[Wav2Vec2ForCTC, Wav2Vec2Processor]:
+        """Load model and processor in parallel for faster cold start.
+
+        Returns:
+            Tuple of (model, processor) loaded concurrently
+        """
+        import concurrent.futures
+
+        logger.info("Loading model and processor in parallel...")
+        start_time = time.time()
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+            # Submit both loading tasks
+            model_future = executor.submit(
+                Wav2Vec2ForCTC.from_pretrained,
+                self._w2v_config.model_path,
+                use_safetensors=True,  # Use safetensors if available
+            )
+            processor_future = executor.submit(
+                Wav2Vec2Processor.from_pretrained, self._w2v_config.model_path
+            )
+
+            # Wait for both to complete
+            model = model_future.result()
+            processor = processor_future.result()
+
+        load_time = time.time() - start_time
+        logger.info(f"Parallel loading completed in {load_time:.2f}s")
+        return model, processor
 
     def _init_device(self) -> None:
         """Initialize the device for the model.
@@ -176,8 +205,11 @@ class Wav2Vec2InferenceEngine:
         logger.info(f"Model loaded on {self._device}")
         self._log_gpu_memory_usage()
 
-        if self._w2v_config.use_jit_trace:
+        # Skip expensive optimizations if fast_init is enabled (cold start optimization)
+        if self._w2v_config.use_jit_trace and not self._w2v_config.fast_init:
             self._init_jit_trace()
+        elif self._w2v_config.fast_init:
+            logger.info("Skipping JIT trace for fast initialization")
 
     def _init_jit_trace(self) -> None:
         """Initialize JIT traced model for optimized inference."""

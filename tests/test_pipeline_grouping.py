@@ -20,7 +20,6 @@ def test_group_activities_by_id_basic() -> None:
 
     assert set(ids) == {"a1", "a2"}
     assert len(records) == len(ids)
-    # a1 should have two phrases, a2 one phrase
     idx_a1 = ids.index("a1")
     idx_a2 = ids.index("a2")
     assert len(records[idx_a1]) == 2

@@ -132,6 +132,18 @@ class UpdateActivityFieldsInput(BaseModel):
     fieldValues: dict[str, Any]
 
 
+class UpdateActivityPayload(BaseModel):
+    activityId: str
+
+
+class UpdateActivityData(BaseModel):
+    updateActivity: UpdateActivityPayload
+
+
+class UpdateActivityResponse(BaseModel):
+    data: UpdateActivityData
+
+
 def set_activity_fields(
     *, activity_id: str, field_values: dict[str, Any], config: AwsConfig
 ) -> dict[str, Any]:
@@ -184,6 +196,11 @@ def set_activity_fields(
             response = {"data": {"updateActivity": {"activityId": activity_id}}}
         else:
             raise
+
+    try:
+        UpdateActivityResponse.model_validate(response)
+    except Exception as ve:
+        logger.warning(f"AppSync response did not match expected shape: {ve}")
 
     return response
 

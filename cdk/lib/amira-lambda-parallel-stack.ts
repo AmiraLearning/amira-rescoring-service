@@ -77,13 +77,24 @@ export class AmiraLambdaParallelStack extends cdk.Stack {
       enforceSSL: true,
       lifecycleRules: [
         {
-          id: 'IntelligentTiering',
+          id: 'IntelligentTieringNow',
           enabled: true,
           transitions: [
-            {
-              storageClass: s3.StorageClass.INTELLIGENT_TIERING,
-              transitionAfter: cdk.Duration.days(0)
-            }
+            { storageClass: s3.StorageClass.INTELLIGENT_TIERING, transitionAfter: cdk.Duration.days(0) }
+          ]
+        },
+        {
+          id: 'TransitionToIA30d',
+          enabled: true,
+          transitions: [
+            { storageClass: s3.StorageClass.INFREQUENT_ACCESS, transitionAfter: cdk.Duration.days(30) }
+          ]
+        },
+        {
+          id: 'TransitionToGlacier120d',
+          enabled: true,
+          transitions: [
+            { storageClass: s3.StorageClass.GLACIER_INSTANT_RETRIEVAL, transitionAfter: cdk.Duration.days(120) }
           ]
         }
       ],

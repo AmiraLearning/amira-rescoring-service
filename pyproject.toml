@@ -28,6 +28,7 @@ dependencies = [
   "scipy>=1.16.1",
   "line-profiler>=5.0.0",
   "tenacity>=9.0.0",
+  "safetensors>=0.4.0",
 ]
 
 [build-system]

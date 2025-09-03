@@ -693,6 +693,36 @@ export class AmiraLetterScoringStack extends cdk.Stack {
       scaleOutCooldown: cdk.Duration.seconds(30)
     });
 
+    // Additional scaling policy based on Triton p95 latency
+    const tritonLatencyP95Metric = new cw.Metric({
+      namespace: 'CWAgent',
+      metricName: 'nv_inference_request_duration_us',
+      statistic: 'p95',
+      period: cdk.Duration.minutes(1)
+    });
+    const latencyHigh = new cw.Alarm(this, 'TritonLatencyHighForScaling', {
+      metric: tritonLatencyP95Metric,
+      threshold: 500000, // 500ms
+      evaluationPeriods: 3,
+      comparisonOperator: cw.ComparisonOperator.GREATER_THAN_THRESHOLD
+    });
+    const latencyLow = new cw.Alarm(this, 'TritonLatencyLowForScaling', {
+      metric: tritonLatencyP95Metric,
+      threshold: 200000, // 200ms
+      evaluationPeriods: 5,
+      comparisonOperator: cw.ComparisonOperator.LESS_THAN_OR_EQUAL_TO_THRESHOLD
+    });
+    scalableTarget.scaleOnMetric('LatencyScaleOut', {
+      metric: tritonLatencyP95Metric,
+      scalingSteps: [
+        { lower: 500000, change: +1 },
+        { lower: 800000, change: +2 }
+      ],
+      adjustmentType: appscaling.AdjustmentType.CHANGE_IN_CAPACITY,
+      cooldown: cdk.Duration.minutes(2),
+      minAdjustmentMagnitude: 1
+    });
+
     // Add output for Triton cluster URL
     new cdk.CfnOutput(this, 'TritonClusterUrl', {
       value: `https://${tritonAlb.loadBalancerDnsName}`,
@@ -821,6 +851,20 @@ export class AmiraLetterScoringStack extends cdk.Stack {
         left: [tritonThroughput],
         right: [tritonFailures],
         width: 24
+      }),
+      new cw_dash.GraphWidget({
+        title: 'Inference SLOs (p95 ms)',
+        left: [
+          new cw.Metric({ namespace: 'Amira/Inference', metricName: 'InferenceTotalMs', statistic: 'p95', period: cdk.Duration.minutes(1) }),
+        ],
+        width: 12
+      }),
+      new cw_dash.GraphWidget({
+        title: 'Activity SLOs (p95 ms)',
+        left: [
+          new cw.Metric({ namespace: 'Amira/Activity', metricName: 'ActivityTotalMs', statistic: 'p95', period: cdk.Duration.minutes(1) }),
+        ],
+        width: 12
       }),
       new cw_dash.GraphWidget({
         title: 'ECS Desired vs Running',

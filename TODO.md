@@ -21,11 +21,7 @@ This document turns our backlog into a focused, outcome‑oriented roadmap. Each
   - Acceptance: 20–30% wall‑clock improvement on typical inputs; reduced allocations
 
 ## Phase 2 — TLS End‑to‑End for Triton Targets (Week 2)
-- Sidecar TLS (fast path)
-  - Nginx/Envoy sidecar terminates TLS, proxied to 127.0.0.1:8000
-  - HTTPS Target Group; health checks over TLS
-  - Acceptance: All hops TLS; no plaintext inside the VPC data plane
-- Productionization (optional)
+ - Productionization (optional)
   - Secrets Manager for cert/key; rotation runbook and alarms
   - Acceptance: Certs rotated without downtime; alarms on expiry
 
@@ -46,11 +42,11 @@ This document turns our backlog into a focused, outcome‑oriented roadmap. Each
   - Acceptance: CI fails on incompatible schema changes
 
 ## Phase 5 — Cost & Scaling (Week 4)
-- Autoscaling and backpressure
-  - ECS scaling on p95 latency and RequestCountPerTarget
+ - Autoscaling and backpressure
+  - ECS scaling on RequestCountPerTarget
   - Lambda reserved concurrency + SQS redrive and DLQ alarms
-- Storage lifecycle and cleanup
-  - Results lifecycle; Athena staging cleanup guarantees
+ - Storage lifecycle and cleanup
+  - Athena staging cleanup guarantees
   - Acceptance: No unbounded S3/NAT costs; alarms on anomalies
 
 ## Phase 6 — Tests & Quality Gates (Week 4–5)
@@ -107,15 +103,13 @@ This document turns our backlog into a focused, outcome‑oriented roadmap. Each
      - Create PhonemeMatch enum (Exact, Accepted, Error) for cleaner control flow
 
 ## TLS for Triton (End‑to‑End)
-- Sidecar TLS (quickest path)
-  - Add Nginx/Envoy sidecar; self‑signed cert at startup; HTTPS target group + health checks
-- Managed secret path
+ - Managed secret path
   - Cert/key in Secrets Manager; hot reload; alarms and rotation policy
-- ACM Private CA (optional)
+ - ACM Private CA (optional)
   - Private CA for internal DNS; issue certs; distribute trust chain
-- CDK switches
+ - CDK switches
   - `EnableTargetTLS`, `TritonTargetCertSecretArn` for HTTPS target and secret grant
-- Client enforcement
+ - Client enforcement
   - Triton client requires `https://`; rejects `http://`
 
 ## Tests (detail)

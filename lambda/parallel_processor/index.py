@@ -2,7 +2,7 @@ import asyncio
 import json
 import os
 import time
-from typing import Any
+from typing import Any, Final
 
 import boto3
 import torch
@@ -13,6 +13,8 @@ from src.pipeline.pipeline import run_activity_pipeline
 from utils.config import PipelineConfig
 from utils.logging import setup_logging
 
+SCHEMA_VERSION_RESULT: Final[str] = "activity-results-v1"
+
 
 class LambdaProcessingResult(BaseModel):
     activity_id: str
@@ -21,6 +23,8 @@ class LambdaProcessingResult(BaseModel):
     processing_time: float
     timestamp: int
     processor: str
+    schema_version: str = SCHEMA_VERSION_RESULT
+    correlation_id: str | None = None
 
 
 class LambdaResponse(BaseModel):
@@ -143,13 +147,22 @@ def write_results_to_s3(result: LambdaProcessingResult) -> None:
         )
 
     s3_client.put_object(
-        Key=f"{base_key}/results.json", Body=result.model_dump_json(), **put_kwargs
+        Key=f"{base_key}/results.json",
+        Body=result.model_dump_json(),
+        Metadata={
+            "schema-version": result.schema_version,
+            "activity-id": result.activity_id,
+            **({"correlation-id": result.correlation_id} if result.correlation_id else {}),
+        },
+        **put_kwargs,
     )
 
     s3_client.put_object(Key=f"{base_key}/_SUCCESS", Body=b"", **put_kwargs)
 
 
-async def process_activity(activity_id: str) -> LambdaProcessingResult:
+async def process_activity(
+    activity_id: str, *, correlation_id: str | None = None
+) -> LambdaProcessingResult:
     start_time = time.time()
     apply_lambda_optimizations()
     global _config_cache
@@ -157,6 +170,8 @@ async def process_activity(activity_id: str) -> LambdaProcessingResult:
         _config_cache = create_lambda_config()
     config = _config_cache
     config.metadata.activity_id = activity_id
+    if correlation_id:
+        config.metadata.correlation_id = correlation_id
     results = await run_activity_pipeline(config=config)
 
     if not results:
@@ -169,6 +184,7 @@ async def process_activity(activity_id: str) -> LambdaProcessingResult:
         processing_time=time.time() - start_time,
         timestamp=int(time.time()),
         processor="existing-pipeline-arm64",
+        correlation_id=correlation_id,
     )
 
     write_results_to_s3(result)
@@ -234,7 +250,8 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
                     activity_id = body.get("activityId")
                     if not activity_id:
                         raise ValueError("Missing activityId")
-                    result = await process_activity(activity_id)
+                    message_id = record.get("messageId")
+                    result = await process_activity(activity_id, correlation_id=message_id)
                     return True, result.processing_time, None
                 except Exception:
                     return False, 0.0, record.get("messageId")
