@@ -1,10 +1,28 @@
-use std::collections::{HashMap, HashSet, VecDeque};
-use similar::{ChangeTag, TextDiff};
 use rustc_hash::FxHashMap;
+use similar::{ChangeTag, TextDiff};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 pub const DASH: &str = "-";
 
-pub type ErrorCache = FxHashMap<(String, String), bool>;
+pub type ErrorCache = FxHashMap<(u32, u32), bool>;
+type SymbolId = u32;
+
+// Type alias for alignment result to reduce complexity
+pub type AlignmentResult = (Vec<String>, Vec<bool>, Vec<f32>);
+
+fn intern_symbol(
+    sym: &str,
+    table: &mut HashMap<String, SymbolId>,
+    next_id: &mut SymbolId,
+) -> SymbolId {
+    if let Some(id) = table.get(sym) {
+        return *id;
+    }
+    let id = *next_id;
+    *next_id += 1;
+    table.insert(sym.to_string(), id);
+    id
+}
 
 lazy_static::lazy_static! {
     static ref COMBINED_ACCEPTED_PHONEMES: HashMap<&'static str, HashSet<&'static str>> = {
@@ -130,8 +148,18 @@ lazy_static::lazy_static! {
     };
 }
 
-pub fn is_error_cached(item_name: &str, hyp_phoneme: &str, cache: &mut ErrorCache) -> bool {
-    let key = (item_name.to_string(), hyp_phoneme.to_string());
+pub fn is_error_cached(
+    item_name: &str,
+    hyp_phoneme: &str,
+    cache: &mut ErrorCache,
+    symtab_items: &mut HashMap<String, SymbolId>,
+    symtab_phonemes: &mut HashMap<String, SymbolId>,
+    next_item_id: &mut SymbolId,
+    next_phon_id: &mut SymbolId,
+) -> bool {
+    let item_id = intern_symbol(item_name, symtab_items, next_item_id);
+    let phon_id = intern_symbol(hyp_phoneme, symtab_phonemes, next_phon_id);
+    let key = (item_id, phon_id);
 
     if let Some(&result) = cache.get(&key) {
         return result;
@@ -155,26 +183,37 @@ pub fn is_error(item_name: &str, hyp_phoneme: &str) -> bool {
     }
 }
 
-pub fn push_result(result: &mut Vec<String>, errors: &mut Vec<bool>, confidence: &mut Vec<f32>,
-               phoneme: &str, is_error: bool, conf: f32) {
+pub fn push_result(
+    result: &mut Vec<String>,
+    errors: &mut Vec<bool>,
+    confidence: &mut Vec<f32>,
+    phoneme: &str,
+    is_error: bool,
+    conf: f32,
+) {
     result.push(phoneme.to_string());
     errors.push(is_error);
     confidence.push(conf);
 }
 
-pub fn push_dash_result(result: &mut Vec<String>, errors: &mut Vec<bool>, confidence: &mut Vec<f32>) {
+pub fn push_dash_result(
+    result: &mut Vec<String>,
+    errors: &mut Vec<bool>,
+    confidence: &mut Vec<f32>,
+) {
     result.push(DASH.to_string());
     errors.push(true);
     confidence.push(0.0);
 }
 
 /// Core alignment function without PyO3 dependencies
-pub fn word_level_alignment_core(
+fn word_level_alignment_core_impl(
     expected_items: Vec<String>,
     ref_phons: Vec<String>,
     hyp_phons: Vec<String>,
     confidences: Vec<f32>,
-) -> Result<(Vec<String>, Vec<bool>, Vec<f32>), String> {
+    enable_confidence_weighting: bool,
+) -> Result<AlignmentResult, String> {
     // Early exit for identical sequences
     if ref_phons == hyp_phons {
         return Ok((hyp_phons.clone(), vec![false; hyp_phons.len()], confidences));
@@ -196,6 +235,10 @@ pub fn word_level_alignment_core(
     let mut hj: usize = 0;
     let mut pending_ref_indices: VecDeque<usize> = VecDeque::new();
     let mut error_cache: ErrorCache = FxHashMap::default();
+    let mut item_symtab: HashMap<String, SymbolId> = HashMap::new();
+    let mut phon_symtab: HashMap<String, SymbolId> = HashMap::new();
+    let mut next_item_id: SymbolId = 1;
+    let mut next_phon_id: SymbolId = 1;
 
     for op in diff.ops() {
         for change in diff.iter_changes(op) {
@@ -203,13 +246,27 @@ pub fn word_level_alignment_core(
                 ChangeTag::Equal => {
                     // Process all pending deletions as dashes
                     while let Some(_idx) = pending_ref_indices.pop_front() {
-                        push_dash_result(&mut word_alignment_result, &mut errors, &mut matched_confidence);
+                        push_dash_result(
+                            &mut word_alignment_result,
+                            &mut errors,
+                            &mut matched_confidence,
+                        );
                     }
 
                     if hj < hyp_phons.len() {
-                        let conf = if hj < confidences.len() { confidences[hj] } else { 0.0 };
-                        push_result(&mut word_alignment_result, &mut errors, &mut matched_confidence,
-                                   &hyp_phons[hj], false, conf);
+                        let conf = if hj < confidences.len() {
+                            confidences[hj]
+                        } else {
+                            0.0
+                        };
+                        push_result(
+                            &mut word_alignment_result,
+                            &mut errors,
+                            &mut matched_confidence,
+                            &hyp_phons[hj],
+                            false,
+                            conf,
+                        );
                     }
                     ri += 1;
                     hj += 1;
@@ -219,7 +276,11 @@ pub fn word_level_alignment_core(
                     ri += 1;
                 }
                 ChangeTag::Insert => {
-                    let conf = if hj < confidences.len() { confidences[hj] } else { 0.0 };
+                    let mut conf = if hj < confidences.len() {
+                        confidences[hj]
+                    } else {
+                        0.0
+                    };
                     if let Some(ref_idx) = pending_ref_indices.pop_front() {
                         let ref_word = if ref_idx < expected_items.len() {
                             &expected_items[ref_idx]
@@ -228,18 +289,47 @@ pub fn word_level_alignment_core(
                         } else {
                             ""
                         };
-                        let hyp_word = if hj < hyp_phons.len() { &hyp_phons[hj] } else { "" };
+                        let hyp_word = if hj < hyp_phons.len() {
+                            &hyp_phons[hj]
+                        } else {
+                            ""
+                        };
 
-                        let is_err = is_error_cached(ref_word, hyp_word, &mut error_cache);
+                        let is_err = is_error_cached(
+                            ref_word,
+                            hyp_word,
+                            &mut error_cache,
+                            &mut item_symtab,
+                            &mut phon_symtab,
+                            &mut next_item_id,
+                            &mut next_phon_id,
+                        );
 
                         if is_err {
-                            push_dash_result(&mut word_alignment_result, &mut errors, &mut matched_confidence);
+                            push_dash_result(
+                                &mut word_alignment_result,
+                                &mut errors,
+                                &mut matched_confidence,
+                            );
                         } else {
-                            push_result(&mut word_alignment_result, &mut errors, &mut matched_confidence,
-                                       hyp_word, false, conf);
+                            if enable_confidence_weighting {
+                                // Accepted substitution → keep confidence as-is
+                            }
+                            push_result(
+                                &mut word_alignment_result,
+                                &mut errors,
+                                &mut matched_confidence,
+                                hyp_word,
+                                false,
+                                conf,
+                            );
                         }
                     } else {
-                        let hyp_word = if hj < hyp_phons.len() { &hyp_phons[hj] } else { "" };
+                        let hyp_word = if hj < hyp_phons.len() {
+                            &hyp_phons[hj]
+                        } else {
+                            ""
+                        };
                         let ref_word_ctx = if ri < expected_items.len() {
                             &expected_items[ri]
                         } else if ri < ref_phons.len() {
@@ -247,7 +337,18 @@ pub fn word_level_alignment_core(
                         } else {
                             ""
                         };
-                        let is_err = is_error_cached(ref_word_ctx, hyp_word, &mut error_cache);
+                        let is_err = is_error_cached(
+                            ref_word_ctx,
+                            hyp_word,
+                            &mut error_cache,
+                            &mut item_symtab,
+                            &mut phon_symtab,
+                            &mut next_item_id,
+                            &mut next_phon_id,
+                        );
+                        if enable_confidence_weighting && is_err {
+                            conf *= 0.5;
+                        }
                         push_result(
                             &mut word_alignment_result,
                             &mut errors,
@@ -265,10 +366,23 @@ pub fn word_level_alignment_core(
 
     // Process remaining pending deletions
     while let Some(_idx) = pending_ref_indices.pop_front() {
-        push_dash_result(&mut word_alignment_result, &mut errors, &mut matched_confidence);
+        push_dash_result(
+            &mut word_alignment_result,
+            &mut errors,
+            &mut matched_confidence,
+        );
     }
 
     Ok((word_alignment_result, errors, matched_confidence))
+}
+
+pub fn word_level_alignment_core(
+    expected_items: Vec<String>,
+    ref_phons: Vec<String>,
+    hyp_phons: Vec<String>,
+    confidences: Vec<f32>,
+) -> Result<AlignmentResult, String> {
+    word_level_alignment_core_impl(expected_items, ref_phons, hyp_phons, confidences, false)
 }
 
 /// Confidence-aware alignment wrapper (optional behavior controlled by flag)
@@ -278,24 +392,12 @@ pub fn word_level_alignment_core_with_confidence(
     hyp_phons: Vec<String>,
     confidences: Vec<f32>,
     enable_confidence_weighting: bool,
-) -> Result<(Vec<String>, Vec<bool>, Vec<f32>), String> {
-    if !enable_confidence_weighting {
-        return word_level_alignment_core(expected_items, ref_phons, hyp_phons, confidences);
-    }
-
-    // For now, reuse existing core for structure but bias confidences during INSERT handling:
-    // higher-confidence hyp tokens will avoid dash; lower-confidence more likely to dash.
-    // This is a minimal DRY approach; deeper weighting can be added internally later.
-
-    match word_level_alignment_core(expected_items, ref_phons, hyp_phons, confidences) {
-        Ok((tokens, errors, mut confs)) => {
-            for i in 0..confs.len() {
-                if errors[i] {
-                    confs[i] *= 0.5;
-                }
-            }
-            Ok((tokens, errors, confs))
-        }
-        Err(e) => Err(e),
-    }
+) -> Result<AlignmentResult, String> {
+    word_level_alignment_core_impl(
+        expected_items,
+        ref_phons,
+        hyp_phons,
+        confidences,
+        enable_confidence_weighting,
+    )
 }

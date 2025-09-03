@@ -31,7 +31,12 @@ mod tests {
         let hyp_phons = vec!["a".to_string(), "bʌ".to_string()]; // Identical
         let confidences = vec![0.9, 0.8];
 
-        let result = word_level_alignment_core(expected_items, ref_phons.clone(), hyp_phons.clone(), confidences.clone());
+        let result = word_level_alignment_core(
+            expected_items,
+            ref_phons.clone(),
+            hyp_phons.clone(),
+            confidences.clone(),
+        );
         assert!(result.is_ok());
 
         let (alignment, errors, confs) = result.unwrap();
@@ -126,7 +131,6 @@ mod tests {
         // Unknown item
         assert!(is_error("unknown_item", "a"));
     }
-
 
     // Property-based tests
     proptest! {

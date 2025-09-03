@@ -6,6 +6,7 @@ optimizations for system-wide use.
 """
 
 import asyncio
+import contextlib
 import os
 import time
 from collections.abc import Awaitable
@@ -15,9 +16,23 @@ from typing import Any, Final
 
 import aioboto3
 from aiobotocore.config import AioConfig
+from botocore.exceptions import (
+    BotoCoreError,
+    ClientError,
+    ConnectionClosedError,
+    EndpointConnectionError,
+    ReadTimeoutError,
+)
 from loguru import logger
 from pydantic import BaseModel, Field
 from rich.progress import Progress
+from tenacity import (
+    AsyncRetrying,
+    before_sleep_log,
+    retry_if_exception,
+    stop_after_attempt,
+    wait_random_exponential,
+)
 
 DEFAULT_MAX_CONNECTIONS: Final[int] = 128
 DEFAULT_MAX_CONNECTIONS_PER_HOST: Final[int] = 64
@@ -240,23 +255,37 @@ class HighPerformanceS3Config(BaseModel):
             5 * 1024 * 1024,
             100 * 1024 * 1024,
         )
-        self.max_retries = cls._clamp(
-            cls._get_int_env("S3_MAX_RETRIES", self.max_retries or DEFAULT_MAX_RETRIES), 1, 10
-        )
-        self.retry_backoff_base = cls._clamp_float(
-            cls._get_float_env(
-                "S3_RETRY_BACKOFF_BASE", self.retry_backoff_base or DEFAULT_RETRY_BACKOFF_BASE
-            ),
-            0.01,
-            1.0,
-        )
-        self.retry_backoff_max = cls._clamp_float(
-            cls._get_float_env(
-                "S3_RETRY_BACKOFF_MAX", self.retry_backoff_max or DEFAULT_RETRY_BACKOFF_MAX
-            ),
-            1.0,
-            300.0,
-        )
+        # Retry knobs (support multiple env aliases)
+        max_retries_env = os.getenv("S3_RETRY_MAX") or os.getenv("S3_MAX_RETRIES")
+        try:
+            if max_retries_env is not None:
+                self.max_retries = cls._clamp(int(max_retries_env), 1, 10)
+            else:
+                self.max_retries = cls._clamp(self.max_retries or DEFAULT_MAX_RETRIES, 1, 10)
+        except Exception:
+            self.max_retries = DEFAULT_MAX_RETRIES
+
+        backoff_base_env = os.getenv("S3_RETRY_BASE") or os.getenv("S3_RETRY_BACKOFF_BASE")
+        try:
+            if backoff_base_env is not None:
+                self.retry_backoff_base = cls._clamp_float(float(backoff_base_env), 0.01, 1.0)
+            else:
+                self.retry_backoff_base = cls._clamp_float(
+                    self.retry_backoff_base or DEFAULT_RETRY_BACKOFF_BASE, 0.01, 1.0
+                )
+        except Exception:
+            self.retry_backoff_base = DEFAULT_RETRY_BACKOFF_BASE
+
+        backoff_max_env = os.getenv("S3_RETRY_MAX_BACKOFF") or os.getenv("S3_RETRY_BACKOFF_MAX")
+        try:
+            if backoff_max_env is not None:
+                self.retry_backoff_max = cls._clamp_float(float(backoff_max_env), 1.0, 300.0)
+            else:
+                self.retry_backoff_max = cls._clamp_float(
+                    self.retry_backoff_max or DEFAULT_RETRY_BACKOFF_MAX, 1.0, 300.0
+                )
+        except Exception:
+            self.retry_backoff_max = DEFAULT_RETRY_BACKOFF_MAX
         self.buffer_size = cls._clamp(
             cls._get_int_env("S3_BUFFER_SIZE", self.buffer_size or 8192), 1024, 65536
         )
@@ -294,6 +323,33 @@ class ProductionS3Client:
         self._operation_count: int = 0
         self._total_bytes_transferred: int = 0
         self._total_operation_time: float = 0.0
+
+    @staticmethod
+    def _is_retryable_exception(e: Exception) -> bool:
+        if isinstance(
+            e,
+            TimeoutError
+            | asyncio.TimeoutError
+            | EndpointConnectionError
+            | ConnectionClosedError
+            | ReadTimeoutError
+            | BotoCoreError,
+        ):
+            return True
+        if isinstance(e, ClientError):
+            try:
+                err = e.response.get("Error", {})
+                code = (err.get("Code") or "").upper()
+                status = int(e.response.get("ResponseMetadata", {}).get("HTTPStatusCode", 0))
+                if status >= 500 or status in (408, 429):
+                    return True
+                if code in {"THROTTLING", "THROTTLINGEXCEPTION", "SLOWDOWN", "REQUESTTIMEOUT"}:
+                    return True
+            except Exception:
+                return False
+        if isinstance(e, OSError):
+            return True
+        return False
 
     async def _ensure_session(self) -> None:
         """Ensure aioboto3 session is initialized with optimized settings."""
@@ -461,90 +517,80 @@ class ProductionS3Client:
         progress: Progress | None = None,
         task_id: Any | None = None,
     ) -> S3OperationResult:
-        """Download single file with retry logic."""
+        """Download single file with retry logic (tenacity)."""
         start_time = time.time()
 
-        for attempt in range(self._config.max_retries):
+        async def _do() -> S3OperationResult:
+            client = await self._get_client()
             try:
-                client = await self._get_client()
+                if operation.local_path is None:
+                    raise ValueError("local_path is required for upload operations")
+                local_path = Path(operation.local_path)
+                local_path.parent.mkdir(parents=True, exist_ok=True)
 
-                try:
-                    if operation.local_path is None:
-                        raise ValueError("local_path is required for upload operations")
-                    local_path = Path(operation.local_path)
-                    local_path.parent.mkdir(parents=True, exist_ok=True)
+                total_size: int | None = None
+                if progress and task_id is not None and self._config.use_head_for_progress:
+                    try:
+                        head_response = await client.head_object(
+                            Bucket=operation.bucket, Key=operation.key
+                        )
+                        total_size = head_response.get("ContentLength")
+                        if total_size is not None:
+                            progress.update(task_id, total=total_size)
+                    except Exception:
+                        total_size = None
 
-                    total_size: int | None = None
-                    if progress and task_id is not None and self._config.use_head_for_progress:
-                        try:
-                            head_response = await client.head_object(
-                                Bucket=operation.bucket, Key=operation.key
-                            )
-                            total_size = head_response.get("ContentLength")
-                            if total_size is not None:
-                                progress.update(task_id, total=total_size)
-                        except Exception:
-                            total_size = None
+                response = await client.get_object(Bucket=operation.bucket, Key=operation.key)
+                body = response["Body"]
 
-                    response = await client.get_object(Bucket=operation.bucket, Key=operation.key)
-                    body = response["Body"]
+                bytes_written: int = 0
+                with open(local_path, "wb") as f:
+                    while True:
+                        chunk: bytes = await body.read(self._config.buffer_size)
+                        if not chunk:
+                            break
+                        f.write(chunk)
+                        bytes_written += len(chunk)
+                        if progress and task_id is not None:
+                            progress.update(task_id, completed=bytes_written)
 
-                    bytes_written: int = 0
-                    with open(local_path, "wb") as f:
-                        while True:
-                            chunk: bytes = await body.read(self._config.buffer_size)
-                            if not chunk:
-                                break
-                            f.write(chunk)
-                            bytes_written += len(chunk)
-                            if progress and task_id is not None:
-                                progress.update(task_id, completed=bytes_written)
-
-                    duration = time.time() - start_time
-                    file_size = local_path.stat().st_size if local_path.exists() else 0
-
-                    self._operation_count += 1
-                    self._total_bytes_transferred += file_size
-                    self._total_operation_time += duration
-
-                    return S3OperationResult(
-                        success=True,
-                        operation=operation,
-                        data={"file_size": file_size},
-                        duration_ms=duration * 1000,
-                    )
-
-                finally:
-                    await self._return_client(client)
-
-            except Exception as e:
-                self._logger.warning(
-                    "Download attempt failed",
-                    component="s3_client",
-                    bucket=operation.bucket,
-                    key=operation.key,
-                    attempt=attempt + 1,
-                    max_retries=self._config.max_retries,
-                    error=str(e),
-                    error_type=type(e).__name__,
+                file_size = local_path.stat().st_size if local_path.exists() else 0
+                return S3OperationResult(
+                    success=True,
+                    operation=operation,
+                    data={"file_size": file_size},
                 )
+            finally:
+                await self._return_client(client)
 
-                if attempt == self._config.max_retries - 1:
-                    duration = time.time() - start_time
-                    return S3OperationResult(
-                        success=False,
-                        operation=operation,
-                        error=str(e),
-                        duration_ms=duration * 1000,
-                    )
-
-                backoff_time = min(
-                    self._config.retry_backoff_base * (2**attempt),
-                    self._config.retry_backoff_max,
-                )
-                await asyncio.sleep(backoff_time)
-
-        return S3OperationResult(success=False, operation=operation, error="Max retries exceeded")
+        try:
+            async for attempt in AsyncRetrying(
+                stop=stop_after_attempt(self._config.max_retries),
+                wait=wait_random_exponential(
+                    multiplier=self._config.retry_backoff_base,
+                    max=self._config.retry_backoff_max,
+                ),
+                retry=retry_if_exception(self._is_retryable_exception),
+                reraise=True,
+                before_sleep=before_sleep_log(self._logger, "warning"),
+            ):
+                with attempt:
+                    result = await _do()
+            duration = time.time() - start_time
+            if result.success:
+                file_size = int(result.data.get("file_size", 0)) if result.data else 0
+                self._operation_count += 1
+                self._total_bytes_transferred += file_size
+                self._total_operation_time += duration
+            result.duration_ms = duration * 1000
+            return result
+        except Exception as e:
+            return S3OperationResult(
+                success=False,
+                operation=operation,
+                error=str(e),
+                duration_ms=(time.time() - start_time) * 1000,
+            )
 
     # TODO nuke this tuple nonsenses
     async def upload_files_batch(
@@ -610,72 +656,140 @@ class ProductionS3Client:
             return await self._upload_single_with_retry(operation)
 
     async def _upload_single_with_retry(self, operation: S3Operation) -> S3OperationResult:
-        """Upload single file with retry logic."""
+        """Upload single file with retry logic (tenacity)."""
         start_time = time.time()
 
-        for attempt in range(self._config.max_retries):
+        async def _do() -> S3OperationResult:
+            client = await self._get_client()
             try:
-                client = await self._get_client()
+                if operation.local_path is None:
+                    raise ValueError("local_path is required for download operations")
+                local_path = Path(operation.local_path)
 
-                try:
-                    if operation.local_path is None:
-                        raise ValueError("local_path is required for download operations")
-                    local_path = Path(operation.local_path)
-
-                    if not local_path.exists():
-                        return S3OperationResult(
-                            success=False,
-                            operation=operation,
-                            error=f"Local file does not exist: {local_path}",
-                        )
-
-                    data: bytes = local_path.read_bytes()
-                    await client.put_object(Bucket=operation.bucket, Key=operation.key, Body=data)
-
-                    duration = time.time() - start_time
-                    file_size = local_path.stat().st_size
-
-                    self._operation_count += 1
-                    self._total_bytes_transferred += file_size
-                    self._total_operation_time += duration
-
-                    return S3OperationResult(
-                        success=True,
-                        operation=operation,
-                        data={"file_size": file_size},
-                        duration_ms=duration * 1000,
-                    )
-
-                finally:
-                    await self._return_client(client)
-
-            except Exception as e:
-                self._logger.warning(
-                    "Upload attempt failed",
-                    component="s3_client",
-                    bucket=operation.bucket,
-                    key=operation.key,
-                    attempt=attempt + 1,
-                    max_retries=self._config.max_retries,
-                    error=str(e),
-                )
-
-                if attempt == self._config.max_retries - 1:
-                    duration = time.time() - start_time
+                if not local_path.exists():
                     return S3OperationResult(
                         success=False,
                         operation=operation,
-                        error=str(e),
-                        duration_ms=duration * 1000,
+                        error=f"Local file does not exist: {local_path}",
                     )
 
-                backoff_time = min(
-                    self._config.retry_backoff_base * (2**attempt),
-                    self._config.retry_backoff_max,
-                )
-                await asyncio.sleep(backoff_time)
+                file_size = local_path.stat().st_size
+                if file_size >= self._config.multipart_threshold:
+                    await self._multipart_upload(
+                        client=client,
+                        bucket=operation.bucket,
+                        key=operation.key,
+                        file_path=local_path,
+                        file_size=file_size,
+                    )
+                else:
+                    data: bytes = local_path.read_bytes()
+                    await client.put_object(Bucket=operation.bucket, Key=operation.key, Body=data)
 
-        return S3OperationResult(success=False, operation=operation, error="Max retries exceeded")
+                return S3OperationResult(
+                    success=True,
+                    operation=operation,
+                    data={"file_size": file_size},
+                )
+            finally:
+                await self._return_client(client)
+
+        try:
+            async for attempt in AsyncRetrying(
+                stop=stop_after_attempt(self._config.max_retries),
+                wait=wait_random_exponential(
+                    multiplier=self._config.retry_backoff_base,
+                    max=self._config.retry_backoff_max,
+                ),
+                retry=retry_if_exception(self._is_retryable_exception),
+                reraise=True,
+                before_sleep=before_sleep_log(self._logger, "warning"),
+            ):
+                with attempt:
+                    result = await _do()
+            duration = time.time() - start_time
+            if result.success:
+                file_size = int(result.data.get("file_size", 0)) if result.data else 0
+                self._operation_count += 1
+                self._total_bytes_transferred += file_size
+                self._total_operation_time += duration
+            result.duration_ms = duration * 1000
+            return result
+        except Exception as e:
+            return S3OperationResult(
+                success=False,
+                operation=operation,
+                error=str(e),
+                duration_ms=(time.time() - start_time) * 1000,
+            )
+
+    async def _multipart_upload(
+        self,
+        *,
+        client: Any,
+        bucket: str,
+        key: str,
+        file_path: Path,
+        file_size: int,
+    ) -> None:
+        """Perform multipart upload with bounded concurrency.
+
+        Splits the file into chunks of size `multipart_chunksize` and uploads
+        parts concurrently. Ensures proper completion or abort on failure.
+        """
+        mp = await client.create_multipart_upload(Bucket=bucket, Key=key)
+        upload_id: str = mp["UploadId"]
+
+        part_size: int = self._config.multipart_chunksize
+        num_parts: int = max(1, (file_size + part_size - 1) // part_size)
+        part_results: list[dict[str, Any] | BaseException] = []
+
+        async def _upload_part(part_number: int) -> dict[str, Any]:
+            start = (part_number - 1) * part_size
+            size = min(part_size, file_size - start)
+
+            # Read the slice synchronously (bounded by part concurrency)
+            def read_slice() -> bytes:
+                with open(file_path, "rb") as f:
+                    f.seek(start)
+                    return f.read(size)
+
+            body: bytes = await asyncio.to_thread(read_slice)
+            resp = await client.upload_part(
+                Bucket=bucket,
+                Key=key,
+                PartNumber=part_number,
+                UploadId=upload_id,
+                Body=body,
+            )
+            return {"ETag": resp["ETag"], "PartNumber": part_number}
+
+        # Limit concurrent part uploads
+        part_sem = asyncio.Semaphore(min(16, self._config.max_concurrent_uploads))
+
+        async def _guarded_upload(part_number: int) -> dict[str, Any]:
+            async with part_sem:
+                return await _upload_part(part_number)
+
+        try:
+            tasks = [asyncio.create_task(_guarded_upload(i)) for i in range(1, num_parts + 1)]
+            part_results = await asyncio.gather(*tasks, return_exceptions=True)
+            completed = [r for r in part_results if isinstance(r, dict)]
+            if len(completed) != num_parts:
+                # Abort on any failure
+                await client.abort_multipart_upload(Bucket=bucket, Key=key, UploadId=upload_id)
+                raise RuntimeError("Multipart upload failed; aborted upload")
+
+            await client.complete_multipart_upload(
+                Bucket=bucket,
+                Key=key,
+                UploadId=upload_id,
+                MultipartUpload={"Parts": sorted(completed, key=lambda x: x["PartNumber"])},
+            )
+        except Exception:
+            with contextlib.suppress(Exception):
+                await client.abort_multipart_upload(Bucket=bucket, Key=key, UploadId=upload_id)
+            raise
 
     async def list_objects_batch(self, requests: list[tuple[str, str]]) -> list[S3OperationResult]:
         """List objects from multiple buckets/prefixes concurrently.
@@ -726,11 +840,12 @@ class ProductionS3Client:
                 client = await self._get_client()
 
                 try:
-                    response = await client.list_objects_v2(
+                    paginator = client.get_paginator("list_objects_v2")
+                    objects: list[Any] = []
+                    async for page in paginator.paginate(
                         Bucket=operation.bucket, Prefix=operation.key
-                    )
-
-                    objects: list[Any] = response.get("Contents", [])
+                    ):
+                        objects.extend(page.get("Contents", []))
                     duration = time.time() - start_time
 
                     return S3OperationResult(
@@ -826,47 +941,13 @@ class ProductionS3Client:
     async def delete_objects_batch(
         self, bucket: str, keys: list[dict[str, str]]
     ) -> list[S3OperationResult]:
-        """Delete multiple objects concurrently."""
-        if not keys:
-            return []
-
+        """Delete disabled: no-op to prevent accidental data loss."""
         self._logger.info(
-            "Starting batch delete",
+            "DeleteObjects disabled; skipping delete request",
             bucket=bucket,
-            object_count=len(keys),
+            requested=len(keys),
         )
-
-        operations = [
-            S3Operation(bucket=bucket, key=key_dict["Key"], operation_type="delete")
-            for key_dict in keys
-        ]
-
-        tasks = [self._delete_single_with_semaphore(op) for op in operations]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-
-        processed_results: list[S3OperationResult] = []
-        for result in results:
-            if isinstance(result, Exception):
-                processed_results.append(
-                    S3OperationResult(
-                        success=False,
-                        operation=S3Operation(bucket=bucket, key="", operation_type="delete"),
-                        error=str(result),
-                    )
-                )
-            elif isinstance(result, S3OperationResult):
-                processed_results.append(result)
-
-        successful_count = sum(1 for r in processed_results if r.success)
-        self._logger.info(
-            "Batch delete completed",
-            bucket=bucket,
-            total_operations=len(keys),
-            successful=successful_count,
-            failed=len(keys) - successful_count,
-        )
-
-        return processed_results
+        return []
 
     async def _delete_single_with_semaphore(self, operation: S3Operation) -> S3OperationResult:
         """Delete single object with semaphore control."""
@@ -876,41 +957,39 @@ class ProductionS3Client:
     async def _delete_single_with_retry(self, operation: S3Operation) -> S3OperationResult:
         """Delete single object with retry logic."""
         start_time = time.time()
-        for attempt in range(self._config.max_retries):
+
+        async def _do() -> None:
+            client = await self._get_client()
             try:
-                client = await self._get_client()
-                try:
-                    await client.delete_object(Bucket=operation.bucket, Key=operation.key)
-                    duration = time.time() - start_time
-                    return S3OperationResult(
-                        success=True,
-                        operation=operation,
-                        duration_ms=duration * 1000,
-                    )
-                finally:
-                    await self._return_client(client)
-            except Exception as e:
-                self._logger.warning(
-                    "Delete attempt failed",
-                    bucket=operation.bucket,
-                    key=operation.key,
-                    attempt=attempt + 1,
-                    error=str(e),
-                )
-                if attempt == self._config.max_retries - 1:
-                    return S3OperationResult(
-                        success=False,
-                        operation=operation,
-                        error=str(e),
-                        duration_ms=(time.time() - start_time) * 1000,
-                    )
-                await asyncio.sleep(
-                    min(
-                        self._config.retry_backoff_base * (2**attempt),
-                        self._config.retry_backoff_max,
-                    )
-                )
-        return S3OperationResult(success=False, operation=operation, error="Max retries exceeded")
+                await client.delete_object(Bucket=operation.bucket, Key=operation.key)
+            finally:
+                await self._return_client(client)
+
+        try:
+            async for attempt in AsyncRetrying(
+                stop=stop_after_attempt(self._config.max_retries),
+                wait=wait_random_exponential(
+                    multiplier=self._config.retry_backoff_base,
+                    max=self._config.retry_backoff_max,
+                ),
+                retry=retry_if_exception(self._is_retryable_exception),
+                reraise=True,
+                before_sleep=before_sleep_log(self._logger, "warning"),
+            ):
+                with attempt:
+                    await _do()
+            return S3OperationResult(
+                success=True,
+                operation=operation,
+                duration_ms=(time.time() - start_time) * 1_000,
+            )
+        except Exception as e:
+            return S3OperationResult(
+                success=False,
+                operation=operation,
+                error=str(e),
+                duration_ms=(time.time() - start_time) * 1_000,
+            )
 
     async def get_paginator(self, operation_name: str) -> Any:
         """Get paginator for specified operation.
@@ -934,9 +1013,9 @@ class ProductionS3Client:
         return {
             "operation_count": self._operation_count,
             "total_bytes_transferred": self._total_bytes_transferred,
-            "avg_operation_time_ms": avg_operation_time * 1000,
+            "avg_operation_time_ms": avg_operation_time * 1_000,
             "throughput_mbps": (
-                self._total_bytes_transferred / max(1, self._total_operation_time) / 1024 / 1024
+                self._total_bytes_transferred / max(1, self._total_operation_time) / 1_024 / 1_024
             ),
             "clients_created": self._clients_created,
             "client_pool_size": self._config.client_pool_size,

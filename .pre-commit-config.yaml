@@ -26,9 +26,9 @@ repos:
     rev: v6.0.0
     hooks:
       - id: end-of-file-fixer
-        exclude: '^cdk/dist/.*'
+        exclude: '^(cdk/dist/.*|my_asr_aligner/target/.*)'
       - id: trailing-whitespace
-        exclude: '^cdk/dist/.*'
+        exclude: '^(cdk/dist/.*|my_asr_aligner/target/.*)'
 
   # TypeScript/CDK checks
   - repo: local
@@ -53,3 +53,31 @@ repos:
         language: system
         files: '^cdk/.*\.ts$'
         pass_filenames: false
+
+  # Rust checks
+  - repo: local
+    hooks:
+      - id: rust-fmt
+        name: Rust Format Check
+        entry: bash -c 'cd my_asr_aligner && cargo fmt --check'
+        language: system
+        files: '^my_asr_aligner/src/.*\.rs$|^my_asr_aligner/benches/.*\.rs$'
+        pass_filenames: false
+
+      - id: rust-clippy
+        name: Rust Clippy Linting
+        entry: bash -c 'cd my_asr_aligner && cargo clippy --lib --bins -- -D warnings'
+        language: system
+        files: '^my_asr_aligner/(src|benches)/.*\.rs$'
+        exclude: '^my_asr_aligner/target/.*'
+        pass_filenames: false
+        always_run: false
+
+      - id: rust-check
+        name: Rust Build Check
+        entry: bash -c 'cd my_asr_aligner && cargo check --lib --quiet'
+        language: system
+        files: '^my_asr_aligner/(src|benches)/.*\.rs$'
+        exclude: '^my_asr_aligner/target/.*'
+        pass_filenames: false
+        always_run: false

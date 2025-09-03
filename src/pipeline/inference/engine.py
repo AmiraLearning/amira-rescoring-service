@@ -2,6 +2,7 @@ import asyncio
 import os
 import time
 import traceback
+from collections import OrderedDict
 from threading import Lock
 from typing import TYPE_CHECKING, Any
 
@@ -11,6 +12,16 @@ from loguru import logger
 from transformers import BatchFeature, Wav2Vec2ForCTC, Wav2Vec2Processor
 
 from utils.logging import emit_emf_metric
+
+from .metrics_constants import (
+    DIM_CORRELATION_ID,
+    DIM_DEVICE,
+    MET_INFER_DECODE_MS,
+    MET_INFER_MODEL_MS,
+    MET_INFER_PRE_MS,
+    MET_INFER_TOTAL_MS,
+    NS_INFERENCE,
+)
 
 if TYPE_CHECKING:
     from .triton_engine import TritonInferenceEngine
@@ -31,8 +42,28 @@ from .models import (
     W2VConfig,
 )
 
-_cached_engines: dict[str, "Wav2Vec2InferenceEngine | TritonInferenceEngine"] = {}
+_cached_engines: "OrderedDict[str, Wav2Vec2InferenceEngine | TritonInferenceEngine]" = OrderedDict()
 _cached_engines_lock: Lock = Lock()
+_ENGINE_CACHE_MAX: int = int(os.getenv("ENGINE_CACHE_MAX", "2"))
+
+
+def _make_cache_key(*, w2v_config: W2VConfig) -> str:
+    device_hint: str = (
+        getattr(w2v_config, "device", DeviceType.CPU).value
+        if hasattr(DeviceType, "CPU")
+        else str(getattr(w2v_config, "device", "cpu"))
+    )
+    parts: list[str] = [
+        str(w2v_config.model_path),
+        f"triton={w2v_config.use_triton}",
+        f"model={getattr(w2v_config, 'triton_model', 'w2v2')}",
+        f"compile={getattr(w2v_config, 'use_torch_compile', False)}",
+        f"jit={getattr(w2v_config, 'use_jit_trace', False)}",
+        f"mode={getattr(w2v_config, 'compile_mode', 'default')}",
+        f"conf={getattr(w2v_config, 'include_confidence', False)}",
+        f"device={device_hint}",
+    ]
+    return "|".join(parts)
 
 
 async def preload_inference_engine_async(
@@ -383,20 +414,20 @@ class Wav2Vec2InferenceEngine:
             self._log_gpu_memory_usage()
             try:
                 emit_emf_metric(
-                    namespace="Amira/Inference",
+                    namespace=NS_INFERENCE,
                     metrics={
-                        "InferenceTotalMs": result.total_duration_ms,
-                        "PreprocessMs": result.preprocess_time_ms,
-                        "ModelMs": result.model_inference_time_ms,
-                        "DecodeMs": result.decode_time_ms,
+                        MET_INFER_TOTAL_MS: result.total_duration_ms,
+                        MET_INFER_PRE_MS: result.preprocess_time_ms,
+                        MET_INFER_MODEL_MS: result.model_inference_time_ms,
+                        MET_INFER_DECODE_MS: result.decode_time_ms,
                     },
                     dimensions={
-                        "Device": result.device.value
+                        DIM_DEVICE: result.device.value
                         if hasattr(result.device, "value")
                         else str(result.device),
                         "IncludeConfidence": str(self._w2v_config.include_confidence).lower(),
                         **(
-                            {"CorrelationId": str(input_data.correlation_id)}
+                            {DIM_CORRELATION_ID: str(input_data.correlation_id)}
                             if getattr(input_data, "correlation_id", None)
                             else {}
                         ),
@@ -464,22 +495,32 @@ def get_cached_engine(
     Returns:
         Cached inference engine instance.
     """
-    cache_key = f"{w2v_config.model_path}_{w2v_config.use_triton}_{w2v_config.use_torch_compile}_{w2v_config.use_jit_trace}"
+    cache_key = _make_cache_key(w2v_config=w2v_config)
 
     if cache_key in _cached_engines:
-        return _cached_engines[cache_key]
+        with _cached_engines_lock:
+            engine = _cached_engines.pop(cache_key)
+            _cached_engines[cache_key] = engine
+            return engine
 
     with _cached_engines_lock:
         existing = _cached_engines.get(cache_key)
         if existing is not None:
+            _cached_engines.pop(cache_key, None)
+            _cached_engines[cache_key] = existing
             return existing
         if w2v_config.use_triton:
             from .triton_engine import TritonInferenceEngine
 
             engine = TritonInferenceEngine(w2v_config=w2v_config)
         else:
-            engine = Wav2Vec2InferenceEngine(w2v_config=w2v_config)  # type: ignore[assignment]
+            engine = Wav2Vec2InferenceEngine(w2v_config=w2v_config)
+        if cache_key in _cached_engines:
+            _cached_engines.pop(cache_key)
         _cached_engines[cache_key] = engine
+        while len(_cached_engines) > _ENGINE_CACHE_MAX:
+            evicted_key, _ = _cached_engines.popitem(last=False)
+            logger.info(f"Evicted inference engine from cache: {evicted_key}")
         logger.info(f"Cached new inference engine with key: {cache_key}")
         return engine
 

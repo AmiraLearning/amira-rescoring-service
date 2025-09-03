@@ -17,6 +17,17 @@ from utils.logging import emit_emf_metric
 
 from .constants import MS_PER_SECOND, DeviceType
 from .decoder import PhonemeDecoder
+from .metrics_constants import (
+    DIM_CORRELATION_ID,
+    DIM_DEVICE,
+    MET_INFER_DECODE_MS,
+    MET_INFER_INCLUDE_CONF,
+    MET_INFER_MODEL_MS,
+    MET_INFER_PRE_MS,
+    MET_INFER_SUCCESS,
+    MET_INFER_TOTAL_MS,
+    NS_INFERENCE,
+)
 from .models import (
     GPUInferenceResult,
     InferenceInput,
@@ -56,10 +67,15 @@ class TritonInferenceEngine:
                 raise ValueError("Triton URL must start with https://")
 
             host = raw_url.replace("https://", "", 1)
+            # Reuse a single HTTP(s) connection with timeouts
             self._client = httpclient.InferenceServerClient(
                 url=host,
                 verbose=False,
                 ssl=True,
+                concurrency=1,
+                network_timeout=10.0,
+                connection_timeout=5.0,
+                network_retry=2,
             )
 
             if not self._client.is_server_ready():
@@ -163,21 +179,21 @@ class TritonInferenceEngine:
             result.success = True
             try:
                 emit_emf_metric(
-                    namespace="Amira/Inference",
+                    namespace=NS_INFERENCE,
                     metrics={
-                        "InferenceTotalMs": result.total_duration_ms,
-                        "PreprocessMs": result.preprocess_time_ms or 0.0,
-                        "ModelMs": result.model_inference_time_ms or 0.0,
-                        "DecodeMs": result.decode_time_ms or 0.0,
-                        "IncludeConfidence": 1.0 if self._w2v_config.include_confidence else 0.0,
-                        "Success": 1.0,
+                        MET_INFER_TOTAL_MS: result.total_duration_ms,
+                        MET_INFER_PRE_MS: result.preprocess_time_ms or 0.0,
+                        MET_INFER_MODEL_MS: result.model_inference_time_ms or 0.0,
+                        MET_INFER_DECODE_MS: result.decode_time_ms or 0.0,
+                        MET_INFER_INCLUDE_CONF: 1.0 if self._w2v_config.include_confidence else 0.0,
+                        MET_INFER_SUCCESS: 1.0,
                     },
                     dimensions={
-                        "Device": result.device.value
+                        DIM_DEVICE: result.device.value
                         if hasattr(result.device, "value")
                         else str(result.device),
                         **(
-                            {"CorrelationId": str(input_data.inference_id)}
+                            {DIM_CORRELATION_ID: str(input_data.inference_id)}
                             if getattr(input_data, "inference_id", None)
                             else {}
                         ),
@@ -192,16 +208,16 @@ class TritonInferenceEngine:
             result.error = f"Triton inference error: {e}"
             try:
                 emit_emf_metric(
-                    namespace="Amira/Inference",
+                    namespace=NS_INFERENCE,
                     metrics={
-                        "Success": 0.0,
+                        MET_INFER_SUCCESS: 0.0,
                     },
                     dimensions={
-                        "Device": result.device.value
+                        DIM_DEVICE: result.device.value
                         if hasattr(result.device, "value")
                         else str(result.device),
                         **(
-                            {"CorrelationId": str(input_data.inference_id)}
+                            {DIM_CORRELATION_ID: str(input_data.inference_id)}
                             if getattr(input_data, "inference_id", None)
                             else {}
                         ),
@@ -216,16 +232,16 @@ class TritonInferenceEngine:
             result.error = str(e)
             try:
                 emit_emf_metric(
-                    namespace="Amira/Inference",
+                    namespace=NS_INFERENCE,
                     metrics={
-                        "Success": 0.0,
+                        MET_INFER_SUCCESS: 0.0,
                     },
                     dimensions={
-                        "Device": result.device.value
+                        DIM_DEVICE: result.device.value
                         if hasattr(result.device, "value")
                         else str(result.device),
                         **(
-                            {"CorrelationId": str(input_data.inference_id)}
+                            {DIM_CORRELATION_ID: str(input_data.inference_id)}
                             if getattr(input_data, "inference_id", None)
                             else {}
                         ),

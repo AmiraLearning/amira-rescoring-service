@@ -32,6 +32,8 @@ DEFAULT_AUDIO_SUBDIR: Final[str] = "DEFAULT"
 PADDED_AUDIO_SUFFIX: Final[str] = "_padded.wav"
 AUDIO_FILE_EXTENSION: Final[str] = ".wav"
 AUDIO_BITS_PER_SAMPLE: Final[int] = 16
+DEFAULT_AUDIO_READ_TIMEOUT_SEC: Final[int] = 10
+AUDIO_MMAP_THRESHOLD_BYTES: Final[int] = 64 * 1024 * 1024
 
 
 async def download_complete_audio_from_s3(
@@ -85,16 +87,24 @@ def _load_audio_file(*, file_path: Path) -> tuple[torch.Tensor, int]:
         Tuple of (audio_tensor, sample_rate)
     """
     import signal
+    from concurrent.futures import ThreadPoolExecutor
 
     def timeout_handler(signum: int, frame: Any) -> None:
         raise TimeoutError("Audio file loading timed out")
 
-    use_signal: bool = threading.current_thread() is threading.main_thread()
-    if use_signal:
-        signal.signal(signal.SIGALRM, timeout_handler)
-        signal.alarm(10)
+    def _do_read() -> tuple[torch.Tensor, int]:
+        size_bytes = file_path.stat().st_size if file_path.exists() else 0
+        if size_bytes >= AUDIO_MMAP_THRESHOLD_BYTES:
+            try:
+                from scipy.io import wavfile
 
-    try:
+                sr, data = wavfile.read(str(file_path), mmap=True)
+                tensor = torch.from_numpy(data.astype(np.float32))
+                if tensor.ndim == 1:
+                    tensor = tensor.unsqueeze(0)
+                return tensor, int(sr)
+            except Exception:
+                pass
         use_torchcodec_env = os.getenv("AUDIO_USE_TORCHCODEC", "auto").lower()
         use_torchcodec: bool = (
             _USE_TORCHCODEC
@@ -102,17 +112,27 @@ def _load_audio_file(*, file_path: Path) -> tuple[torch.Tensor, int]:
             else use_torchcodec_env in {"1", "true", "yes", "on"}
         )
         if use_torchcodec and _USE_TORCHCODEC:
-            result = torchaudio.load_with_torchcodec(str(file_path))
-        else:
-            import warnings
+            return torchaudio.load_with_torchcodec(str(file_path))
+        import warnings
 
-            with warnings.catch_warnings():
-                warnings.filterwarnings("ignore", category=UserWarning, module="torchaudio")
-                result = torchaudio.load(str(file_path))
-        return result
-    finally:
-        if use_signal:
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", category=UserWarning, module="torchaudio")
+            return torchaudio.load(str(file_path))
+
+    use_signal: bool = threading.current_thread() is threading.main_thread()
+    if use_signal:
+        signal.signal(signal.SIGALRM, timeout_handler)
+        timeout_val = int(os.getenv("AUDIO_READ_TIMEOUT_SEC", str(DEFAULT_AUDIO_READ_TIMEOUT_SEC)))
+        signal.alarm(timeout_val)
+        try:
+            return _do_read()
+        finally:
             signal.alarm(0)
+    else:
+        timeout_val = int(os.getenv("AUDIO_READ_TIMEOUT_SEC", str(DEFAULT_AUDIO_READ_TIMEOUT_SEC)))
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(_do_read)
+            return future.result(timeout=timeout_val)
 
 
 # Fast WAV header preflight to avoid loading empty files

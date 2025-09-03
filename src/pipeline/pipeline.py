@@ -37,6 +37,19 @@ from src.pipeline.query import (
 from utils.config import PipelineConfig
 from utils.logging import emit_emf_metric
 
+from .inference.metrics_constants import (
+    DIM_ACTIVITY_ID,
+    DIM_CORRELATION_ID,
+    MET_ACTIVITY_PHRASES,
+    MET_ACTIVITY_SUCCESS,
+    MET_ACTIVITY_TOTAL_MS,
+    MET_ALIGN_ACCURACY,
+    MET_ALIGN_ERROR_COUNT,
+    MET_ALIGN_TOTAL,
+    NS_ACTIVITY,
+    NS_ALIGNMENT,
+)
+
 warnings.filterwarnings("ignore", category=UserWarning, module=r"torchaudio(\..*)?$")
 
 
@@ -119,9 +132,10 @@ async def load_and_prepare_data(
         s3_preload_task: asyncio.Task[Any] = asyncio.create_task(
             preload_s3_client_async(
                 config=HighPerformanceS3Config(
-                    aws_profile=config.aws.aws_profile, aws_region=config.aws.aws_region
+                    aws_profile=config.aws.aws_profile,
+                    aws_region=config.aws.aws_region,
                 ),
-                num_clients=2,
+                num_clients=int(os.getenv("S3_WARM_CLIENTS", "2")),
             )
         )
 
@@ -147,9 +161,10 @@ async def load_and_prepare_data(
     s3_preload_task_fallback: asyncio.Task[Any] = asyncio.create_task(
         preload_s3_client_async(
             config=HighPerformanceS3Config(
-                aws_profile=config.aws.aws_profile, aws_region=config.aws.aws_region
+                aws_profile=config.aws.aws_profile,
+                aws_region=config.aws.aws_region,
             ),
-            num_clients=2,
+            num_clients=int(os.getenv("S3_WARM_CLIENTS", "2")),
         )
     )
 
@@ -430,6 +445,14 @@ def perform_alignment(
 
     except Exception as e:
         logger.error(f"Alignment failed for activity: {e}")
+        try:
+            emit_emf_metric(
+                namespace="Amira/Activity",
+                metrics={"AlignFailure": 1.0},
+                dimensions={},
+            )
+        except Exception:
+            pass
         phrase_errors_nested = [
             [True]
             * len(
@@ -459,11 +482,11 @@ def perform_alignment(
 
     try:
         emit_emf_metric(
-            namespace="Amira/Alignment",
+            namespace=NS_ALIGNMENT,
             metrics={
-                "AlignErrorCount": float(error_count),
-                "AlignTotal": float(total_count),
-                "AlignAccuracy": float(accuracy),
+                MET_ALIGN_ERROR_COUNT: float(error_count),
+                MET_ALIGN_TOTAL: float(total_count),
+                MET_ALIGN_ACCURACY: float(accuracy),
             },
             dimensions={},
         )
@@ -484,12 +507,35 @@ async def process_single_activity(
     Process a single activity through CPU and GPU stages.
     """
     activity_start: float = time.time()
-    processed_activity: ProcessedActivity = await process_activity(
-        activity_id=activity_id,
-        phrases_input=phrases_input,
-        config=config,
-        engine=engine,
-    )
+    try:
+        processed_activity: ProcessedActivity = await process_activity(
+            activity_id=activity_id,
+            phrases_input=phrases_input,
+            config=config,
+            engine=engine,
+        )
+    except Exception:
+        try:
+            correlation_id = (
+                str(config.metadata.correlation_id)
+                if hasattr(config, "metadata")
+                and hasattr(config.metadata, "correlation_id")
+                and config.metadata.correlation_id
+                else None
+            )
+            emit_emf_metric(
+                namespace=NS_ACTIVITY,
+                metrics={
+                    MET_ACTIVITY_SUCCESS: 0.0,
+                },
+                dimensions={
+                    DIM_ACTIVITY_ID: str(activity_id),
+                    **({DIM_CORRELATION_ID: correlation_id} if correlation_id is not None else {}),
+                },
+            )
+        except Exception:
+            pass
+        raise
 
     errors: Any = perform_alignment(
         activity_outputs=processed_activity.activity_outputs,
@@ -508,15 +554,15 @@ async def process_single_activity(
         )
         phrase_count: int = len(processed_activity.activity_outputs.phrases)
         emit_emf_metric(
-            namespace="Amira/Activity",
+            namespace=NS_ACTIVITY,
             metrics={
-                "ActivityTotalMs": total_ms,
-                "Phrases": float(phrase_count),
-                "ActivitySuccess": 1.0,
+                MET_ACTIVITY_TOTAL_MS: total_ms,
+                MET_ACTIVITY_PHRASES: float(phrase_count),
+                MET_ACTIVITY_SUCCESS: 1.0,
             },
             dimensions={
-                "ActivityId": str(activity_id),
-                **({"CorrelationId": correlation_id} if correlation_id is not None else {}),
+                DIM_ACTIVITY_ID: str(activity_id),
+                **({DIM_CORRELATION_ID: correlation_id} if correlation_id is not None else {}),
             },
         )
     except Exception:

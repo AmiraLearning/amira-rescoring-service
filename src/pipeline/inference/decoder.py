@@ -4,6 +4,7 @@ import numpy as np
 from loguru import logger
 
 from .constants import VALID_PHONETIC_ELEMENTS, TokenType
+from .metrics_constants import MET_DECODER_PARSE_FAILURE, NS_DECODER
 from .models import (
     GroupedPhoneticUnits,
     PhoneticTranscript,
@@ -152,16 +153,18 @@ class PhonemeDecoder:
         final_confidences: list[float] = []
         index: int = 0
         track_confidence: bool = bool(grouped_segment_units.confidences)
+        tokens = grouped_segment_units.tokens
+        confidences = grouped_segment_units.confidences
 
         robust_env = os.getenv("DECODER_ROBUST_MODE", "false").lower() in {"1", "true", "yes", "on"}
         while index < len(grouped_segment_units.tokens):
             longest_match: LongestMatchResult = self._phonetic_trie.find_longest_match(
-                tokens=grouped_segment_units.tokens, start_index=index
+                tokens=tokens, start_index=index
             )
             if longest_match.matched_element and longest_match.tokens_consumed > 0:
                 final_elements.append(longest_match.matched_element)
                 if track_confidence:
-                    segment_conf: list[float] = grouped_segment_units.confidences[
+                    segment_conf: list[float] = confidences[
                         index : index + longest_match.tokens_consumed
                     ]
                     final_confidences.append(sum(segment_conf) / len(segment_conf))
@@ -170,7 +173,7 @@ class PhonemeDecoder:
                 message: str = (
                     "Unable to match phonetic element at position "
                     f"{index} in segment: "
-                    f"{''.join(grouped_segment_units.tokens[index:])}"
+                    f"{''.join(tokens[index:])}"
                 )
                 if robust_env:
                     logger.warning(message)
@@ -181,8 +184,8 @@ class PhonemeDecoder:
                     from utils.logging import emit_emf_metric
 
                     emit_emf_metric(
-                        namespace="Amira/Decoder",
-                        metrics={"ParseFailure": 1.0},
+                        namespace=NS_DECODER,
+                        metrics={MET_DECODER_PARSE_FAILURE: 1.0},
                         dimensions={},
                     )
                 except Exception:

@@ -10,7 +10,7 @@ from pathlib import Path
 from loguru import logger
 from pydantic import BaseModel
 
-from infra.s3_client import ProductionS3Client
+from infra.s3_client import HighPerformanceS3Config, ProductionS3Client
 from utils.config import RECONSTITUTED_PHRASE_AUDIO
 from utils.phrase_slicing import PhraseSlicer
 from utils.s3_audio_operations import (
@@ -140,9 +140,13 @@ async def download_tutor_style_audio(
         if activity_id in existing_folders:
             Path(layout.dataset_dir, activity_id).rename(Path(layout.dataset_dir, eff_act_id))
         else:
+            tuned_client = s3_client
+            if tuned_client is None:
+                cfg = HighPerformanceS3Config()
+                tuned_client = ProductionS3Client(config=cfg)
             await PhraseSlicer(
                 destination_path=str(layout.dataset_dir),
-                s3_client=s3_client,
+                s3_client=tuned_client,
                 stage_source=stage_source,
             ).process_activity_into_phrase_sliced_audio(
                 activity_id=activity_id,

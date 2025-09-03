@@ -27,6 +27,7 @@ This list captures prioritized follow-ups from the recent audit to improve the b
 - Emit `ActivitySuccess=0.0` when `process_single_activity` fails; include `ActivityTotalMs` and `CorrelationId`.
 - Emit `AlignFailure=1.0` when alignment falls back or errors; include counts and `CorrelationId`.
 - Standardize EMF dimensions across all metrics: `Service`, `Stage`, `Device`, `Model`, `CorrelationId`, `ActivityId`.
+ - Centralize tenacity retry policy helper: a small utility that returns a preconfigured AsyncRetrying/Retrying with jitter, curated retryable exceptions, and env-tunable knobs; reuse across S3 helpers, AppSync, and pipeline calls.
 
 **OTel & Logging Consistency**
 - Dependencies: add `opentelemetry-api`, `opentelemetry-sdk`, `opentelemetry-exporter-otlp`, `opentelemetry-instrumentation-requests`, `opentelemetry-instrumentation-botocore`, and optionally `opentelemetry-instrumentation-aws-lambda` (or use ADOT Lambda layer).

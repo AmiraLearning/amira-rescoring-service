@@ -4,13 +4,13 @@ This module contains S3-specific audio file operations extracted from phrase_sli
 for better code organization.
 """
 
-import asyncio
 import json
 from pathlib import Path
 from typing import Any
 
 from loguru import logger
 from pydantic import BaseModel
+from tenacity import AsyncRetrying, before_sleep_log, stop_after_attempt, wait_random_exponential
 
 from infra.s3_client import ProductionS3Client, S3OperationResult
 
@@ -44,34 +44,31 @@ async def s3_find(
     Raises:
         Exception: If S3 operation fails after retries
     """
-    try:
-        operations: list[tuple[str, str]] = [(source_bucket, prefix_path)]
-        results = await s3_client.list_objects_batch(operations)
-        result = results[0] if results else None
+    attempts = max(1, int(retry_limit or 1))
+    async for attempt in AsyncRetrying(
+        stop=stop_after_attempt(attempts),
+        wait=wait_random_exponential(multiplier=0.2, max=5.0),
+        reraise=True,
+        before_sleep=before_sleep_log(logger, "warning"),
+    ):
+        with attempt:
+            operations: list[tuple[str, str]] = [(source_bucket, prefix_path)]
+            results = await s3_client.list_objects_batch(operations)
+            result = results[0] if results else None
 
-        if not result or not result.success:
-            logger.warning(f"S3 list failed for {source_bucket}/{prefix_path}")
-            return []
+            if not result or not result.success:
+                raise RuntimeError(
+                    f"S3 list failed for {source_bucket}/{prefix_path}: {getattr(result, 'error', 'unknown')}"
+                )
 
-        objects: list[dict[str, Any]] = result.data.get("objects", []) if result.data else []
-        return [
-            str(obj.get("Key"))
-            for obj in objects
-            if isinstance(obj, dict) and obj.get("Key") is not None
-        ]
-
-    except Exception as e:
-        logger.error(f"Error finding S3 objects in {source_bucket}/{prefix_path}: {e}")
-        if retry_limit and retry_limit > 0:
-            logger.info(f"Retrying S3 find, {retry_limit} attempts remaining")
-            await asyncio.sleep(1)
-            return await s3_find(
-                source_bucket=source_bucket,
-                prefix_path=prefix_path,
-                s3_client=s3_client,
-                retry_limit=retry_limit - 1,
-            )
-        raise
+            objects: list[dict[str, Any]] = result.data.get("objects", []) if result.data else []
+            return [
+                str(obj.get("Key"))
+                for obj in objects
+                if isinstance(obj, dict) and obj.get("Key") is not None
+            ]
+    # Should never reach here due to reraise=True, but mypy requires it
+    return []
 
 
 def bucket_for(*, stage_source: bool) -> str:

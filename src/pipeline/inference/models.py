@@ -1,9 +1,13 @@
+from __future__ import annotations
+
 from dataclasses import dataclass
-from typing import Self
+from typing import TYPE_CHECKING, Self
 
 import numpy as np
-import torch
 from pydantic import BaseModel, ConfigDict, Field, field_serializer, model_validator
+
+if TYPE_CHECKING:  # pragma: no cover - for type checkers only
+    import torch
 
 from .constants import DeviceType
 

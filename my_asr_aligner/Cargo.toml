@@ -6,7 +6,6 @@ description = "A high-performance ASR aligner in Rust."
 authors = ["Your Name <you@example.com>"]
 license = "MIT"
 readme = "README.md"
-requires-python = ">=3.8,<3.13"
 
 [lib]
 name = "my_asr_aligner"

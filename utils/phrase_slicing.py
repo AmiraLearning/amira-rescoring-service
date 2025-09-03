@@ -19,6 +19,7 @@ from typing import Any, Final
 
 from loguru import logger
 from pydantic import BaseModel
+from tenacity import AsyncRetrying, before_sleep_log, stop_after_attempt, wait_random_exponential
 
 from infra.s3_client import ProductionS3Client, S3OperationResult
 from utils.audio_metadata import SegmentMetadataResult
@@ -309,35 +310,40 @@ async def get_segment_metadata(
                 logger.info(
                     f"retrying due to failed custom segment metadata head call: activity_id {activity_id}..."
                 )
-            for idx in range(retry_limit or 2):
-                segment_meta_file: str = segment_meta.segment_file
-                logger.info(
-                    f"retry {idx} during segment metadata head call: segment_meta_file {segment_meta_file}..."
-                )
-
-                retry_results: list[S3OperationResult] = await s3_client.head_objects_batch(
-                    [(bucket, segment_meta_file)]
-                )
-
-                if retry_results and retry_results[0].success:
-                    retry_result: S3OperationResult = retry_results[0]
-                    retry_metadata: dict[str, Any] = retry_result.data.get("metadata", {})
-                    try:
-                        updated_segment_meta: SegmentHead = SegmentHead(
-                            segment_file=segment_meta_file,
-                            phrase_index=int(
-                                retry_metadata.get("Metadata", {}).get("phraseindex", -1)
-                            ),
-                            sequence_number=retry_metadata.get("Metadata", {}).get(
-                                "sequencenumber"
-                            ),
-                            last_segment=retry_metadata.get("Metadata", {}).get("lastsegment"),
-                            success=True,
-                        )
-                        segment_meta = updated_segment_meta
-                        break
-                    except (ValueError, KeyError):
-                        continue
+            attempts = max(1, int(retry_limit or 2))
+            async for attempt in AsyncRetrying(
+                stop=stop_after_attempt(attempts),
+                wait=wait_random_exponential(multiplier=0.2, max=5.0),
+                reraise=False,
+                before_sleep=before_sleep_log(logger, "info"),
+            ):
+                with attempt:
+                    segment_meta_file: str = segment_meta.segment_file
+                    logger.info(
+                        f"retry during segment metadata head call: segment_meta_file {segment_meta_file}..."
+                    )
+                    retry_results: list[S3OperationResult] = await s3_client.head_objects_batch(
+                        [(bucket, segment_meta_file)]
+                    )
+                    if retry_results and retry_results[0].success:
+                        retry_result: S3OperationResult = retry_results[0]
+                        retry_metadata: dict[str, Any] = retry_result.data.get("metadata", {})
+                        try:
+                            updated_segment_meta: SegmentHead = SegmentHead(
+                                segment_file=segment_meta_file,
+                                phrase_index=int(
+                                    retry_metadata.get("Metadata", {}).get("phraseindex", -1)
+                                ),
+                                sequence_number=retry_metadata.get("Metadata", {}).get(
+                                    "sequencenumber"
+                                ),
+                                last_segment=retry_metadata.get("Metadata", {}).get("lastsegment"),
+                                success=True,
+                            )
+                            segment_meta = updated_segment_meta
+                            break
+                        except (ValueError, KeyError):
+                            continue
             if not segment_meta.success:
                 return SegmentMetadataResult(phrase_metadata={}, num_phrases=0, success=False)
         phrase_index: int | None = segment_meta.phrase_index
@@ -601,9 +607,22 @@ class PhraseSlicer:
         """
         from infra.s3_client import HighPerformanceS3Config
 
-        self.s3_client: ProductionS3Client = s3_client or ProductionS3Client(
-            config=HighPerformanceS3Config()
-        )
+        cfg = HighPerformanceS3Config()
+        import os
+
+        cfg.use_head_for_progress = os.getenv("S3_USE_HEAD_FOR_PROGRESS", "false").lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
+        pool_env = os.getenv("S3_CLIENT_POOL_SIZE")
+        if pool_env:
+            try:
+                cfg.client_pool_size = max(5, min(100, int(pool_env)))
+            except Exception:
+                pass
+        self.s3_client: ProductionS3Client = s3_client or ProductionS3Client(config=cfg)
         self.destination_path: str = (
             destination_path if destination_path.endswith("/") else (destination_path + "/")
         )

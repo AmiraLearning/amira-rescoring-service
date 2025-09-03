@@ -2,7 +2,7 @@ use pyo3::prelude::*;
 use rayon::prelude::*;
 
 pub mod core;
-use core::{word_level_alignment_core, word_level_alignment_core_with_confidence};
+use core::{word_level_alignment_core_with_confidence, AlignmentResult};
 
 #[derive(Debug, Clone, PartialEq)]
 #[allow(dead_code)] // Used in tests and future optimizations
@@ -16,7 +16,9 @@ pub enum PhonemeMatch {
 /// Each step is interpreted as Equal, Replace, Delete, or Insert.
 /// Optimized version with pre-allocation, VecDeque, and caching.
 #[pyfunction(signature = (expected_items, ref_phons, hyp_phons, confidences, enable_confidence_weighting=false))]
-#[pyo3(text_signature = "(expected_items, ref_phons, hyp_phons, confidences, enable_confidence_weighting=False)")]
+#[pyo3(
+    text_signature = "(expected_items, ref_phons, hyp_phons, confidences, enable_confidence_weighting=False)"
+)]
 fn word_level_alignment(
     expected_items: Vec<String>,
     ref_phons: Vec<String>,
@@ -38,20 +40,23 @@ fn word_level_alignment(
 
 /// Batch processing function for multiple alignments with parallel processing
 #[pyfunction(signature = (batch_expected_items, batch_ref_phons, batch_hyp_phons, batch_confidences, enable_confidence_weighting=false))]
-#[pyo3(text_signature = "(batch_expected_items, batch_ref_phons, batch_hyp_phons, batch_confidences, enable_confidence_weighting=False)")]
+#[pyo3(
+    text_signature = "(batch_expected_items, batch_ref_phons, batch_hyp_phons, batch_confidences, enable_confidence_weighting=False)"
+)]
 fn batch_word_level_alignment(
     batch_expected_items: Vec<Vec<String>>,
     batch_ref_phons: Vec<Vec<String>>,
     batch_hyp_phons: Vec<Vec<String>>,
     batch_confidences: Vec<Vec<f32>>,
     enable_confidence_weighting: bool,
-) -> PyResult<Vec<(Vec<String>, Vec<bool>, Vec<f32>)>> {
+) -> PyResult<Vec<AlignmentResult>> {
     // Validate input lengths
-    if batch_expected_items.len() != batch_ref_phons.len() ||
-       batch_ref_phons.len() != batch_hyp_phons.len() ||
-       batch_hyp_phons.len() != batch_confidences.len() {
+    if batch_expected_items.len() != batch_ref_phons.len()
+        || batch_ref_phons.len() != batch_hyp_phons.len()
+        || batch_hyp_phons.len() != batch_confidences.len()
+    {
         return Err(pyo3::exceptions::PyValueError::new_err(
-            "All batch input vectors must have the same length"
+            "All batch input vectors must have the same length",
         ));
     }
 
