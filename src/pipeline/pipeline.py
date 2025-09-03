@@ -21,7 +21,6 @@ import polars as pl
 from loguru import logger
 
 from infra.s3_client import HighPerformanceS3Config, preload_s3_client_async
-from my_asr_aligner import word_level_alignment  # type: ignore
 from src.pipeline.audio_prep import ActivityOutput, PhraseInput, cpu_download_worker
 from src.pipeline.inference import (
     GPUInferenceResult,
@@ -357,6 +356,8 @@ def perform_alignment(
     )
 
     try:
+        from my_asr_aligner import word_level_alignment  # type: ignore
+
         _, flat_errors, _ = word_level_alignment(
             expected_items=all_expected_text,
             ref_phons=all_reference_phonemes,
