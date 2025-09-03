@@ -1,0 +1,26 @@
+name: Tests
+
+on:
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'tests/**'
+      - 'pyproject.toml'
+  push:
+    branches: [ main ]
+
+jobs:
+  unit-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+      - name: Run unit tests with coverage
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+        run: |
+          uv run --no-project --with pytest --with pytest-cov --with numpy --with pydantic --with loguru \
+            -q pytest -q \
+            --cov=src/pipeline/inference --cov=infra --cov-fail-under=60 \
+            tests/test_decoder.py tests/test_phonetics.py tests/test_engine_imports.py tests/test_appsync_contract.py | cat

@@ -1,13 +1,13 @@
 import pytest
 
 try:
-    from my_asr_aligner import word_level_alignment
+    from my_asr_aligner import word_level_alignment  # type: ignore[attr-defined]
 except Exception:  # pragma: no cover - extension may be missing locally
-    word_level_alignment = None  # type: ignore[assignment]
+    word_level_alignment = None
 
 
 @pytest.mark.skipif(word_level_alignment is None, reason="aligner extension not built")
-def test_word_level_alignment_basic():
+def test_word_level_alignment_basic() -> None:
     expected = ["cat", "sat"]
     ref = ["k", "æ", "t", "s", "æ", "t"]
     hyp = ["k", "æ", "t", "s", "æ", "t"]
@@ -20,7 +20,7 @@ def test_word_level_alignment_basic():
 
 
 @pytest.mark.skipif(word_level_alignment is None, reason="aligner extension not built")
-def test_word_level_alignment_with_errors():
+def test_word_level_alignment_with_errors() -> None:
     expected = ["cat", "sat"]
     ref = ["k", "æ", "t", "s", "æ", "t"]
     hyp = ["k", "æ", "p", "s", "æ", "t"]  # one wrong phoneme

@@ -474,6 +474,20 @@ export class AmiraLambdaParallelStack extends cdk.Stack {
           new cw.Metric({ namespace: 'Amira/Jobs', metricName: 'ProcessingTime', statistic: 'p95' })
         ],
         width: 12
+      }),
+      new cw.GraphWidget({
+        title: 'Inference Total (p95 ms)',
+        left: [
+          new cw.Metric({ namespace: 'Amira/Inference', metricName: 'InferenceTotalMs', statistic: 'p95' })
+        ],
+        width: 12
+      }),
+      new cw.GraphWidget({
+        title: 'Activity Total (p95 ms)',
+        left: [
+          new cw.Metric({ namespace: 'Amira/Activity', metricName: 'ActivityTotalMs', statistic: 'p95' })
+        ],
+        width: 12
       })
     );
 

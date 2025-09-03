@@ -1,0 +1,25 @@
+name: Contracts
+
+on:
+  pull_request:
+    paths:
+      - 'tests/test_*contract*.py'
+      - 'infra/**'
+      - 'lambda/**'
+      - 'src/**'
+      - 'pyproject.toml'
+  push:
+    branches: [ main ]
+
+jobs:
+  contract-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+      - name: Run contract tests
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+        run: |
+          uv run --no-project --with pytest --with jsonschema --with pyarrow -q pytest -q tests/test_*contract*.py | cat

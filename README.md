@@ -1,39 +1,10 @@
-## Runbook (Operations)
-
-### Dashboards
-- AmiraLambdaParallel: end-to-end queue and Lambda processor metrics
-- AmiraGpuTriton: GPU/Triton service metrics (if GPU path enabled)
-
-### Alarms (SNS: AlertsTopic / OpsAlarmTopic)
-- QueueDepthAlarm: SQS visible messages > threshold
-- QueueAgeAlarm: Oldest message age > 5 minutes
-- ProcessingErrorsAlarm: Lambda errors sustained
-- JobCompletionDetected: queue empty and no active executions
-- Gpu/Triton alarms: GPU util low/high; p95 latency; queue latency; failures
-
-### On-call Playbook
-1) QueueDepth/QueueAge
-   - Check SQS dashboard and Lambda throttles
-   - If throttling: reduce batch size, add reserved concurrency, or slow enqueuer
-   - If DLQ growing: inspect DLQ payloads; fix and replay
-2) ProcessingErrorsAlarm
-   - Open Lambda logs for recent error; correlate with correlationId in logs
-   - If AppSync issues, verify APPSYNC_URL/API_KEY and network access
-3) Triton Latency/Failures
-   - Check ALB 5xx and target health
-   - Scale out ECS service; verify model warm/readiness
-4) JobCompletionDetected
-   - Confirm expected empty queue window
-   - Trigger downstream consumers if applicable
-
-### Key Environment Variables
-- PIPELINE_MAX_CONCURRENCY, AUDIO_PREP_MAX_WORKERS
-- DECODER_ROBUST_MODE, AUDIO_USE_TORCHCODEC
-- S3_* envs for client tuning
-- APPSYNC_URL/APPSYNC_API_KEY/APPSYNC_TIMEOUT/APPSYNC_MAX_ATTEMPTS/APPSYNC_ALLOW_MOCK
-
-### Metric Namespaces
-- AWS/SQS, AWS/Lambda, AWS/ApplicationELB, ECS/ContainerInsights, CWAgent (DCGM, Triton), Amira/Jobs
+## Operations & Docs
+- Runbooks: `docs/RUNBOOKS.md`
+- Configuration: `docs/CONFIGURATION.md`
+- Troubleshooting: `docs/TROUBLESHOOTING.md`
+- Data Contracts: `docs/DATA_CONTRACTS.md`
+- Deployment: `docs/DEPLOYMENT.md`
+- Schemas: `docs/schemas/`
 
 # Amira Letter Scoring Pipeline
 
@@ -141,42 +112,7 @@ aws lambda invoke --function-name <manual-trigger-function> output.json
 - **Slack Notifications**: Get alerts for job completion, failures, and system issues
 - **Custom Metrics**: Track processing times, success rates, and queue depths
 
-## Configuration
-
-### Environment Variables
-
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `USE_TRITON` | Enable Triton GPU inference | `false` |
-| `TRITON_URL` | Triton server endpoint | `http://localhost:8000` |
-| `TRITON_MODEL` | Model name in Triton | `w2v2` |
-| `MODEL_PATH` | Wav2Vec2 model path | `facebook/wav2vec2-base-960h` |
-| `INCLUDE_CONFIDENCE` | Include confidence scores | `true` |
-| `AWS_PROFILE` | AWS credential profile | `legacy` |
-| `AWS_REGION` | AWS region | `us-east-2` |
-
-### Pipeline Configuration
-
-Create a `config.yaml` file:
-
-```yaml
-metadata:
-  activity_id: "A025D9AFCEB711EFB9CA0E57FBD5D8A1"
-  limit: 10
-
-audio:
-  use_complete_audio: true
-  padded_seconds: 3
-
-w2v2:
-  model_path: "facebook/wav2vec2-base-960h"
-  include_confidence: true
-  use_triton: false
-
-aws:
-  region: "us-east-2"
-  aws_profile: "legacy"
-```
+See `docs/CONFIGURATION.md`.
 
 ## Container Images
 
@@ -290,43 +226,7 @@ ruff format .
 5. **Submit PR**: Include description of changes
 
 ## Troubleshooting
-
-### Common Issues
-
-**Model Loading Errors**
-```bash
-# Ensure model path is correct
-export MODEL_PATH="facebook/wav2vec2-base-960h"
-python -c "from transformers import Wav2Vec2ForCTC; Wav2Vec2ForCTC.from_pretrained('$MODEL_PATH')"
-```
-
-**Triton Connection Issues**
-```bash
-# Test Triton server connectivity
-curl -v http://triton-server:8000/v2/health/ready
-```
-
-**Lambda Timeout Issues**
-```bash
-# Check CloudWatch logs
-aws logs tail /aws/lambda/amira-parallel-processor --follow
-```
-
-**Permission Issues**
-```bash
-# Verify AWS credentials
-aws sts get-caller-identity
-aws s3 ls s3://your-results-bucket/
-```
-
-### Debug Mode
-
-```bash
-# Enable verbose logging
-export ENABLE_FILE_LOG=1
-python main.py run --activity-id <id>
-tail -f pipeline_execution.log
-```
+See `docs/TROUBLESHOOTING.md`.
 
 ## License
 
@@ -349,3 +249,9 @@ tail -f pipeline_execution.log
 ---
 
 > **Note**: This pipeline processes sensitive audio data. Ensure compliance with data privacy regulations and follow security best practices.
+
+## Documentation
+- Runbooks: `docs/RUNBOOKS.md`
+- Data Contracts: `docs/DATA_CONTRACTS.md`
+- Deployment: `docs/DEPLOYMENT.md`
+- Schemas: `docs/schemas/`

@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://amira.example/schema/segment-manifest-v1.json",
+  "title": "SegmentManifestV1",
+  "type": "object",
+  "required": [
+    "activityId",
+    "phraseIndex",
+    "start_ms",
+    "end_ms",
+    "s3_uri"
+  ],
+  "properties": {
+    "activityId": { "type": "string" },
+    "phraseIndex": { "type": "integer", "minimum": 0 },
+    "start_ms": { "type": "number", "minimum": 0 },
+    "end_ms": { "type": "number", "minimum": 0 },
+    "s3_uri": { "type": "string", "pattern": "^s3://[a-z0-9.-]+/.+" }
+  },
+  "additionalProperties": true
+}

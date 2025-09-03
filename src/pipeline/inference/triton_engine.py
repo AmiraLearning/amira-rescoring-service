@@ -175,7 +175,12 @@ class TritonInferenceEngine:
                     dimensions={
                         "Device": result.device.value
                         if hasattr(result.device, "value")
-                        else str(result.device)
+                        else str(result.device),
+                        **(
+                            {"CorrelationId": str(input_data.inference_id)}
+                            if getattr(input_data, "inference_id", None)
+                            else {}
+                        ),
                     },
                 )
             except Exception:
@@ -194,7 +199,12 @@ class TritonInferenceEngine:
                     dimensions={
                         "Device": result.device.value
                         if hasattr(result.device, "value")
-                        else str(result.device)
+                        else str(result.device),
+                        **(
+                            {"CorrelationId": str(input_data.inference_id)}
+                            if getattr(input_data, "inference_id", None)
+                            else {}
+                        ),
                     },
                 )
             except Exception:
@@ -213,7 +223,12 @@ class TritonInferenceEngine:
                     dimensions={
                         "Device": result.device.value
                         if hasattr(result.device, "value")
-                        else str(result.device)
+                        else str(result.device),
+                        **(
+                            {"CorrelationId": str(input_data.inference_id)}
+                            if getattr(input_data, "inference_id", None)
+                            else {}
+                        ),
                     },
                 )
             except Exception:

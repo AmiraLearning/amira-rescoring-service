@@ -467,7 +467,27 @@ async def process_single_activity(
     except Exception:
         pass
 
-    activity_response: dict[str, Any] = {"data": {"updateActivity": {"activityId": activity_id}}}
+    activity_response: dict[str, Any] = {}
+    try:
+        from infra.appsync_utils import ActivityFieldValues, set_activity_fields
+
+        fields: ActivityFieldValues = ActivityFieldValues(
+            alignment_errors=errors.get("alignment_errors"),
+            error_count=errors.get("error_count"),
+            total_alignments=errors.get("total_alignments"),
+            alignment_accuracy=errors.get("alignment_accuracy"),
+        )
+        activity_response = set_activity_fields(
+            activity_id=activity_id,
+            field_values=fields.model_dump(),
+            config=config.aws,
+            correlation_id=str(config.metadata.correlation_id)
+            if getattr(config.metadata, "correlation_id", None)
+            else None,
+        )
+    except Exception as e:
+        logger.info(f"Skipping AppSync upload - using local response due to: {e}")
+        activity_response = {"data": {"updateActivity": {"activityId": activity_id}}}
     logger.info(f"Skipping AppSync upload - would set fields: {errors}")
 
     return activity_response

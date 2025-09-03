@@ -1,34 +1,16 @@
-import jsonschema
+import json
+from pathlib import Path
 
-SCHEMA = {
-    "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "$id": "https://amira.example/schema/activity-results-v1.json",
-    "title": "ActivityResultsV1",
-    "type": "object",
-    "required": [
-        "activity_id",
-        "status",
-        "pipeline_results",
-        "processing_time",
-        "timestamp",
-        "processor",
-        "schema_version",
-    ],
-    "properties": {
-        "activity_id": {"type": "string"},
-        "status": {"type": "string"},
-        "pipeline_results": {"type": "object"},
-        "processing_time": {"type": "number"},
-        "timestamp": {"type": "number"},
-        "processor": {"type": "string"},
-        "schema_version": {"const": "activity-results-v1"},
-        "correlation_id": {"type": ["string", "null"]},
-    },
-    "additionalProperties": True,
-}
+import jsonschema
 
 
 def test_activity_results_contract_shape() -> None:
+    schema_path = (
+        Path(__file__).resolve().parents[1] / "docs" / "schemas" / "activity-results-v1.json"
+    )
+    with schema_path.open("r", encoding="utf-8") as f:
+        schema = json.load(f)
+
     sample = {
         "activity_id": "a-1",
         "status": "processed",
@@ -40,4 +22,4 @@ def test_activity_results_contract_shape() -> None:
         "correlation_id": "abc123",
     }
 
-    jsonschema.validate(sample, SCHEMA)
+    jsonschema.validate(sample, schema)

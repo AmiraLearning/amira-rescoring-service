@@ -6,6 +6,7 @@ from typing import Any, Final
 
 import boto3
 import torch
+from loguru import logger
 from pydantic import BaseModel
 
 from src.pipeline.inference.models import W2VConfig
@@ -251,7 +252,8 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
                     if not activity_id:
                         raise ValueError("Missing activityId")
                     message_id = record.get("messageId")
-                    result = await process_activity(activity_id, correlation_id=message_id)
+                    with logger.contextualize(correlationId=message_id, activityId=activity_id):
+                        result = await process_activity(activity_id, correlation_id=message_id)
                     return True, result.processing_time, None
                 except Exception:
                     return False, 0.0, record.get("messageId")

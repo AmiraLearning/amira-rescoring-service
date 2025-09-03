@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://amira.example/schema/activity-results-v1.json",
+  "title": "ActivityResultsV1",
+  "type": "object",
+  "required": [
+    "activity_id",
+    "status",
+    "pipeline_results",
+    "processing_time",
+    "timestamp",
+    "processor",
+    "schema_version"
+  ],
+  "properties": {
+    "activity_id": { "type": "string" },
+    "status": { "type": "string" },
+    "pipeline_results": { "type": "object" },
+    "processing_time": { "type": "number" },
+    "timestamp": { "type": "number" },
+    "processor": { "type": "string" },
+    "schema_version": { "const": "activity-results-v1" },
+    "correlation_id": { "type": ["string", "null"] }
+  },
+  "additionalProperties": true
+}

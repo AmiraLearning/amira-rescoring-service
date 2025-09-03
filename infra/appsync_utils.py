@@ -120,6 +120,13 @@ GET_ACTIVITY_QUERY = gql(
 )
 
 
+class ActivityFieldValues(BaseModel):
+    alignment_errors: list[list[bool]] | None = None
+    error_count: int | None = None
+    total_alignments: int | None = None
+    alignment_accuracy: float | None = None
+
+
 class UpdateActivityFieldsInput(BaseModel):
     """Input for updating activity fields in AppSync.
 
@@ -129,7 +136,7 @@ class UpdateActivityFieldsInput(BaseModel):
     """
 
     activityId: str
-    fieldValues: dict[str, Any]
+    fieldValues: ActivityFieldValues | dict[str, Any]
 
 
 class UpdateActivityPayload(BaseModel):
@@ -145,7 +152,11 @@ class UpdateActivityResponse(BaseModel):
 
 
 def set_activity_fields(
-    *, activity_id: str, field_values: dict[str, Any], config: AwsConfig
+    *,
+    activity_id: str,
+    field_values: dict[str, Any],
+    config: AwsConfig,
+    correlation_id: str | None = None,
 ) -> dict[str, Any]:
     """Set fields for an activity using a GraphQL client.
 
@@ -171,11 +182,10 @@ def set_activity_fields(
 
     timeout_s: int = int(os.getenv("APPSYNC_TIMEOUT", "60"))
     max_attempts: int = int(os.getenv("APPSYNC_MAX_ATTEMPTS", "3"))
-    transport = RequestsHTTPTransport(
-        url=_GRAPHQL_ENDPOINT_URL,
-        headers={"x-api-key": _GRAPHQL_ENDPOINT_KEY},
-        timeout=timeout_s,
-    )
+    headers: dict[str, str] = {"x-api-key": _GRAPHQL_ENDPOINT_KEY}
+    if correlation_id:
+        headers["x-correlation-id"] = correlation_id
+    transport = RequestsHTTPTransport(url=_GRAPHQL_ENDPOINT_URL, headers=headers, timeout=timeout_s)
     client: Client = Client(transport=transport)
 
     @retry(

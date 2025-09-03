@@ -87,6 +87,7 @@ class ConfidenceResult(BaseModel):
 class InferenceInput(BaseModel):
     audio_array: np.ndarray
     inference_id: str | None = None
+    correlation_id: str | None = None
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
 

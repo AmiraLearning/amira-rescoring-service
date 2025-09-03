@@ -8,7 +8,6 @@ from pydantic import BaseModel, Field
 class JobMessage(BaseModel):
     activity_id: str
     source: str
-    # Default timestamp at construction if not provided
     timestamp: int | None = Field(default_factory=lambda: int(time.time()))
 
 
