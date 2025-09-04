@@ -4,6 +4,12 @@ import traceback
 import numpy as np
 from loguru import logger
 
+from src.pipeline.exceptions import (
+    DecodingError,
+    ModelNotReadyError,
+    TritonConnectionError,
+)
+
 try:
     import tritonclient.http as httpclient
     from tritonclient.utils import InferenceServerException
@@ -53,8 +59,10 @@ class TritonInferenceEngine:
 
             self._processor = Wav2Vec2Processor.from_pretrained(w2v_config.model_path)
             logger.info("Loaded W2V2 processor for Triton decoding")
-        except Exception as e:
+        except ImportError as e:
             logger.warning(f"Failed to load W2V2 processor for decoding (continuing without): {e}")
+        except Exception as e:
+            logger.warning(f"Unexpected error loading W2V2 processor: {type(e).__name__}: {e}")
 
         try:
             raw_url = w2v_config.triton_url
@@ -79,16 +87,18 @@ class TritonInferenceEngine:
             )
 
             if not self._client.is_server_ready():
-                raise ConnectionError(f"Triton server not ready at {w2v_config.triton_url}")
+                raise TritonConnectionError(f"Triton server not ready at {w2v_config.triton_url}")
 
             if not self._client.is_model_ready(w2v_config.triton_model):
-                raise ConnectionError(f"Triton model '{w2v_config.triton_model}' not ready")
+                raise ModelNotReadyError(f"Triton model '{w2v_config.triton_model}' not ready")
 
             logger.info(f"Connected to Triton server at {w2v_config.triton_url}")
 
-        except Exception as e:
-            logger.error(f"Failed to connect to Triton server: {e}")
+        except (ValueError, TritonConnectionError, ModelNotReadyError):
             raise
+        except Exception as e:
+            logger.error(f"Unexpected error connecting to Triton server: {type(e).__name__}: {e}")
+            raise TritonConnectionError(f"Failed to connect to Triton server: {e}") from e
 
     def infer(self, *, input_data: InferenceInput) -> GPUInferenceResult:
         """Perform inference using Triton server.
@@ -149,7 +159,8 @@ class TritonInferenceEngine:
                         logger.warning(f"Decoding with processor failed: {e}")
                         result.transcription = ""
                         result.pred_tokens = []
-                except Exception:
+                except (IndexError, KeyError, ValueError) as e:
+                    logger.debug(f"Token conversion failed: {type(e).__name__}: {e}")
                     result.transcription = ""
                     result.pred_tokens = []
             else:
@@ -171,8 +182,11 @@ class TritonInferenceEngine:
                     pred_tokens=result.pred_tokens,
                     max_probs=result.max_probs if self._w2v_config.include_confidence else None,
                 )
+            except (DecodingError, ValueError, KeyError) as e:
+                logger.warning(f"Phoneme decoding failed: {type(e).__name__}: {e}")
+                result.phonetic_transcript = PhoneticTranscript()
             except Exception as e:
-                logger.warning(f"Phoneme decoding failed: {e}")
+                logger.error(f"Unexpected phoneme decoding error: {type(e).__name__}: {e}")
                 result.phonetic_transcript = PhoneticTranscript()
 
             result.total_duration_ms = (time.time() - inference_start) * MS_PER_SECOND
@@ -199,8 +213,8 @@ class TritonInferenceEngine:
                         ),
                     },
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"Metrics emission failed (non-fatal): {type(e).__name__}: {e}")
 
         except InferenceServerException as e:
             logger.error(f"Triton inference error: {e}")
@@ -223,10 +237,15 @@ class TritonInferenceEngine:
                         ),
                     },
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"Metrics emission failed (non-fatal): {type(e).__name__}: {e}")
+        except (ValueError, TypeError, RuntimeError) as e:
+            logger.error(f"Inference error: {type(e).__name__}: {e}")
+            logger.debug(f"Traceback: {traceback.format_exc()}")
+            result.success = False
+            result.error = str(e)
         except Exception as e:
-            logger.error(f"Error during Triton inference: {e}")
+            logger.error(f"Unexpected error during Triton inference: {type(e).__name__}: {e}")
             logger.error(f"Traceback: {traceback.format_exc()}")
             result.success = False
             result.error = str(e)
@@ -247,8 +266,8 @@ class TritonInferenceEngine:
                         ),
                     },
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"Metrics emission failed (non-fatal): {type(e).__name__}: {e}")
 
         return result
 

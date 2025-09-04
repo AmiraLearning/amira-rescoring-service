@@ -167,14 +167,14 @@ class HighPerformanceS3Config(BaseModel):
     def _get_int_env(cls, name: str, default: int) -> int:
         try:
             return int(os.getenv(name, str(default)))
-        except Exception:
+        except (ValueError, TypeError):
             return default
 
     @classmethod
     def _get_float_env(cls, name: str, default: float) -> float:
         try:
             return float(os.getenv(name, str(default)))
-        except Exception:
+        except (ValueError, TypeError):
             return default
 
     @classmethod
@@ -262,7 +262,7 @@ class HighPerformanceS3Config(BaseModel):
                 self.max_retries = cls._clamp(int(max_retries_env), 1, 10)
             else:
                 self.max_retries = cls._clamp(self.max_retries or DEFAULT_MAX_RETRIES, 1, 10)
-        except Exception:
+        except (ValueError, TypeError, AttributeError):
             self.max_retries = DEFAULT_MAX_RETRIES
 
         backoff_base_env = os.getenv("S3_RETRY_BASE") or os.getenv("S3_RETRY_BACKOFF_BASE")
@@ -273,7 +273,7 @@ class HighPerformanceS3Config(BaseModel):
                 self.retry_backoff_base = cls._clamp_float(
                     self.retry_backoff_base or DEFAULT_RETRY_BACKOFF_BASE, 0.01, 1.0
                 )
-        except Exception:
+        except (ValueError, TypeError, AttributeError):
             self.retry_backoff_base = DEFAULT_RETRY_BACKOFF_BASE
 
         backoff_max_env = os.getenv("S3_RETRY_MAX_BACKOFF") or os.getenv("S3_RETRY_BACKOFF_MAX")

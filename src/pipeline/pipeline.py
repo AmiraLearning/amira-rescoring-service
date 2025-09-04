@@ -23,6 +23,11 @@ from loguru import logger
 
 from infra.s3_client import HighPerformanceS3Config, preload_s3_client_async
 from src.pipeline.audio_prep import ActivityOutput, PhraseInput, cpu_download_worker
+from src.pipeline.exceptions import (
+    AlignmentError,
+    AudioProcessingError,
+    InferenceError,
+)
 from src.pipeline.inference import (
     GPUInferenceResult,
     PhoneticTranscript,
@@ -331,8 +336,8 @@ async def process_activity(
                             "PhraseIndex": str(phrase.phraseIndex),
                         },
                     )
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug(f"Metrics emission failed (non-fatal): {type(e).__name__}: {e}")
             else:
                 logger.warning(f"Phrase {phrase.phraseIndex}: inference failed")
                 try:
@@ -347,8 +352,8 @@ async def process_activity(
                             "PhraseIndex": str(phrase.phraseIndex),
                         },
                     )
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug(f"Metrics emission failed (non-fatal): {type(e).__name__}: {e}")
 
     from src.pipeline.inference.models import PhoneticTranscript
 
@@ -451,8 +456,8 @@ def perform_alignment(
                 metrics={"AlignFailure": 1.0},
                 dimensions={},
             )
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"Metrics emission failed (non-fatal): {type(e).__name__}: {e}")
         phrase_errors_nested = [
             [True]
             * len(
@@ -490,8 +495,8 @@ def perform_alignment(
             },
             dimensions={},
         )
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug(f"Metrics emission failed (non-fatal): {type(e).__name__}: {e}")
 
     return field_values
 
@@ -514,14 +519,13 @@ async def process_single_activity(
             config=config,
             engine=engine,
         )
-    except Exception:
+    except (AudioProcessingError, InferenceError, AlignmentError) as e:
+        logger.error(f"Activity processing error: {type(e).__name__}: {e}")
         try:
             correlation_id = (
                 str(config.metadata.correlation_id)
-                if hasattr(config, "metadata")
-                and hasattr(config.metadata, "correlation_id")
-                and config.metadata.correlation_id
-                else None
+                if config.metadata.correlation_id
+                else str(activity_id)
             )
             emit_emf_metric(
                 namespace=NS_ACTIVITY,
@@ -530,11 +534,32 @@ async def process_single_activity(
                 },
                 dimensions={
                     DIM_ACTIVITY_ID: str(activity_id),
-                    **({DIM_CORRELATION_ID: correlation_id} if correlation_id is not None else {}),
+                    DIM_CORRELATION_ID: correlation_id,
                 },
             )
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"Metrics emission failed (non-fatal): {type(e).__name__}: {e}")
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected activity processing error: {type(e).__name__}: {e}")
+        try:
+            correlation_id = (
+                str(config.metadata.correlation_id)
+                if config.metadata.correlation_id
+                else str(activity_id)
+            )
+            emit_emf_metric(
+                namespace=NS_ACTIVITY,
+                metrics={
+                    MET_ACTIVITY_SUCCESS: 0.0,
+                },
+                dimensions={
+                    DIM_ACTIVITY_ID: str(activity_id),
+                    DIM_CORRELATION_ID: correlation_id,
+                },
+            )
+        except Exception as e:
+            logger.debug(f"Metrics emission failed (non-fatal): {type(e).__name__}: {e}")
         raise
 
     errors: Any = perform_alignment(
@@ -547,10 +572,8 @@ async def process_single_activity(
     try:
         correlation_id = (
             str(config.metadata.correlation_id)
-            if hasattr(config, "metadata")
-            and hasattr(config.metadata, "correlation_id")
-            and config.metadata.correlation_id
-            else None
+            if config.metadata.correlation_id
+            else str(activity_id)
         )
         phrase_count: int = len(processed_activity.activity_outputs.phrases)
         emit_emf_metric(
@@ -562,11 +585,11 @@ async def process_single_activity(
             },
             dimensions={
                 DIM_ACTIVITY_ID: str(activity_id),
-                **({DIM_CORRELATION_ID: correlation_id} if correlation_id is not None else {}),
+                DIM_CORRELATION_ID: correlation_id,
             },
         )
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug(f"Metrics emission failed (non-fatal): {type(e).__name__}: {e}")
 
     activity_response: dict[str, Any] = {}
     try:
@@ -627,7 +650,8 @@ async def run_activity_pipeline(
     max_concurrency_env = os.getenv("PIPELINE_MAX_CONCURRENCY", "4")
     try:
         max_concurrency: int = max(1, int(max_concurrency_env))
-    except Exception:
+    except (ValueError, TypeError) as e:
+        logger.warning(f"Invalid MAX_ACTIVITY_CONCURRENCY value: {e}. Using default: 4")
         max_concurrency = 4
 
     semaphore = asyncio.Semaphore(max_concurrency)

@@ -13,6 +13,7 @@ from loguru import logger
 from pydantic import BaseModel, ConfigDict, Field
 
 from infra.s3_client import ProductionS3Client, S3OperationResult
+from src.pipeline.exceptions import AudioProcessingError
 from utils.config import S3_SPEECH_ROOT_PROD
 from utils.extract_phrases import extract_phrase_slices_tutor_style
 
@@ -103,8 +104,8 @@ def _load_audio_file(*, file_path: Path) -> tuple[torch.Tensor, int]:
                 if tensor.ndim == 1:
                     tensor = tensor.unsqueeze(0)
                 return tensor, int(sr)
-            except Exception:
-                pass
+            except (ImportError, RuntimeError, OSError) as e:
+                logger.debug(f"torchcodec loading failed: {type(e).__name__}: {e}")
         use_torchcodec_env = os.getenv("AUDIO_USE_TORCHCODEC", "auto").lower()
         use_torchcodec: bool = (
             _USE_TORCHCODEC
@@ -145,17 +146,20 @@ def _is_wav_empty(*, path: Path) -> bool:
     try:
         with wave.open(str(path), "rb") as wf:
             return wf.getnframes() == 0
-    except Exception:
+    except (OSError, wave.Error) as e:
+        logger.debug(f"WAV open failed: {type(e).__name__}: {e}")
         try:
             # 44 bytes is common PCM WAV header size; header-only => empty
             return path.exists() and path.stat().st_size <= 44
-        except Exception:
-            pass
+        except (OSError, AttributeError) as e:
+            logger.debug(f"File stat check failed: {type(e).__name__}: {e}")
         try:
             info = torchaudio.info(str(path))
             return int(getattr(info, "num_frames", 0)) == 0
-        except Exception:
-            logger.warning(f"Failed to determine WAV frame count for {path}")
+        except (RuntimeError, OSError, AttributeError) as e:
+            logger.warning(
+                f"Failed to determine WAV frame count for {path}: {type(e).__name__}: {e}"
+            )
             return True
 
 
@@ -526,7 +530,8 @@ def prefetch_activity_phrase_audio(*, audio_dir: str, activity_id: str) -> None:
         for wav_path in sorted(phrase_dir.glob("phrase_*.wav")):
             try:
                 _load_and_resample(path=wav_path)
-            except Exception:
+            except (OSError, RuntimeError, AudioProcessingError) as e:
+                logger.debug(f"Prefetch failed for {wav_path}: {type(e).__name__}: {e}")
                 continue
-    except Exception as e:
-        logger.warning(f"Prefetch failed for {activity_id}: {e}")
+    except (OSError, RuntimeError) as e:
+        logger.warning(f"Prefetch failed for {activity_id}: {type(e).__name__}: {e}")
