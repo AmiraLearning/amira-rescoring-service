@@ -2,7 +2,9 @@ use pyo3::prelude::*;
 use rayon::prelude::*;
 
 pub mod core;
+pub mod decoder;
 use core::{word_level_alignment_core_with_confidence, AlignmentResult};
+use decoder::RustPhonemeDecoder;
 
 #[derive(Debug, Clone, PartialEq)]
 #[allow(dead_code)] // Used in tests and future optimizations
@@ -86,5 +88,6 @@ mod tests;
 fn my_asr_aligner(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(word_level_alignment, m)?)?;
     m.add_function(wrap_pyfunction!(batch_word_level_alignment, m)?)?;
+    m.add_class::<RustPhonemeDecoder>()?;
     Ok(())
 }

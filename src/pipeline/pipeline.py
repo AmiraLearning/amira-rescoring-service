@@ -474,6 +474,21 @@ def perform_alignment(
 
     logger.info(f"Alignment errors by phrase: {phrase_errors_nested}")
 
+    # Validate alignment array lengths match expected (should now be guaranteed)
+    expected_total_length = len(all_expected_text)
+    actual_total_length = len(flattened_errors) if flattened_errors else 0
+
+    if actual_total_length != expected_total_length:
+        error_msg = (
+            f"Alignment array length mismatch: expected {expected_total_length} elements "
+            f"but got {actual_total_length}. This should not happen with phrase-level alignment. "
+            f"Expected: {len(all_expected_text)} items, "
+            f"Reference: {len(all_reference_phonemes)} phonemes, "
+            f"Hypothesis: {len(phonetic_transcript.elements)} phonemes"
+        )
+        logger.error(error_msg)
+        raise ValueError(error_msg)
+
     error_count: int = sum(flattened_errors) if flattened_errors else 0
     total_count: int = len(flattened_errors) if flattened_errors else 0
     accuracy: float = (total_count - error_count) / total_count if total_count > 0 else 0.0

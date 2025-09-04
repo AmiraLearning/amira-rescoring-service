@@ -136,6 +136,9 @@ def _load_audio_file(*, file_path: Path) -> tuple[torch.Tensor, int]:
             return future.result(timeout=timeout_val)
 
 
+PCM_WAV_HEADER_SIZE: Final[int] = 44
+
+
 # Fast WAV header preflight to avoid loading empty files
 def _is_wav_empty(*, path: Path) -> bool:
     """Fast check for empty WAV without decoding.
@@ -149,12 +152,11 @@ def _is_wav_empty(*, path: Path) -> bool:
     except (OSError, wave.Error) as e:
         logger.debug(f"WAV open failed: {type(e).__name__}: {e}")
         try:
-            # 44 bytes is common PCM WAV header size; header-only => empty
-            return path.exists() and path.stat().st_size <= 44
+            return path.exists() and path.stat().st_size <= PCM_WAV_HEADER_SIZE
         except (OSError, AttributeError) as e:
             logger.debug(f"File stat check failed: {type(e).__name__}: {e}")
         try:
-            info = torchaudio.info(str(path))
+            info: torchaudio.info = torchaudio.info(str(path))
             return int(getattr(info, "num_frames", 0)) == 0
         except (RuntimeError, OSError, AttributeError) as e:
             logger.warning(

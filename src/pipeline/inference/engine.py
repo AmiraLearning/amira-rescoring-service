@@ -31,7 +31,7 @@ from .constants import (
     MS_PER_SECOND,
     DeviceType,
 )
-from .decoder import PhonemeDecoder
+from .decoder_wrapper import DecoderWrapper
 from .models import (
     ConfidenceResult,
     DecodePredictionResult,
@@ -134,7 +134,7 @@ class Wav2Vec2InferenceEngine:
             self._processor = processor_instance
 
         self._init_device()
-        self._decoder = PhonemeDecoder()
+        self._decoder = DecoderWrapper()
 
     def _load_model_and_processor_parallel(self) -> tuple[Wav2Vec2ForCTC, Wav2Vec2Processor]:
         """Load model and processor in parallel for faster cold start.
@@ -322,13 +322,21 @@ class Wav2Vec2InferenceEngine:
             DecodePredictionResult: The decoded predictions.
         """
         decode_start: float = time.time()
+
+        # Do argmax on GPU/MPS first for speed
         predicted_ids: torch.Tensor = torch.argmax(logits, dim=-1)
 
-        predicted_ids_cpu = predicted_ids[0].cpu()
+        # Then transfer to CPU and convert to numpy
+        predicted_ids_np = predicted_ids[0].cpu().numpy()
+
+        # Convert IDs to tokens
         pred_tokens: list[str] = []
         if hasattr(self._processor, "tokenizer") and self._processor.tokenizer:
-            pred_tokens = self._processor.tokenizer.convert_ids_to_tokens(predicted_ids_cpu.numpy())
-        transcription: str = self._processor.batch_decode(predicted_ids)[0]
+            pred_tokens = self._processor.tokenizer.convert_ids_to_tokens(predicted_ids_np)
+
+        # Skip the slow batch_decode since we use our own decoder for phonetic transcription
+        transcription: str = ""  # We'll use our phonetic decoder instead
+
         return DecodePredictionResult(
             transcription=transcription,
             pred_tokens=pred_tokens,

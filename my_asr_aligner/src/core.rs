@@ -1,6 +1,6 @@
 use rustc_hash::FxHashMap;
 use similar::{ChangeTag, TextDiff};
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, HashSet};
 
 pub const DASH: &str = "-";
 
@@ -207,6 +207,7 @@ pub fn push_dash_result(
 }
 
 /// Core alignment function without PyO3 dependencies
+/// Returns results mapped back to expected_items (exactly len(expected_items))
 fn word_level_alignment_core_impl(
     expected_items: Vec<String>,
     ref_phons: Vec<String>,
@@ -216,7 +217,19 @@ fn word_level_alignment_core_impl(
 ) -> Result<AlignmentResult, String> {
     // Early exit for identical sequences
     if ref_phons == hyp_phons {
-        return Ok((hyp_phons.clone(), vec![false; hyp_phons.len()], confidences));
+        let take_len = expected_items.len().min(hyp_phons.len());
+        let mut result_phonemes: Vec<String> = hyp_phons.iter().take(take_len).cloned().collect();
+        let mut result_errors = vec![false; take_len];
+        let mut result_confidences: Vec<f32> = confidences.iter().take(take_len).cloned().collect();
+
+        // Pad if needed
+        while result_errors.len() < expected_items.len() {
+            result_phonemes.push(DASH.to_string());
+            result_errors.push(true);
+            result_confidences.push(0.0);
+        }
+
+        return Ok((result_phonemes, result_errors, result_confidences));
     }
 
     let ref_refs: Vec<&str> = ref_phons.iter().map(|s| s.as_str()).collect();
@@ -225,7 +238,7 @@ fn word_level_alignment_core_impl(
         .algorithm(similar::Algorithm::Myers)
         .diff_slices(&ref_refs, &hyp_refs);
 
-    // Pre-allocate with estimated capacity
+    // Run original alignment algorithm to get full alignment
     let estimated_capacity = ref_phons.len() + hyp_phons.len();
     let mut word_alignment_result: Vec<String> = Vec::with_capacity(estimated_capacity);
     let mut errors: Vec<bool> = Vec::with_capacity(estimated_capacity);
@@ -233,7 +246,8 @@ fn word_level_alignment_core_impl(
 
     let mut ri: usize = 0;
     let mut hj: usize = 0;
-    let mut pending_ref_indices: VecDeque<usize> = VecDeque::new();
+    let mut pending_ref_indices: std::collections::VecDeque<usize> =
+        std::collections::VecDeque::new();
     let mut error_cache: ErrorCache = FxHashMap::default();
     let mut item_symtab: HashMap<String, SymbolId> = HashMap::new();
     let mut phon_symtab: HashMap<String, SymbolId> = HashMap::new();
@@ -373,7 +387,33 @@ fn word_level_alignment_core_impl(
         );
     }
 
-    Ok((word_alignment_result, errors, matched_confidence))
+    // FINAL FIX: Always return exactly expected_items.len() results
+    if errors.len() > expected_items.len() {
+        let truncated_phonemes = word_alignment_result
+            .into_iter()
+            .take(expected_items.len())
+            .collect();
+        let truncated_errors = errors.into_iter().take(expected_items.len()).collect();
+        let truncated_confidences = matched_confidence
+            .into_iter()
+            .take(expected_items.len())
+            .collect();
+        Ok((truncated_phonemes, truncated_errors, truncated_confidences))
+    } else if errors.len() < expected_items.len() {
+        let mut padded_phonemes = word_alignment_result;
+        let mut padded_errors = errors;
+        let mut padded_confidences = matched_confidence;
+
+        let remaining = expected_items.len() - padded_errors.len();
+        for _ in 0..remaining {
+            padded_phonemes.push(DASH.to_string());
+            padded_errors.push(true);
+            padded_confidences.push(0.0);
+        }
+        Ok((padded_phonemes, padded_errors, padded_confidences))
+    } else {
+        Ok((word_alignment_result, errors, matched_confidence))
+    }
 }
 
 pub fn word_level_alignment_core(

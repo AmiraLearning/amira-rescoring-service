@@ -22,6 +22,10 @@ This list captures prioritized follow-ups from the recent audit to improve the b
 
 **Reliability & Observability**
 - Ensure EMF metrics emitted on all failure paths (replace silent `except: pass` with guarded metric and log).
+
+
+LOWER PRIORITY STARTS HERE:
+
 - Add per-stage SLO/SLI definitions (e2e latency, phrase success rate, queue age, GPU utilization) with error budgets.
 - Add soak tests and chaos/fault injection for S3/Athena/Triton network failures.
 - Emit `ActivitySuccess=0.0` when `process_single_activity` fails; include `ActivityTotalMs` and `CorrelationId`.

@@ -5,7 +5,7 @@ extracted from phrase_slicing.py for better organization.
 """
 
 import re
-from typing import Any
+from typing import Any, Final
 
 from loguru import logger
 from pydantic import BaseModel, ConfigDict
@@ -33,8 +33,14 @@ class SegmentMetadataResult(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
 
+SEGMENT_FILENAME_PATTERN: Final[re.Pattern] = re.compile(r"(\d{3})-(\d{6})-(\d+)-v\d\.wav")
+
+
 def _parse_segment_filename(filename: str) -> SegmentHead:
     """Parse segment filename to extract metadata.
+
+    Extract phrase index, sequence number from filename patterns
+    Examples: 000-000000-timestamp-v2.wav, 001-000001-timestamp-v2.wav
 
     Args:
         filename: Segment filename to parse
@@ -42,23 +48,19 @@ def _parse_segment_filename(filename: str) -> SegmentHead:
     Returns:
         SegmentHead: Parsed metadata
     """
-    # Extract phrase index, sequence number from filename patterns
-    # Examples: 000-000000-timestamp-v2.wav, 001-000001-timestamp-v2.wav
 
     try:
-        # Pattern: phrase-sequence-timestamp-version.wav
-        pattern = r"(\d{3})-(\d{6})-(\d+)-v\d\.wav"
-        match = re.match(pattern, filename)
+        match: re.Match | None = SEGMENT_FILENAME_PATTERN.match(filename)
 
         if match:
-            phrase_idx = int(match.group(1))
-            sequence = match.group(2)
+            phrase_idx: int = int(match.group(1))
+            sequence: str | None = match.group(2)
 
             return SegmentHead(
                 segment_file=filename,
                 phrase_index=phrase_idx,
                 sequence_number=sequence,
-                last_segment=None,  # Would need additional logic to determine
+                last_segment=None,
                 success=True,
             )
     except Exception as e:
@@ -97,22 +99,21 @@ async def get_segment_metadata(
         return SegmentMetadataResult(phrase_metadata={}, num_phrases=0, success=False)
 
     slices_by_phrase: dict[int, Any] = {}
-    max_phrase_index = -1
+    max_phrase_index: int = -1
 
     for filename in segment_file_names:
-        segment_meta = _parse_segment_filename(filename)
+        segment_meta: SegmentHead = _parse_segment_filename(filename)
 
         if not segment_meta.success:
             logger.warning(f"Failed to parse segment filename: {filename}")
             continue
 
-        phrase_index = segment_meta.phrase_index
+        phrase_index: int | None = segment_meta.phrase_index
         if phrase_index is None:
             continue
 
         max_phrase_index = max(max_phrase_index, phrase_index)
 
-        # Group segments by phrase index
         if phrase_index not in slices_by_phrase:
             slices_by_phrase[phrase_index] = {
                 "segments": [],
@@ -127,11 +128,9 @@ async def get_segment_metadata(
             }
         )
 
-    # Calculate number of phrases
-    num_phrases_in_act = max_phrase_index + 1 if max_phrase_index >= 0 else 0
+    num_phrases_in_act: int = max_phrase_index + 1 if max_phrase_index >= 0 else 0
 
-    # Validate that all expected phrase indices are present
-    missing_phrases = []
+    missing_phrases: list[int] = []
     for idx in range(num_phrases_in_act):
         if idx not in slices_by_phrase:
             missing_phrases.append(idx)
