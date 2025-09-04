@@ -3,8 +3,13 @@
 
 FROM public.ecr.aws/lambda/python:3.12-arm64
 
-# Install uv for fast dependency management
+# Install uv for fast dependency management and Rust toolchain for aligner
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+
+# Install Rust toolchain for building the aligner
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y && \
+    . ~/.cargo/env && \
+    echo 'source ~/.cargo/env' >> ~/.bashrc
 
 # Optimization environment variables
 ENV PYTHONOPTIMIZE=2
@@ -42,8 +47,13 @@ COPY utils/ ./utils/
 COPY infra/ ./infra/
 COPY my_asr_aligner/ ./my_asr_aligner/
 
-# Install dependencies with uv
-RUN uv pip install --system --no-cache-dir -e .
+# Install dependencies with uv using lockfile for reproducible builds
+RUN uv sync --frozen --system
+
+# Build Rust aligner extension with maturin
+RUN . ~/.cargo/env && \
+    uv pip install --system maturin && \
+    maturin develop
 
 # Pre-download Wav2Vec2 model for fast startup
 ENV MODEL_PATH=facebook/wav2vec2-base-960h

@@ -2,8 +2,7 @@ import asyncio
 import os
 import time
 import traceback
-from collections import OrderedDict
-from threading import Lock
+from threading import Lock, RLock
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -26,6 +25,8 @@ from .metrics_constants import (
 if TYPE_CHECKING:
     from .triton_engine import TritonInferenceEngine
 
+from utils.constants import ENGINE_CACHE_MAX_DEFAULT
+
 from .constants import (
     BYTES_PER_GB,
     MS_PER_SECOND,
@@ -42,9 +43,60 @@ from .models import (
     W2VConfig,
 )
 
-_cached_engines: "OrderedDict[str, Wav2Vec2InferenceEngine | TritonInferenceEngine]" = OrderedDict()
-_cached_engines_lock: Lock = Lock()
-_ENGINE_CACHE_MAX: int = int(os.getenv("ENGINE_CACHE_MAX", "2"))
+_ENGINE_CACHE_MAX: int = int(os.getenv("ENGINE_CACHE_MAX", str(ENGINE_CACHE_MAX_DEFAULT)))
+
+
+class ThreadSafeLRUCache:
+    """Thread-safe LRU cache for inference engines."""
+
+    def __init__(self, maxsize: int = 2):
+        self.maxsize = maxsize
+        self.cache: dict[str, Any] = {}
+        self.access_order: list[str] = []
+        self.lock = RLock()
+
+    def get(self, key: str) -> Any | None:
+        with self.lock:
+            if key in self.cache:
+                # Move to end (most recently used)
+                self.access_order.remove(key)
+                self.access_order.append(key)
+                return self.cache[key]
+            return None
+
+    def put(self, key: str, value: Any) -> None:
+        with self.lock:
+            if key in self.cache:
+                # Update existing entry
+                self.access_order.remove(key)
+                self.access_order.append(key)
+                self.cache[key] = value
+                return
+
+            # Add new entry
+            if len(self.cache) >= self.maxsize:
+                # Remove least recently used
+                lru_key = self.access_order.pop(0)
+                evicted = self.cache.pop(lru_key)
+                logger.info(f"Evicted inference engine from cache: {lru_key}")
+                # Try to cleanup the evicted engine
+                try:
+                    if hasattr(evicted, "__del__"):
+                        del evicted
+                except Exception:
+                    pass
+
+            self.cache[key] = value
+            self.access_order.append(key)
+            logger.info(f"Cached new inference engine: {key}")
+
+    def size(self) -> int:
+        with self.lock:
+            return len(self.cache)
+
+
+_engine_cache = ThreadSafeLRUCache(maxsize=_ENGINE_CACHE_MAX)
+_engine_creation_lock: Lock = Lock()
 
 
 def _make_cache_key(*, w2v_config: W2VConfig) -> str:
@@ -94,7 +146,7 @@ async def preload_inference_engine_async(
 
 class Wav2Vec2InferenceEngine:
     _device: torch.device
-    _model: Wav2Vec2ForCTC
+    _model: Wav2Vec2ForCTC | Any
     _processor: Wav2Vec2Processor
     _traced_model: torch.jit.ScriptModule | None
 
@@ -264,6 +316,23 @@ class Wav2Vec2InferenceEngine:
         preprocess_start: float = time.time()
         if not isinstance(audio_array, np.ndarray):
             raise TypeError("audio_array must be a numpy.ndarray")
+
+        # Size validation - prevent memory issues with extremely large arrays
+        max_audio_samples = int(
+            os.getenv("MAX_AUDIO_SAMPLES", "16000000")
+        )  # ~1000 seconds at 16kHz
+        if audio_array.size > max_audio_samples:
+            raise ValueError(
+                f"Audio array too large: {audio_array.size} samples "
+                f"(max allowed: {max_audio_samples}). This could cause memory issues."
+            )
+
+        # Check for reasonable audio length (not too short either)
+        min_audio_samples = int(os.getenv("MIN_AUDIO_SAMPLES", "160"))  # 0.01 seconds at 16kHz
+        if audio_array.size < min_audio_samples:
+            logger.warning(f"Audio array very short: {audio_array.size} samples")
+
+        logger.debug(f"Processing audio array: {audio_array.size} samples, {audio_array.dtype}")
         inputs: BatchFeature = self._processor(
             [audio_array], sampling_rate=16_000, return_tensors="pt", padding=False
         )
@@ -285,7 +354,6 @@ class Wav2Vec2InferenceEngine:
         model_start: float = time.time()
         logger.debug(f"Starting model inference on device: {self._device.type}")
 
-        # TODO clean up the style here
         model_to_use = self._traced_model if self._traced_model is not None else self._model
         use_amp: bool = bool(getattr(self._w2v_config, "use_mixed_precision", False))
         use_fp16: bool = bool(getattr(self._w2v_config, "use_float16", False))
@@ -305,24 +373,36 @@ class Wav2Vec2InferenceEngine:
                 logger.debug(f"Running model with CUDA autocast (dtype={autocast_dtype})")
                 logits = model_to_use(input_values)
                 if not isinstance(logits, torch.Tensor):
-                    logits = logits.logits
+                    if isinstance(logits, dict):
+                        logits = logits["logits"]
+                    else:
+                        logits = logits.logits
         elif self._device.type == "mps" and use_amp and hasattr(torch, "autocast"):
             try:
                 with torch.autocast(device_type="mps"):
                     logger.debug("Running model with MPS autocast")
                     logits = model_to_use(input_values)
                     if not isinstance(logits, torch.Tensor):
-                        logits = logits.logits
+                        if isinstance(logits, dict):
+                            logits = logits["logits"]
+                        else:
+                            logits = logits.logits
             except Exception:
                 logger.debug("MPS autocast unavailable; running without autocast")
                 logits = model_to_use(input_values)
                 if not isinstance(logits, torch.Tensor):
-                    logits = logits.logits
+                    if isinstance(logits, dict):
+                        logits = logits["logits"]
+                    else:
+                        logits = logits.logits
         else:
             logger.debug("Running model without autocast")
             logits = model_to_use(input_values)
             if not isinstance(logits, torch.Tensor):
-                logits = logits.logits
+                if isinstance(logits, dict):
+                    logits = logits["logits"]
+                else:
+                    logits = logits.logits
         logger.debug(f"Model inference completed in {(time.time() - model_start) * 1000:.1f}ms")
         return InferenceResult(
             logits=logits,
@@ -390,6 +470,63 @@ class Wav2Vec2InferenceEngine:
         allocated: float = torch.cuda.memory_allocated(device=0) / BYTES_PER_GB
         cached: float = torch.cuda.memory_reserved(device=0) / BYTES_PER_GB
         logger.info(f"GPU: {allocated:.1f}GB allocated, {cached:.1f}GB reserved")
+
+    def _fallback_to_cpu_inference(self, *, input_data: InferenceInput) -> GPUInferenceResult:
+        """Fallback inference on CPU when MPS fails.
+
+        This is a workaround for known MPS convolution issues.
+
+        Args:
+            input_data: The input data for inference
+
+        Returns:
+            GPUInferenceResult: The inference result from CPU fallback
+        """
+        result = GPUInferenceResult(inference_id=input_data.inference_id)
+        result.device = DeviceType.CPU
+
+        logger.warning("MPS convolution failed, falling back to CPU for this inference")
+
+        # Save original device state
+        original_device = self._device
+
+        try:
+            # Switch to CPU temporarily
+            self._device = torch.device("cpu")
+            self._model = self._model.to(self._device)
+
+            inference_start = time.time()
+            preprocess_result = self._preprocess_audio(audio_array=input_data.audio_array)
+            result.preprocess_time_ms = preprocess_result.preprocess_time_ms
+
+            with torch.inference_mode():
+                inference_result = self._run_model_inference(
+                    input_values=preprocess_result.input_values
+                )
+                result.model_inference_time_ms = inference_result.model_inference_time_ms
+                decode_result = self._decode_predictions(logits=inference_result.logits)
+                result.decode_time_ms = decode_result.decode_time_ms
+                result.transcription = decode_result.transcription
+                result.pred_tokens = decode_result.pred_tokens
+                result.phonetic_transcript = self._decoder.decode(
+                    pred_tokens=result.pred_tokens, max_probs=None
+                )
+
+            result.total_duration_ms = (time.time() - inference_start) * MS_PER_SECOND
+            result.success = True
+            logger.info("CPU fallback inference successful")
+
+        except Exception as fallback_e:
+            logger.error(f"CPU fallback also failed: {fallback_e}")
+            result.success = False
+            result.error = str(fallback_e)
+
+        finally:
+            # Restore original device state
+            self._device = original_device
+            self._model = self._model.to(self._device)
+
+        return result
 
     def infer(self, *, input_data: InferenceInput) -> GPUInferenceResult:
         """Perform the inference.
@@ -466,42 +603,11 @@ class Wav2Vec2InferenceEngine:
             logger.error(f"Error during inference: {e}")
             logger.error(f"Traceback: {traceback.format_exc()}")
 
-            # TODO ugly code, but it's a workaround for a known issue with MPS
+            # Handle known MPS convolution issues with CPU fallback
             if "convolution_overrideable not implemented" in str(e) and self._device.type == "mps":
-                logger.warning("MPS convolution failed, falling back to CPU for this inference")
-                try:
-                    original_device = self._device
-                    self._device = torch.device("cpu")
-                    self._model = self._model.to(self._device)
-
-                    inference_start = time.time()
-                    preprocess_result = self._preprocess_audio(audio_array=input_data.audio_array)
-                    result.preprocess_time_ms = preprocess_result.preprocess_time_ms
-
-                    with torch.inference_mode():
-                        inference_result = self._run_model_inference(
-                            input_values=preprocess_result.input_values
-                        )
-                        result.model_inference_time_ms = inference_result.model_inference_time_ms
-                        decode_result = self._decode_predictions(logits=inference_result.logits)
-                        result.decode_time_ms = decode_result.decode_time_ms
-                        result.transcription = decode_result.transcription
-                        result.pred_tokens = decode_result.pred_tokens
-                        result.phonetic_transcript = self._decoder.decode(
-                            pred_tokens=result.pred_tokens, max_probs=None
-                        )
-
-                    result.total_duration_ms = (time.time() - inference_start) * MS_PER_SECOND
-                    result.success = True
-
-                    self._device = original_device
-                    self._model = self._model.to(self._device)
-                    logger.info("CPU fallback inference successful")
-
-                except Exception as fallback_e:
-                    logger.error(f"CPU fallback also failed: {fallback_e}")
-                    result.success = False
-                    result.error = str(e)
+                result = self._fallback_to_cpu_inference(input_data=input_data)
+                if not result.success:
+                    result.error = str(e)  # Use original error if fallback also failed
             else:
                 result.success = False
                 result.error = str(e)
@@ -516,15 +622,15 @@ class Wav2Vec2InferenceEngine:
                     }
                     if should_empty:
                         torch.cuda.empty_cache()
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug(f"CUDA cache clearing failed (non-fatal): {type(e).__name__}: {e}")
         return result
 
 
 def get_cached_engine(
     *, w2v_config: W2VConfig
 ) -> "Wav2Vec2InferenceEngine | TritonInferenceEngine":
-    """Get or create a cached inference engine for Lambda optimization.
+    """Get or create a cached inference engine with thread-safe LRU caching.
 
     Args:
         w2v_config: The Wav2Vec2 configuration.
@@ -534,29 +640,35 @@ def get_cached_engine(
     """
     cache_key = _make_cache_key(w2v_config=w2v_config)
 
-    with _cached_engines_lock:
-        # Check if already cached within the lock to avoid race condition
-        existing = _cached_engines.get(cache_key)
-        if existing is not None:
-            # Move to end (LRU behavior)
-            _cached_engines.pop(cache_key, None)
-            _cached_engines[cache_key] = existing
-            return existing
-
-        if w2v_config.use_triton:
-            from .triton_engine import TritonInferenceEngine
-
-            engine = TritonInferenceEngine(w2v_config=w2v_config)
-        else:
-            engine = Wav2Vec2InferenceEngine(w2v_config=w2v_config)  # type: ignore[assignment]
-        if cache_key in _cached_engines:
-            _cached_engines.pop(cache_key)
-        _cached_engines[cache_key] = engine
-        while len(_cached_engines) > _ENGINE_CACHE_MAX:
-            evicted_key, _ = _cached_engines.popitem(last=False)
-            logger.info(f"Evicted inference engine from cache: {evicted_key}")
-        logger.info(f"Cached new inference engine with key: {cache_key}")
+    # Try to get from cache first
+    engine = _engine_cache.get(cache_key)
+    if engine is not None:
         return engine
+
+    # Create new engine with lock to prevent duplicate creation
+    with _engine_creation_lock:
+        # Double-check pattern: another thread might have created it while we waited
+        engine = _engine_cache.get(cache_key)
+        if engine is not None:
+            return engine
+
+        logger.info(f"Creating new inference engine with key: {cache_key}")
+
+        try:
+            if w2v_config.use_triton:
+                from .triton_engine import TritonInferenceEngine
+
+                engine = TritonInferenceEngine(w2v_config=w2v_config)
+            else:
+                engine = Wav2Vec2InferenceEngine(w2v_config=w2v_config)
+
+            # Cache the newly created engine
+            _engine_cache.put(cache_key, engine)
+            return engine
+
+        except Exception as e:
+            logger.error(f"Failed to create inference engine: {type(e).__name__}: {e}")
+            raise
 
 
 def perform_single_audio_inference(

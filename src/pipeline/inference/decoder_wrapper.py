@@ -108,16 +108,26 @@ class DecoderWrapper:
                 logger.warning(f"Rust batch decoder failed: {e}, falling back to Python")
                 if self._python_decoder is None:
                     self._python_decoder = PhonemeDecoder(phonetic_elements=self.phonetic_elements)
-                return [
-                    self._python_decoder.decode(pred_tokens=tokens, max_probs=probs)
-                    for tokens, probs in zip(
-                        batch_tokens, batch_probs or [None] * len(batch_tokens)
-                    )
-                ]
+                if batch_probs is not None:
+                    return [
+                        self._python_decoder.decode(pred_tokens=tokens, max_probs=probs)
+                        for tokens, probs in zip(batch_tokens, batch_probs)
+                    ]
+                else:
+                    return [
+                        self._python_decoder.decode(pred_tokens=tokens, max_probs=None)
+                        for tokens in batch_tokens
+                    ]
         else:
             if self._python_decoder is None:
                 raise RuntimeError("Python decoder not initialized")
-            return [
-                self._python_decoder.decode(pred_tokens=tokens, max_probs=probs)
-                for tokens, probs in zip(batch_tokens, batch_probs or [None] * len(batch_tokens))
-            ]
+            if batch_probs is not None:
+                return [
+                    self._python_decoder.decode(pred_tokens=tokens, max_probs=probs)
+                    for tokens, probs in zip(batch_tokens, batch_probs)
+                ]
+            else:
+                return [
+                    self._python_decoder.decode(pred_tokens=tokens, max_probs=None)
+                    for tokens in batch_tokens
+                ]

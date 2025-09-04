@@ -1,13 +1,14 @@
 import os
 import time
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pytest
 import torch
 
 
-def test_audio_read_timeout_raises(monkeypatch, tmp_path: Path) -> None:
+def test_audio_read_timeout_raises(monkeypatch: Any, tmp_path: Path) -> None:
     os.environ["AUDIO_READ_TIMEOUT_SEC"] = "1"
 
     import utils.audio as audio_mod
@@ -16,7 +17,7 @@ def test_audio_read_timeout_raises(monkeypatch, tmp_path: Path) -> None:
     wav_path = tmp_path / "dummy.wav"
     wav_path.write_bytes(b"RIFF0000WAVEfmt ")
 
-    def slow_load(path: str):  # type: ignore[override]
+    def slow_load(path: str) -> Any:
         time.sleep(2)
         raise RuntimeError("should not reach")
 
@@ -26,7 +27,7 @@ def test_audio_read_timeout_raises(monkeypatch, tmp_path: Path) -> None:
         audio_mod._load_audio_file(file_path=wav_path)
 
 
-def test_audio_mmap_path_used(monkeypatch, tmp_path: Path) -> None:
+def test_audio_mmap_path_used(monkeypatch: Any, tmp_path: Path) -> None:
     import utils.audio as audio_mod
 
     # Force mmap path by lowering threshold
@@ -35,7 +36,7 @@ def test_audio_mmap_path_used(monkeypatch, tmp_path: Path) -> None:
     wav_path = tmp_path / "dummy_large.wav"
     wav_path.write_bytes(b"RIFF0000WAVEfmt ")
 
-    def fake_wav_read(path: str, mmap: bool = False):  # type: ignore[override]
+    def fake_wav_read(path: str, mmap: bool = False) -> Any:
         assert mmap is True
         sr = 16000
         data = np.zeros((16000,), dtype=np.int16)

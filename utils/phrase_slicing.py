@@ -20,7 +20,7 @@ from typing import Any, Final
 
 from loguru import logger
 from pydantic import BaseModel
-from tenacity import AsyncRetrying, before_sleep_log, stop_after_attempt, wait_random_exponential
+from tenacity import AsyncRetrying, stop_after_attempt, wait_random_exponential
 
 from infra.s3_client import (
     ProductionS3Client,
@@ -292,7 +292,6 @@ async def get_segment_metadata(
                 stop=stop_after_attempt(attempts),
                 wait=wait_random_exponential(multiplier=0.2, max=5.0),
                 reraise=False,
-                before_sleep=before_sleep_log(logger, "info"),
             ):
                 with attempt:
                     segment_meta_file: str = segment_meta.segment_file

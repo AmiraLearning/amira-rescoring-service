@@ -77,9 +77,13 @@ async def load_activity_data(*, config: PipelineConfig) -> pl.DataFrame:
 
     if config.metadata.activity_id:
         logger.info(f"Loading specific activity via GraphQL: {config.metadata.activity_id}")
+        import asyncio
+
         from infra.appsync_utils import load_activity_from_graphql
 
-        activity_data = load_activity_from_graphql(activity_id=config.metadata.activity_id)
+        activity_data = await asyncio.to_thread(
+            load_activity_from_graphql, activity_id=config.metadata.activity_id
+        )
         activity_df: pl.DataFrame = pl.DataFrame(activity_data)
 
         activity_raw_path: Path = Path(result_dir) / "activities.parquet"

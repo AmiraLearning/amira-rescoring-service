@@ -10,7 +10,7 @@ from typing import Any
 
 from loguru import logger
 from pydantic import BaseModel
-from tenacity import AsyncRetrying, before_sleep_log, stop_after_attempt, wait_random_exponential
+from tenacity import AsyncRetrying, stop_after_attempt, wait_random_exponential
 
 from infra.s3_client import (
     ProductionS3Client,
@@ -55,7 +55,6 @@ async def s3_find(
         stop=stop_after_attempt(attempts),
         wait=wait_random_exponential(multiplier=0.2, max=5.0),
         reraise=True,
-        before_sleep=before_sleep_log(logger, "warning"),
     ):
         with attempt:
             operations: list[S3ListRequest] = [
@@ -75,7 +74,6 @@ async def s3_find(
                 for obj in objects
                 if isinstance(obj, dict) and obj.get("Key") is not None
             ]
-    # Should never reach here due to reraise=True, but mypy requires it
     return []
 
 
@@ -83,14 +81,37 @@ def bucket_for(*, stage_source: bool) -> str:
     """Get appropriate S3 bucket based on environment.
 
     Args:
-        stage_source: True for staging, False for production
+        stage_source: True for staging, False for production (legacy mapping)
 
     Returns:
         S3 bucket name
     """
-    from utils.config import S3_SPEECH_ROOT_PROD, S3_SPEECH_ROOT_STAGE
+    import os
 
-    return S3_SPEECH_ROOT_STAGE if stage_source else S3_SPEECH_ROOT_PROD
+    from utils.config import (
+        S3_SPEECH_ROOT_DEV2,
+        S3_SPEECH_ROOT_LEGACY_PROD,
+        S3_SPEECH_ROOT_PROD,
+        S3_SPEECH_ROOT_STAGE,
+    )
+
+    # Allow explicit bucket override
+    bucket_override: str | None = os.getenv("AUDIO_BUCKET")
+    if bucket_override:
+        return bucket_override
+
+    # Environment-based bucket selection
+    audio_env = os.getenv("AUDIO_ENV", "legacy")
+
+    if audio_env == "prod":
+        return S3_SPEECH_ROOT_PROD  # amira-speech-stream-prod (us-east-2)
+    elif audio_env == "stage":
+        return S3_SPEECH_ROOT_STAGE  # amira-speech-stream-stage (us-east-1)
+    elif audio_env == "dev2":
+        return S3_SPEECH_ROOT_DEV2  # amira-speech-stream-dev2 (us-east-1)
+    else:  # legacy or unset
+        # Preserve legacy stage_source behavior for backward compatibility
+        return S3_SPEECH_ROOT_STAGE if stage_source else S3_SPEECH_ROOT_LEGACY_PROD
 
 
 def _ensure_parent_dir(*, path: str) -> None:

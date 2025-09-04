@@ -11,12 +11,12 @@ RUN apt-get update && apt-get install -y \
 ENV PATH="/root/.cargo/bin:${PATH}"
 WORKDIR /app
 
-# Copy dependency files and build Rust extension
+# Copy dependency files and Rust crate
 COPY pyproject.toml uv.lock ./
 COPY my_asr_aligner/ ./my_asr_aligner/
 
-# Install uv and Python dependencies
-RUN pip install uv && uv sync --frozen
+# Install uv, maturin, and Python dependencies with lockfile for reproducible builds
+RUN pip install --no-cache-dir uv maturin && uv sync --frozen
 
 # Build Rust extension
 WORKDIR /app/my_asr_aligner
@@ -37,7 +37,7 @@ COPY src/ ./src/
 COPY utils/ ./utils/
 COPY infra/ ./infra/
 COPY main.py ./
-COPY data/ ./data/
+# No bundled data directory; models mount at runtime
 
 # Model will be mounted at runtime via volume
 ENV MODEL_PATH=/models/wav2vec2-ft-large-eng-phoneme-amirabet_2025-04-24

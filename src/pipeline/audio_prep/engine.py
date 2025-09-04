@@ -288,10 +288,12 @@ class AudioPreparationEngine:
                     try:
                         if f.stat().st_size > 44:
                             return True
-                    except Exception:
+                    except OSError as e:
+                        logger.debug(f"Audio file check failed: {e}")
                         continue
                 return False
-            except Exception:
+            except (OSError, PermissionError) as e:
+                logger.warning(f"Directory access error: {e}")
                 return False
 
         audio_dir_path: Path = Path(

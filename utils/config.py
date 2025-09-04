@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Any, Final
 
 import yaml
+from dateutil import parser
 from loguru import logger
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -16,8 +17,10 @@ DEFAULT_RESULT_DIR: Final[str] = "2025_letter_sound_scoring"
 LOG_FORMAT: Final[str] = "{time:YYYY-MM-DD HH:mm:ss} | {level} | {message}"
 
 # S3 Audio Configuration Constants
-S3_SPEECH_ROOT_PROD: Final[str] = "amira-speech-stream"
-S3_SPEECH_ROOT_STAGE: Final[str] = "amira-speech-stream-stage"
+S3_SPEECH_ROOT_LEGACY_PROD: Final[str] = "amira-speech-stream"  # us-east-1, legacy prod
+S3_SPEECH_ROOT_PROD: Final[str] = "amira-speech-stream-prod"  # us-east-2, new prod
+S3_SPEECH_ROOT_STAGE: Final[str] = "amira-speech-stream-stage"  # us-east-1, stage
+S3_SPEECH_ROOT_DEV2: Final[str] = "amira-speech-stream-dev2"  # us-east-1, dev2
 RECONSTITUTED_PHRASE_AUDIO: Final[str] = "reconstituted_phrase_audio"
 
 
@@ -98,21 +101,31 @@ class TimeoutsConfig(BaseModel):
 class AwsConfig(BaseModel):
     """AWS configuration."""
 
-    region: str = "us-east-2"
-    aws_region: str = "us-east-2"
+    region: str = "us-east-1"
+    aws_region: str = "us-east-1"
     athena_schema: str = "production_amira_datalake"
     s3_bucket: str = "production-amira-datalake"
     athena_s3_staging_dir: str = "athena"
-    audio_env: str = "prod2"
-    appsync_env: str = "prod2"
+    audio_env: str = "legacy"  # legacy, prod, stage, dev2
+    appsync_env: str = "legacy"
     aws_profile: str = "legacy"
 
     @model_validator(mode="after")
     def normalize_region(self) -> "AwsConfig":
-        """Ensure ``aws_region`` is the source of truth and keep ``region`` in sync."""
+        """Ensure ``aws_region`` is the source of truth and keep ``region`` in sync.
 
+        Also auto-set region based on audio_env if not explicitly set.
+        """
         primary: str = (self.aws_region or "").strip() or (self.region or "").strip()
-        self.aws_region = primary or "us-east-2"
+
+        # Auto-select region based on audio_env if no explicit region set
+        if not primary:
+            if self.audio_env == "prod":
+                primary = "us-east-2"  # New prod is us-east-2
+            else:
+                primary = "us-east-1"  # Legacy, stage, dev2 are us-east-1
+
+        self.aws_region = primary or "us-east-1"
         self.region = self.aws_region
         return self
 
@@ -222,18 +235,20 @@ def load_config(*, config_path: str | None = None) -> PipelineConfig:
         config.enable_confidence_weighting = os.getenv(
             "ALIGNER_CONFIDENCE_WEIGHTING", "false"
         ).lower() in {"1", "true", "yes", "on"}
+    if os.getenv("AUDIO_ENV"):
+        config.aws.audio_env = os.getenv("AUDIO_ENV", config.aws.audio_env)
 
-    if os.getenv("PROCESSING_START_TIME"):
+    processing_start_time = os.getenv("PROCESSING_START_TIME")
+    if processing_start_time:
         try:
-            from dateutil import parser  # type: ignore[import-untyped]
-
-            config.metadata.processing_start_time = parser.parse(os.getenv("PROCESSING_START_TIME"))
+            config.metadata.processing_start_time = parser.parse(processing_start_time)
         except Exception as e:
             logger.warning(f"Failed to parse PROCESSING_START_TIME: {e}")
 
-    if os.getenv("PROCESSING_END_TIME"):
+    processing_end_time = os.getenv("PROCESSING_END_TIME")
+    if processing_end_time:
         try:
-            config.metadata.processing_end_time = parser.parse(os.getenv("PROCESSING_END_TIME"))
+            config.metadata.processing_end_time = parser.parse(processing_end_time)
         except Exception as e:
             logger.warning(f"Failed to parse PROCESSING_END_TIME: {e}")
 

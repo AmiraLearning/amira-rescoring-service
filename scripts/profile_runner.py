@@ -18,8 +18,10 @@ def profile_main(script_args: list[str], output_name: str = "profile") -> None:
 
     sys.argv = ["main.py", *script_args]
 
-    # TODO nuke this
-    sys.path.insert(0, str(Path(__file__).parent.parent))
+    # Add project root to path for imports
+    project_root = Path(__file__).parent.parent
+    if str(project_root) not in sys.path:
+        sys.path.insert(0, str(project_root))
 
     profiler = cProfile.Profile()
 

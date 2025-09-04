@@ -6,7 +6,6 @@ This list captures prioritized follow-ups from the recent audit to improve the b
 - Decompose `src/pipeline/pipeline.py`: split into data_load, audio_prep, inference, alignment, persistence modules with typed DTOs between stages.
 - Replace bare dicts with Pydantic models at boundaries; ensure serialization is explicit.
 
-
 LOWER PRIORITY STARTS HERE:
 
 - Add per-stage SLO/SLI definitions (e2e latency, phrase success rate, queue age, GPU utilization) with error budgets.

@@ -6,6 +6,7 @@ from typing import Any, Final
 
 import boto3
 import torch
+from botocore.exceptions import ClientError, ConnectionError
 from loguru import logger
 from pydantic import BaseModel
 
@@ -62,8 +63,10 @@ def apply_lambda_optimizations() -> None:
 
         _optimizations_applied = True
 
-    except Exception:
-        pass
+    except (RuntimeError, AttributeError, ImportError) as e:
+        logger.warning(f"Lambda optimization setup failed (continuing): {type(e).__name__}: {e}")
+    except Exception as e:
+        logger.warning(f"Unexpected optimization error (continuing): {type(e).__name__}: {e}")
 
 
 def create_lambda_config() -> PipelineConfig:
@@ -124,8 +127,10 @@ def publish_job_metrics(result: LambdaProcessingResult) -> None:
                 },
             ],
         )
-    except Exception:
-        pass
+    except (ClientError, ConnectionError) as e:
+        logger.debug(f"CloudWatch metrics publishing failed (non-fatal): {type(e).__name__}: {e}")
+    except Exception as e:
+        logger.warning(f"Unexpected metrics error (non-fatal): {type(e).__name__}: {e}")
 
 
 def _get_s3_client() -> Any:
@@ -234,8 +239,10 @@ def publish_batch_metrics(successes: int, failures: int, total_time: float) -> N
 
         if metrics:
             cw_client.put_metric_data(Namespace="Amira/Jobs", MetricData=metrics)
-    except Exception:
-        pass
+    except (ClientError, ConnectionError) as e:
+        logger.debug(f"Batch metrics publishing failed (non-fatal): {type(e).__name__}: {e}")
+    except Exception as e:
+        logger.warning(f"Unexpected batch metrics error (non-fatal): {type(e).__name__}: {e}")
 
 
 def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
@@ -269,7 +276,15 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
                     with logger.contextualize(correlationId=message_id, activityId=activity_id):
                         result = await process_activity(activity_id, correlation_id=message_id)
                     return True, result.processing_time, None
-                except Exception:
+                except (ValueError, KeyError, json.JSONDecodeError) as e:
+                    logger.error(
+                        f"Activity processing data error for {activity_id if 'activity_id' in locals() else 'unknown'}: {type(e).__name__}: {e}"
+                    )
+                    return False, 0.0, record.get("messageId")
+                except Exception as e:
+                    logger.error(
+                        f"Unexpected activity processing error for {activity_id if 'activity_id' in locals() else 'unknown'}: {type(e).__name__}: {e}"
+                    )
                     return False, 0.0, record.get("messageId")
 
         async def _run(

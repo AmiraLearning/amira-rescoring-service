@@ -28,7 +28,6 @@ from pydantic import BaseModel, Field
 from rich.progress import Progress
 from tenacity import (
     AsyncRetrying,
-    before_sleep_log,
     retry_if_exception,
     stop_after_attempt,
     wait_random_exponential,
@@ -359,7 +358,7 @@ class ProductionS3Client:
         self._total_operation_time: float = 0.0
 
     @staticmethod
-    def _is_retryable_exception(e: Exception) -> bool:
+    def _is_retryable_exception(e: BaseException) -> bool:
         if isinstance(
             e,
             TimeoutError
@@ -612,9 +611,8 @@ class ProductionS3Client:
                     multiplier=self._config.retry_backoff_base,
                     max=self._config.retry_backoff_max,
                 ),
-                retry=retry_if_exception(self._is_retryable_exception),
+                retry=retry_if_exception(lambda e: self._is_retryable_exception(e)),
                 reraise=True,
-                before_sleep=before_sleep_log(self._logger, "warning"),
             ):
                 with attempt:
                     result = await _do()
@@ -747,9 +745,8 @@ class ProductionS3Client:
                     multiplier=self._config.retry_backoff_base,
                     max=self._config.retry_backoff_max,
                 ),
-                retry=retry_if_exception(self._is_retryable_exception),
+                retry=retry_if_exception(lambda e: self._is_retryable_exception(e)),
                 reraise=True,
-                before_sleep=before_sleep_log(self._logger, "warning"),
             ):
                 with attempt:
                     result = await _do()
@@ -902,9 +899,8 @@ class ProductionS3Client:
                         multiplier=self._config.retry_backoff_base,
                         max=self._config.retry_backoff_max,
                     ),
-                    retry=retry_if_exception(self._is_retryable_exception),
+                    retry=retry_if_exception(lambda e: self._is_retryable_exception(e)),
                     reraise=True,
-                    before_sleep=before_sleep_log(self._logger, "warning"),
                 ):
                     with attempt:
                         objects = await _do()
@@ -982,9 +978,8 @@ class ProductionS3Client:
                         multiplier=self._config.retry_backoff_base,
                         max=self._config.retry_backoff_max,
                     ),
-                    retry=retry_if_exception(self._is_retryable_exception),
+                    retry=retry_if_exception(lambda e: self._is_retryable_exception(e)),
                     reraise=True,
-                    before_sleep=before_sleep_log(self._logger, "warning"),
                 ):
                     with attempt:
                         response = await _do()
@@ -1038,9 +1033,8 @@ class ProductionS3Client:
                     multiplier=self._config.retry_backoff_base,
                     max=self._config.retry_backoff_max,
                 ),
-                retry=retry_if_exception(self._is_retryable_exception),
+                retry=retry_if_exception(lambda e: self._is_retryable_exception(e)),
                 reraise=True,
-                before_sleep=before_sleep_log(self._logger, "warning"),
             ):
                 with attempt:
                     await _do()

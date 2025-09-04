@@ -1,4 +1,5 @@
 import types
+from typing import Any
 
 import numpy as np
 import pytest
@@ -9,7 +10,7 @@ from src.pipeline.inference.models import InferenceInput, W2VConfig
 
 
 class DummyProcessor:
-    def __call__(self, inputs, sampling_rate, return_tensors, padding):
+    def __call__(self, inputs: Any, sampling_rate: int, return_tensors: str, padding: bool) -> Any:
         class BF:
             def __init__(self) -> None:
                 self.input_values = torch.zeros((1, 10), dtype=torch.float32)
@@ -17,19 +18,19 @@ class DummyProcessor:
         return BF()
 
     @property
-    def tokenizer(self):
+    def tokenizer(self) -> Any:
         class T:
-            def convert_ids_to_tokens(self, arr):
+            def convert_ids_to_tokens(self, arr: Any) -> list[str]:
                 return ["t"] * len(arr)
 
         return T()
 
-    def batch_decode(self, ids):
+    def batch_decode(self, ids: Any) -> list[str]:
         return ["t"]
 
 
 class DummyModel(torch.nn.Module):
-    def forward(self, x):
+    def forward(self, x: Any) -> Any:
         return types.SimpleNamespace(logits=torch.zeros((1, 1, 1), dtype=torch.float32))
 
 
@@ -44,11 +45,11 @@ def test_mps_to_cpu_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
     )
 
     # Force device to mps to trigger fallback branch on error
-    engine._device = torch.device("mps")  # type: ignore[attr-defined]
+    engine._device = torch.device("mps")
 
     raised_once = {"flag": False}
 
-    def _run_model_inference_raise(*, input_values):  # type: ignore[no-redef]
+    def _run_model_inference_raise(*, input_values: Any) -> Any:
         if not raised_once["flag"]:
             raised_once["flag"] = True
             raise RuntimeError("convolution_overrideable not implemented")

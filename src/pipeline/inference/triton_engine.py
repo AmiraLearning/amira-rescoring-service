@@ -1,3 +1,4 @@
+import os
 import time
 import traceback
 
@@ -118,6 +119,18 @@ class TritonInferenceEngine:
             inference_start = time.time()
 
             preprocess_start = time.time()
+
+            # Size validation - prevent memory issues with extremely large arrays
+            max_audio_samples = int(
+                os.getenv("MAX_AUDIO_SAMPLES", "16000000")
+            )  # ~1000 seconds at 16kHz
+            if input_data.audio_array.size > max_audio_samples:
+                raise ValueError(
+                    f"Audio array too large: {input_data.audio_array.size} samples "
+                    f"(max allowed: {max_audio_samples}). This could cause memory issues."
+                )
+
+            logger.debug(f"Processing audio array: {input_data.audio_array.size} samples")
             audio_input = input_data.audio_array.astype(np.float32)
             if audio_input.ndim == 1:
                 audio_input = audio_input[np.newaxis, :]

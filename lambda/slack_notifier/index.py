@@ -23,34 +23,89 @@ class SlackNotification:
     def __init__(self, webhook_url: str):
         self.webhook_url = webhook_url
 
-    def format_job_completion_message(self, summary: JobSummary) -> dict[str, Any]:
+    def format_pipeline_kickoff_message(
+        self, jobs_enqueued: int, environment: str = "unknown"
+    ) -> dict[str, Any]:
+        """Format pipeline kickoff notification."""
+        return {
+            "text": "Amira Letter Scoring Pipeline Started",
+            "attachments": [
+                {
+                    "color": "good",
+                    "fields": [
+                        {
+                            "title": "Pipeline Details",
+                            "value": f"• Environment: {environment}\n• Jobs Enqueued: {jobs_enqueued:,}\n• Status: Processing started",
+                            "short": True,
+                        },
+                        {
+                            "title": "Expected Duration",
+                            "value": f"• Est. Time: {self._estimate_completion_time(jobs_enqueued)}\n• Concurrency: 10 parallel workers\n• Avg per job: ~45s",
+                            "short": True,
+                        },
+                    ],
+                    "footer": "Amira Lambda Parallel - Pipeline Started",
+                    "ts": int(time.time()),
+                }
+            ],
+        }
+
+    def _estimate_completion_time(self, jobs_count: int) -> str:
+        """Estimate completion time for parallel pipeline based on job count."""
+        # Estimate based on historical data: ~45s per job, 10 parallel workers
+        if jobs_count == 0:
+            return "0 minutes"
+        estimated_minutes = max(
+            1, (jobs_count * 45) // (10 * 60)
+        )  # 10 parallel workers, 45s per job
+        if estimated_minutes < 60:
+            return f"~{estimated_minutes} minutes"
+        else:
+            hours = estimated_minutes // 60
+            minutes = estimated_minutes % 60
+            return f"~{hours}h {minutes}m"
+
+    def format_job_completion_message(
+        self, summary: JobSummary, environment: str = "unknown"
+    ) -> dict[str, Any]:
         success_rate = (
             (summary.total_completed / summary.total_enqueued * 100)
             if summary.total_enqueued > 0
             else 0
         )
 
-        status_emoji = "✅" if summary.dlq_count == 0 else "⚠️"
-        color = "good" if summary.dlq_count == 0 else "warning"
+        # Determine status and color based on success rate and DLQ
+        if success_rate >= 95 and summary.dlq_count == 0:
+            color = "good"
+            status_text = "Excellent"
+        elif success_rate >= 80 and summary.dlq_count < 5:
+            color = "good"
+            status_text = "Success"
+        elif success_rate >= 50:
+            color = "warning"
+            status_text = "Completed with Issues"
+        else:
+            color = "danger"
+            status_text = "Failed"
 
         return {
-            "text": f"{status_emoji} Amira Letter Scoring Job Complete",
+            "text": f"Amira Letter Scoring Pipeline Complete - {status_text}",
             "attachments": [
                 {
                     "color": color,
                     "fields": [
                         {
                             "title": "Processing Summary",
-                            "value": f"• Total Jobs: {summary.total_enqueued:,}\n• Completed: {summary.total_completed:,}\n• Failed: {summary.total_failed:,}\n• Success Rate: {success_rate:.1f}%",
+                            "value": f"• Environment: {environment}\n• Total Jobs: {summary.total_enqueued:,}\n• Completed: {summary.total_completed:,}\n• Failed: {summary.total_failed:,}\n• Success Rate: {success_rate:.1f}%",
                             "short": True,
                         },
                         {
-                            "title": "Performance",
-                            "value": f"• Duration: {summary.duration_minutes:.1f}m\n• Avg Time: {summary.avg_processing_time:.1f}s\n• Throughput: {summary.throughput_per_hour:.0f}/hour",
+                            "title": "Performance Metrics",
+                            "value": f"• Duration: {summary.duration_minutes:.1f}m\n• Avg Processing: {summary.avg_processing_time:.1f}s\n• Throughput: {summary.throughput_per_hour:.0f}/hour\n• DLQ Items: {summary.dlq_count}",
                             "short": True,
                         },
                     ],
-                    "footer": "Amira Lambda Parallel",
+                    "footer": "Amira Lambda Parallel - Pipeline Complete",
                     "ts": int(time.time()),
                 }
             ],
@@ -60,7 +115,7 @@ class SlackNotification:
         self, alarm_name: str, alarm_description: str, metric_value: float
     ) -> dict[str, Any]:
         return {
-            "text": f"🚨 Amira Processing Alert: {alarm_name}",
+            "text": f"Amira Processing Alert: {alarm_name}",
             "attachments": [
                 {
                     "color": "danger",
@@ -89,7 +144,11 @@ class SlackNotification:
             with urllib.request.urlopen(req, timeout=10) as response:
                 return response.status == 200
 
-        except Exception:
+        except urllib.error.URLError as e:
+            print(f"Network error sending Slack message: {e}")
+            return False
+        except Exception as e:
+            print(f"Unexpected error sending Slack message: {e}")
             return False
 
 
@@ -206,19 +265,26 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
         return {"statusCode": 400, "body": "SLACK_WEBHOOK_URL not configured"}
 
     notifier = SlackNotification(webhook_url)
+    environment = os.environ.get("AUDIO_ENV", "unknown")
 
     try:
-        sns_data = parse_sns_message(event)
-
-        if sns_data.get("AlarmName") == "JobCompletionDetected":
-            summary = extract_job_metrics_from_cloudwatch(event)
-            message = notifier.format_job_completion_message(summary)
+        # Check if this is a direct invocation (pipeline kickoff)
+        if event.get("source") == "pipeline_kickoff":
+            jobs_enqueued = event.get("jobs_enqueued", 0)
+            message = notifier.format_pipeline_kickoff_message(jobs_enqueued, environment)
         else:
-            alarm_name: str = sns_data.get("AlarmName", "Unknown")
-            alarm_description: str = sns_data.get("AlarmDescription", "No description")
-            metric_value: float = sns_data.get("NewStateValue", 0)
+            # Handle SNS-triggered events (alarms, completion)
+            sns_data = parse_sns_message(event)
 
-            message = notifier.format_error_alert(alarm_name, alarm_description, metric_value)
+            if sns_data.get("AlarmName") == "JobCompletionDetected":
+                summary = extract_job_metrics_from_cloudwatch(sns_data)
+                message = notifier.format_job_completion_message(summary, environment)
+            else:
+                alarm_name: str = sns_data.get("AlarmName", "Unknown")
+                alarm_description: str = sns_data.get("AlarmDescription", "No description")
+                metric_value: float = sns_data.get("NewStateValue", 0)
+
+                message = notifier.format_error_alert(alarm_name, alarm_description, metric_value)
 
         success = notifier.send_message(message)
 

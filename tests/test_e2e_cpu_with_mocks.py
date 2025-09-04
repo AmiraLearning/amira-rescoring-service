@@ -15,7 +15,7 @@ async def test_e2e_cpu_with_mocks(monkeypatch: pytest.MonkeyPatch) -> None:
     cfg = PipelineConfig()
     cfg.metadata.activity_id = "test-activity"
 
-    async def _fake_load_activity_data(*, config: PipelineConfig) -> pl.DataFrame:  # type: ignore[override]
+    async def _fake_load_activity_data(*, config: PipelineConfig) -> pl.DataFrame:
         return pl.DataFrame(
             {
                 "activityId": ["test-activity"],
@@ -24,7 +24,7 @@ async def test_e2e_cpu_with_mocks(monkeypatch: pytest.MonkeyPatch) -> None:
             }
         )
 
-    def _fake_load_story_phrase_data(*, config: PipelineConfig) -> pl.DataFrame:  # type: ignore[override]
+    def _fake_load_story_phrase_data(*, config: PipelineConfig) -> pl.DataFrame:
         return pl.DataFrame(
             {
                 "storyId": ["s1", "s1"],
@@ -36,7 +36,7 @@ async def test_e2e_cpu_with_mocks(monkeypatch: pytest.MonkeyPatch) -> None:
 
     async def _fake_cpu_download_worker(
         *, phrases_input: Any, activity_id: str, config: PipelineConfig
-    ):  # type: ignore[no-redef]
+    ) -> Any:
         from src.pipeline.audio_prep.models import ActivityOutput, ProcessedPhraseOutput
 
         phrases = [

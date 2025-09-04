@@ -65,6 +65,33 @@ async def enqueue_activities_from_athena(enqueuer: JobEnqueuer) -> int:
         await athena.close()
 
 
+async def send_slack_kickoff_notification(jobs_enqueued: int) -> None:
+    """Send pipeline kickoff notification to Slack."""
+    slack_function_name = os.environ.get("SLACK_NOTIFIER_FUNCTION_NAME")
+    if not slack_function_name:
+        return  # Slack notifications not configured
+
+    try:
+        import aioboto3
+
+        session = aioboto3.Session()
+        async with session.client("lambda") as lambda_client:
+            payload = {
+                "source": "pipeline_kickoff",
+                "jobs_enqueued": jobs_enqueued,
+                "timestamp": time.time(),
+            }
+
+            await lambda_client.invoke(
+                FunctionName=slack_function_name,
+                InvocationType="Event",  # Async invocation
+                Payload=json.dumps(payload),
+            )
+    except Exception:
+        # Don't fail the job enqueuing if Slack notification fails
+        pass
+
+
 def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
     handler_start = time.time()
 
@@ -73,6 +100,10 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
         import asyncio
 
         count = asyncio.run(enqueue_activities_from_athena(enqueuer))
+
+        # Send kickoff notification if jobs were enqueued
+        if count > 0:
+            asyncio.run(send_slack_kickoff_notification(count))
 
         response = LambdaResponse(
             status_code=200,

@@ -5,8 +5,10 @@ import time
 import traceback
 
 import typer
+import yaml
 from loguru import logger
 
+from src.pipeline.exceptions import ConfigurationError
 from src.pipeline.pipeline import run_activity_pipeline
 from utils.cleanup import cleanup_pipeline_data
 from utils.config import PipelineConfig, load_config
@@ -47,8 +49,11 @@ async def run_pipeline_core(*, config: PipelineConfig) -> bool:
         logger.info("Pipeline interrupted by user")
         return False
 
+    except (ConfigurationError, ValueError, RuntimeError) as e:
+        logger.error(f"Pipeline configuration or execution error: {e}")
+        return False
     except Exception as e:
-        logger.error(f"Pipeline failed: {e}")
+        logger.error(f"Unexpected pipeline failure: {e}")
         logger.error(traceback.format_exc())
         return False
 
@@ -124,6 +129,9 @@ def run(
         else:
             typer.echo("Pipeline failed!", err=True)
 
+    except (FileNotFoundError, yaml.YAMLError, ConfigurationError) as e:
+        typer.echo(f"Configuration error: {e}", err=True)
+        logger.error(f"Configuration error: {e}")
     except Exception as e:
         typer.echo(f"An unexpected error occurred: {e}", err=True)
         logger.error(f"Pipeline execution failed: {e}")
@@ -133,9 +141,12 @@ def run(
         if cleanup and config_obj is not None:
             try:
                 cleanup_pipeline_data(config=config_obj)
-            except Exception as e:
+            except (OSError, RuntimeError) as e:
                 typer.echo(f"Cleanup failed: {e}", err=True)
                 logger.error(f"Cleanup failed: {e}")
+            except Exception as e:
+                typer.echo(f"Unexpected cleanup error: {e}", err=True)
+                logger.error(f"Unexpected cleanup error: {e}")
 
         if not success:
             raise typer.Exit(1)

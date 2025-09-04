@@ -131,7 +131,6 @@ async def load_and_prepare_data(
     if config is None:
         raise ValueError("Config parameter is required")
 
-    # Skip engine preloading if we already have a cached engine
     if cached_engine is not None:
         logger.info("Using cached engine, skipping preload")
         s3_preload_task: asyncio.Task[Any] = asyncio.create_task(
@@ -159,7 +158,6 @@ async def load_and_prepare_data(
 
         return PreparedData(activity_df=activity_df, phrase_df=phrase_df, engine=cached_engine)
 
-    # Original behavior for when no cached engine is provided
     preload_task: asyncio.Task[Any] = asyncio.create_task(
         preload_inference_engine_async(w2v_config=config.w2v2, warmup=True)
     )

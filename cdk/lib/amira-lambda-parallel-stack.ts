@@ -369,6 +369,37 @@ export class AmiraLambdaParallelStack extends cdk.Stack {
       resources: ['*']
     }));
 
+    // Secrets Manager permissions for AppSync credentials
+    processingLambda.addToRolePolicy(new iam.PolicyStatement({
+      actions: [
+        'secretsmanager:GetSecretValue'
+      ],
+      resources: [
+        cdk.Arn.format({
+          service: 'secretsmanager',
+          resource: 'secret',
+          resourceName: 'amira/appsync/*'
+        }, this)
+      ]
+    }));
+
+    // Slack notification Lambda (defined early for enqueue lambda reference)
+    const slackNotifierLambda = new lambda.Function(this, 'SlackNotifierFunction', {
+      runtime: lambda.Runtime.PYTHON_3_12,
+      handler: 'index.lambda_handler',
+      code: lambda.Code.fromAsset('../lambda/slack_notifier'),
+      timeout: cdk.Duration.seconds(30),
+      tracing: lambda.Tracing.ACTIVE,
+      environment: {
+        SLACK_WEBHOOK_URL: slackWebhookParam.valueAsString,
+        AUDIO_ENV: cdk.Token.asString(cdk.Fn.ref('AWS::NoValue')) // Will be set via environment at runtime
+      }
+    });
+
+    const slackWebhookProvided = new cdk.CfnCondition(this, 'SlackWebhookProvided', {
+      expression: cdk.Fn.conditionNot(cdk.Fn.conditionEquals(slackWebhookParam.valueAsString, ''))
+    });
+
     // Enqueue Lambda function
     const enqueueLambda = new lambda.Function(this, 'EnqueueFunction', {
       runtime: lambda.Runtime.PYTHON_3_12,
@@ -380,7 +411,13 @@ export class AmiraLambdaParallelStack extends cdk.Stack {
         JOBS_QUEUE_URL: tasksQueue.queueUrl,
         ATHENA_DATABASE: athenaDbParam.valueAsString,
         ATHENA_OUTPUT: athenaOutputParam.valueAsString,
-        ATHENA_QUERY: athenaQueryParam.valueAsString
+        ATHENA_QUERY: athenaQueryParam.valueAsString,
+        SLACK_NOTIFIER_FUNCTION_NAME: cdk.Token.asString(cdk.Fn.conditionIf(
+          slackWebhookProvided.logicalId,
+          slackNotifierLambda.functionName,
+          ''
+        )),
+        AUDIO_ENV: cdk.Token.asString(cdk.Fn.ref('AWS::NoValue')) // Will be set via environment at runtime
       }
     });
 
@@ -427,6 +464,18 @@ export class AmiraLambdaParallelStack extends cdk.Stack {
     }));
 
     tasksQueue.grantSendMessages(enqueueLambda);
+
+    // Allow enqueue Lambda to invoke Slack notifier for kickoff notifications
+    const slackInvokePermission = new iam.PolicyStatement({
+      actions: ['lambda:InvokeFunction'],
+      resources: [slackNotifierLambda.functionArn]
+    });
+    const cfnSlackInvokePolicy = new iam.CfnPolicy(this, 'EnqueueSlackInvokePolicy', {
+      policyDocument: new iam.PolicyDocument({ statements: [slackInvokePermission] }),
+      roles: [enqueueLambda.role!.roleName],
+      policyName: `EnqueueSlackInvokePolicy-${cdk.Stack.of(this).stackName}`
+    });
+    cfnSlackInvokePolicy.cfnOptions.condition = slackWebhookProvided;
 
     // Schedule for automatic enqueueing
     const scheduleRule = new events.Rule(this, 'ScheduleRule', {
@@ -506,22 +555,7 @@ export class AmiraLambdaParallelStack extends cdk.Stack {
       displayName: 'Amira Lambda Parallel Alerts'
     });
 
-    // Slack notification Lambda
-    const slackNotifierLambda = new lambda.Function(this, 'SlackNotifierFunction', {
-      runtime: lambda.Runtime.PYTHON_3_12,
-      handler: 'index.lambda_handler',
-      code: lambda.Code.fromAsset('../lambda/slack_notifier'),
-      timeout: cdk.Duration.seconds(30),
-      tracing: lambda.Tracing.ACTIVE,
-      environment: {
-        SLACK_WEBHOOK_URL: slackWebhookParam.valueAsString
-      }
-    });
-
     // Subscribe Slack notifier to SNS alerts
-    const slackWebhookProvided = new cdk.CfnCondition(this, 'SlackWebhookProvided', {
-      expression: cdk.Fn.conditionNot(cdk.Fn.conditionEquals(slackWebhookParam.valueAsString, ''))
-    });
 
     // Lambda permission for SNS to invoke Slack notifier
     slackNotifierLambda.addPermission('AllowSNSInvoke', {

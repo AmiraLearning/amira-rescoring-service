@@ -179,7 +179,6 @@ def _load_and_resample(*, path: Path) -> torch.Tensor | None:
     return resampler(speech.squeeze(0))
 
 
-# TODO optimize this
 class AudioSegmentRequest(BaseModel):
     """Request model for audio segment loading."""
 

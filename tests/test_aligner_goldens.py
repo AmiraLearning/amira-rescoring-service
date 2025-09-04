@@ -1,9 +1,9 @@
 import pytest
 
 try:
-    from my_asr_aligner import word_level_alignment
+    from my_asr_aligner import word_level_alignment  # type: ignore[attr-defined]
 except Exception:  # pragma: no cover
-    word_level_alignment = None  # type: ignore[assignment]
+    word_level_alignment = None
 
 
 @pytest.mark.skipif(word_level_alignment is None, reason="aligner extension not built")
