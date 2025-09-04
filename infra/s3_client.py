@@ -582,23 +582,26 @@ class ProductionS3Client:
                 response = await client.get_object(Bucket=operation.bucket, Key=operation.key)
                 body = response["Body"]
 
-                bytes_written: int = 0
-                with open(local_path, "wb") as f:
-                    while True:
-                        chunk: bytes = await body.read(self._config.buffer_size)
-                        if not chunk:
-                            break
-                        f.write(chunk)
-                        bytes_written += len(chunk)
-                        if progress and task_id is not None:
-                            progress.update(task_id, completed=bytes_written)
+                try:
+                    bytes_written: int = 0
+                    with open(local_path, "wb") as f:
+                        while True:
+                            chunk: bytes = await body.read(self._config.buffer_size)
+                            if not chunk:
+                                break
+                            f.write(chunk)
+                            bytes_written += len(chunk)
+                            if progress and task_id is not None:
+                                progress.update(task_id, completed=bytes_written)
 
-                file_size = local_path.stat().st_size if local_path.exists() else 0
-                return S3OperationResult(
-                    success=True,
-                    operation=operation,
-                    data={"file_size": file_size},
-                )
+                    file_size = local_path.stat().st_size if local_path.exists() else 0
+                    return S3OperationResult(
+                        success=True,
+                        operation=operation,
+                        data={"file_size": file_size},
+                    )
+                finally:
+                    await body.close()
             finally:
                 await self._return_client(client)
 

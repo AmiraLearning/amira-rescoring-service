@@ -9,6 +9,7 @@ Intended usage:
 - this function returns "True" if the activity was successfully processed
 """
 
+import asyncio
 import json
 import shutil
 import tempfile
@@ -422,9 +423,11 @@ def reconstitute_and_save_phrase(
             str(export_file),
             "-y",
         ]
-        result = subprocess.run(cmd, capture_output=True, text=True)
+
+        result = subprocess.run(cmd, capture_output=True, text=True, check=False)
         if result.returncode != 0:
             logger.warning(f"ffmpeg concat copy failed; falling back to re-encode: {result.stderr}")
+
             fallback_cmd: list[str] = [
                 "ffmpeg",
                 "-hide_banner",
@@ -447,7 +450,8 @@ def reconstitute_and_save_phrase(
                 str(export_file),
                 "-y",
             ]
-            result2 = subprocess.run(fallback_cmd, capture_output=True, text=True)
+
+            result2 = subprocess.run(fallback_cmd, capture_output=True, text=True, check=False)
             if result2.returncode != 0:
                 logger.error(f"ffmpeg concat re-encode failed: {result2.stderr}")
                 raise RuntimeError("Phrase concatenation failed")
@@ -670,7 +674,8 @@ class PhraseSlicer:
             if replay_suffix is not None
             else source_activity_id
         )
-        reconstitute_success_bool: bool = reconstitute_and_save_phrase(
+        reconstitute_success_bool: bool = await asyncio.to_thread(
+            reconstitute_and_save_phrase,
             num_phrases_in_act=num_phrases_in_act,
             slices_by_phrase=slices_by_phrase,
             destination_path=self.destination_path,

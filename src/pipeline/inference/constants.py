@@ -4,8 +4,9 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Final
 
-BYTES_PER_GB: Final[int] = 1024**3
-MS_PER_SECOND: Final[int] = 1000
+BYTES_PER_GB: Final[int] = 1_024**3
+MS_PER_SECOND: Final[int] = 1_000
+
 try:
     _resource = ilr.files("src.pipeline").joinpath("valid_phonetic_elements.json")
     _phonetic_elements_path: Path = Path(str(_resource))

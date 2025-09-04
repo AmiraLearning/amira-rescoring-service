@@ -48,11 +48,7 @@ _ENGINE_CACHE_MAX: int = int(os.getenv("ENGINE_CACHE_MAX", "2"))
 
 
 def _make_cache_key(*, w2v_config: W2VConfig) -> str:
-    device_hint: str = (
-        getattr(w2v_config, "device", DeviceType.CPU).value
-        if hasattr(DeviceType, "CPU")
-        else str(getattr(w2v_config, "device", "cpu"))
-    )
+    device_hint: str = getattr(w2v_config, "device", DeviceType.CPU).value
     parts: list[str] = [
         str(w2v_config.model_path),
         f"triton={w2v_config.use_triton}",
@@ -238,11 +234,20 @@ class Wav2Vec2InferenceEngine:
             logger.info("Skipping JIT trace for fast initialization")
 
     def _init_jit_trace(self) -> None:
-        """Initialize JIT traced model for optimized inference."""
+        """Initialize JIT traced model for optimized inference.
+
+        Note: JIT tracing locks input shapes to the dummy input size (16000 samples).
+        This is safe for fixed-length audio processing but may not work with dynamic lengths.
+        """
         try:
-            dummy_input: torch.Tensor = torch.zeros((1, 16000), device=self._device)
-            self._traced_model = torch.jit.trace(self._model, dummy_input)
-            logger.info("JIT trace optimization enabled")
+            # Use a representative sample size for tracing
+            # Warning: This locks the model to this specific input shape
+            sample_length = 16000  # ~1 second at 16kHz sample rate
+            dummy_input: torch.Tensor = torch.zeros((1, sample_length), device=self._device)
+
+            logger.debug(f"Initializing JIT trace with input shape {dummy_input.shape}")
+            self._traced_model = torch.jit.trace(self._model, dummy_input, strict=False)
+            logger.info(f"JIT trace optimization enabled for input shape {dummy_input.shape}")
         except Exception as e:
             logger.warning(f"JIT trace failed, using regular model: {e}")
             self._traced_model = None
@@ -287,11 +292,17 @@ class Wav2Vec2InferenceEngine:
         use_bf16: bool = bool(getattr(self._w2v_config, "use_bfloat16", False))
 
         if self._device.type == "cuda" and (use_amp or use_fp16 or use_bf16):
-            autocast_dtype = torch.float16 if use_fp16 else None
+            # Explicitly set autocast dtype to avoid ambiguity
+            if use_fp16:
+                autocast_dtype = torch.float16
+            elif use_bf16:
+                autocast_dtype = torch.bfloat16
+            else:
+                # Default to bfloat16 for mixed precision when no specific type is set
+                autocast_dtype = torch.bfloat16
+
             with torch.autocast(device_type="cuda", dtype=autocast_dtype):
-                logger.debug(
-                    f"Running model with CUDA autocast (dtype={'fp16' if use_fp16 else 'bf16' if use_bf16 else 'default'})"
-                )
+                logger.debug(f"Running model with CUDA autocast (dtype={autocast_dtype})")
                 logits = model_to_use(input_values)
                 if not isinstance(logits, torch.Tensor):
                     logits = logits.logits
@@ -523,24 +534,21 @@ def get_cached_engine(
     """
     cache_key = _make_cache_key(w2v_config=w2v_config)
 
-    if cache_key in _cached_engines:
-        with _cached_engines_lock:
-            engine = _cached_engines.pop(cache_key)
-            _cached_engines[cache_key] = engine
-            return engine
-
     with _cached_engines_lock:
+        # Check if already cached within the lock to avoid race condition
         existing = _cached_engines.get(cache_key)
         if existing is not None:
+            # Move to end (LRU behavior)
             _cached_engines.pop(cache_key, None)
             _cached_engines[cache_key] = existing
             return existing
+
         if w2v_config.use_triton:
             from .triton_engine import TritonInferenceEngine
 
             engine = TritonInferenceEngine(w2v_config=w2v_config)
         else:
-            engine = Wav2Vec2InferenceEngine(w2v_config=w2v_config)
+            engine = Wav2Vec2InferenceEngine(w2v_config=w2v_config)  # type: ignore[assignment]
         if cache_key in _cached_engines:
             _cached_engines.pop(cache_key)
         _cached_engines[cache_key] = engine

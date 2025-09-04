@@ -1,4 +1,4 @@
-from __future__ import annotations
+"""Models for the inference pipeline."""
 
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Self
@@ -6,14 +6,14 @@ from typing import TYPE_CHECKING, Any, Self
 import numpy as np
 from pydantic import BaseModel, ConfigDict, Field, field_serializer, model_validator
 
-if TYPE_CHECKING:  # pragma: no cover - for type checkers only
+if TYPE_CHECKING:  # pragma: no cover
     pass
 
 from .constants import DeviceType
 
 
 class W2VConfig(BaseModel):
-    """Wav2Vec2 configuration.
+    """Wav2Vec2 configuration
 
     Validates Triton configuration to ensure HTTPS-only URLs when Triton is enabled.
     """
@@ -23,11 +23,13 @@ class W2VConfig(BaseModel):
     include_confidence: bool = False
 
     # Triton inference server configuration
+    # TODO update the docs for this
     use_triton: bool = False
     triton_url: str = "https://localhost:8000"
     triton_model: str = "w2v2"
 
     # Compilation optimizations
+    # TODO update the docs for this
     use_torch_compile: bool = False
     compile_mode: str = "default"  # "default", "reduce-overhead", "max-autotune"
     use_torch_jit: bool = False  # Fallback for torch.compile
