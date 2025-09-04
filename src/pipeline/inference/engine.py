@@ -280,12 +280,18 @@ class Wav2Vec2InferenceEngine:
         model_start: float = time.time()
         logger.debug(f"Starting model inference on device: {self._device.type}")
 
+        # TODO clean up the style here
         model_to_use = self._traced_model if self._traced_model is not None else self._model
-
         use_amp: bool = bool(getattr(self._w2v_config, "use_mixed_precision", False))
-        if self._device.type == "cuda" and use_amp:
-            with torch.autocast(device_type="cuda"):
-                logger.debug("Running model with CUDA autocast")
+        use_fp16: bool = bool(getattr(self._w2v_config, "use_float16", False))
+        use_bf16: bool = bool(getattr(self._w2v_config, "use_bfloat16", False))
+
+        if self._device.type == "cuda" and (use_amp or use_fp16 or use_bf16):
+            autocast_dtype = torch.float16 if use_fp16 else None
+            with torch.autocast(device_type="cuda", dtype=autocast_dtype):
+                logger.debug(
+                    f"Running model with CUDA autocast (dtype={'fp16' if use_fp16 else 'bf16' if use_bf16 else 'default'})"
+                )
                 logits = model_to_use(input_values)
                 if not isinstance(logits, torch.Tensor):
                     logits = logits.logits
@@ -441,8 +447,10 @@ class Wav2Vec2InferenceEngine:
                         ),
                     },
                 )
-            except Exception:
-                pass
+            except Exception as metric_e:
+                logger.debug(
+                    f"EMF metric emission failed (non-fatal): {type(metric_e).__name__}: {metric_e}"
+                )
         except Exception as e:  # pragma: no cover
             logger.error(f"Error during inference: {e}")
             logger.error(f"Traceback: {traceback.format_exc()}")
@@ -488,7 +496,17 @@ class Wav2Vec2InferenceEngine:
                 result.error = str(e)
         finally:
             if torch.cuda.is_available():
-                torch.cuda.empty_cache()
+                try:
+                    should_empty: bool = os.getenv("CUDA_EMPTY_CACHE", "false").lower() in {
+                        "1",
+                        "true",
+                        "yes",
+                        "on",
+                    }
+                    if should_empty:
+                        torch.cuda.empty_cache()
+                except Exception:
+                    pass
         return result
 
 

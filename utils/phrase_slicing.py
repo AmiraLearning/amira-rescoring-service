@@ -25,7 +25,6 @@ from infra.s3_client import (
     ProductionS3Client,
     S3DownloadRequest,
     S3HeadRequest,
-    S3ListRequest,
     S3OperationResult,
     S3UploadRequest,
 )
@@ -45,52 +44,14 @@ class S3Object(BaseModel):
     last_modified: datetime | None = None
 
 
-async def s3_find(
-    *,
-    bucket: str,
-    prefix: str = "/",
-    delimiter: str = "/",
-    start_after: str = "",
-    s3_client: ProductionS3Client,
-    include_last_mod: bool = False,
-) -> list[S3Object]:
-    """Enumerate S3 prefix (as a virtual directory)
+async def s3_find(*, bucket: str, prefix: str, s3_client: ProductionS3Client) -> list[S3Object]:
+    """Enumerate a prefix using the shared s3_audio_operations.s3_find helper for consistency."""
+    from utils.s3_audio_operations import s3_find as _shared_s3_find
 
-    Args:
-        bucket: Bucket containing the objects
-        prefix: Prefix to enumerate
-        delimiter: Virtual directory separator
-        start_after: Don't enumerate objects with lexical names before this start point
-        s3_client: ProductionS3Client to use
-        include_last_mod: include last modification timestamp in result
-
-    Returns:
-        List of S3Object instances
-    """
-    cleaned_prefix: str = prefix.lstrip(delimiter)
-    result = await s3_client.list_objects_batch(
-        [S3ListRequest(bucket=bucket, prefix=cleaned_prefix)]
+    keys: list[str] = await _shared_s3_find(
+        source_bucket=bucket, prefix_path=prefix, s3_client=s3_client, retry_limit=2
     )
-
-    if not result or not result[0].success:
-        logger.warning(f"Failed to list objects in s3://{bucket}/{prefix}")
-        return []
-
-    objects_data: list[dict[str, Any]] = result[0].data.get("objects", [])
-
-    s3_objects: list[S3Object] = []
-    for obj in objects_data:
-        key: str = obj["Key"]
-
-        if start_after and key <= start_after:
-            continue
-
-        if include_last_mod:
-            s3_objects.append(S3Object(key=key, last_modified=obj.get("LastModified")))
-        else:
-            s3_objects.append(S3Object(key=key))
-
-    return s3_objects
+    return [S3Object(key=k) for k in keys]
 
 
 def bucket_for(*, stage_source: bool) -> str:

@@ -6,23 +6,6 @@ This list captures prioritized follow-ups from the recent audit to improve the b
 - Decompose `src/pipeline/pipeline.py`: split into data_load, audio_prep, inference, alignment, persistence modules with typed DTOs between stages.
 - Replace bare dicts with Pydantic models at boundaries; ensure serialization is explicit.
 
-**S3 / I-O Consolidation**
-- Unify helpers: converge on `infra/s3_client.ProductionS3Client` shapes; remove duplicate logic between `utils/phrase_slicing.py` and `utils/s3_audio_operations.py`.
-- Add jittered backoff and semaphore limits for head/list ops similar to downloads/uploads.
-
-**Config & CLI**
-- Remove hardcoded default dates in `PipelineMetadataConfig`; support required date range or “last N hours” default.
-- Strengthen `load_config` validation to fail-fast for required fields (e.g., missing story phrase file when needed, invalid Triton HTTPS).
-- Normalize AWS region fields (use `aws_region` single source of truth; derive aliases in one place).
-
-**Inference & Decoding**
-- Wire `W2VConfig.use_float16` and document interactions with `use_mixed_precision` and `use_torch_compile`; remove unused flags if not needed.
-- Make `torch.cuda.empty_cache()` behavior configurable via env (default off for throughput-sensitive runs).
-- Decide on default for `DECODER_ROBUST_MODE`; consider enabling in production with warning logs instead of hard errors on unmatched tokens.
-
-**Reliability & Observability**
-- Ensure EMF metrics emitted on all failure paths (replace silent `except: pass` with guarded metric and log).
-
 
 LOWER PRIORITY STARTS HERE:
 

@@ -156,7 +156,7 @@ class PhonemeDecoder:
         tokens = grouped_segment_units.tokens
         confidences = grouped_segment_units.confidences
 
-        robust_env = os.getenv("DECODER_ROBUST_MODE", "false").lower() in {"1", "true", "yes", "on"}
+        robust_env = os.getenv("DECODER_ROBUST_MODE", "true").lower() in {"1", "true", "yes", "on"}
         while index < len(grouped_segment_units.tokens):
             longest_match: LongestMatchResult = self._phonetic_trie.find_longest_match(
                 tokens=tokens, start_index=index
@@ -188,8 +188,10 @@ class PhonemeDecoder:
                         metrics={MET_DECODER_PARSE_FAILURE: 1.0},
                         dimensions={},
                     )
-                except Exception:
-                    pass
+                except Exception as metric_e:
+                    logger.debug(
+                        f"EMF metric emission failed (non-fatal): {type(metric_e).__name__}: {metric_e}"
+                    )
                 raise ValueError(message)
 
         return GroupedPhoneticUnits(tokens=final_elements, confidences=final_confidences)

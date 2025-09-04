@@ -11,6 +11,9 @@
   - `PIPELINE_MAX_CONCURRENCY`: default 4; caps concurrent activity processing.
   - `W2V2_QUANTIZE`: when `true` and CPU, applies dynamic quantization.
   - `ALIGNER_CONFIDENCE_WEIGHTING`: when `true`, enables confidence-weighted alignment.
+  - `DECODER_ROBUST_MODE`: default `true`; when enabled, unmatched tokens are skipped with warnings.
+  - `CUDA_EMPTY_CACHE`: default `false`; when `true`, calls `torch.cuda.empty_cache()` after inference.
+  - `USE_MIXED_PRECISION` / `use_mixed_precision` in config: enables autocast. `use_float16` forces fp16 dtype for CUDA autocast.
 
 - S3 Client
   - `S3_WARM_CLIENTS`: number of pooled clients to pre-create (default 2).
@@ -19,6 +22,9 @@
   - `S3_RETRY_MAX` (alias `S3_MAX_RETRIES`): max attempts.
   - `S3_RETRY_BASE` (alias `S3_RETRY_BACKOFF_BASE`): base for randomized exponential backoff.
   - `S3_RETRY_MAX_BACKOFF` (alias `S3_RETRY_BACKOFF_MAX`): backoff cap in seconds.
+  - `S3_MAX_CONCURRENT_DOWNLOADS` / `S3_MAX_CONCURRENT_UPLOADS` / `S3_MAX_CONCURRENT_OPERATIONS` tune semaphores.
+  - `S3_MAX_CONNECTIONS` / `S3_MAX_CONNECTIONS_PER_HOST` configure HTTP connection pooling.
+  - `S3_CONNECTION_TIMEOUT` / `S3_READ_TIMEOUT` configure timeouts.
 
 - Audio I/O
   - `AUDIO_READ_TIMEOUT_SEC`: per-file read timeout (default 10s). Uses `signal.alarm` on main thread; thread timeout off-main thread.

@@ -14,8 +14,8 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from infra.s3_client import ProductionS3Client, S3DownloadRequest, S3OperationResult
 from src.pipeline.exceptions import AudioProcessingError
-from utils.config import S3_SPEECH_ROOT_PROD
 from utils.extract_phrases import extract_phrase_slices_tutor_style
+from utils.s3_audio_operations import bucket_for as _bucket_for
 
 warnings.filterwarnings("ignore", category=UserWarning, module=r"torchaudio(\..*)?")
 
@@ -59,7 +59,7 @@ async def download_complete_audio_from_s3(
             logger.info(f"Complete audio already exists for {activity_id}")
             return True
 
-        bucket: str = S3_SPEECH_ROOT_PROD
+        bucket: str = _bucket_for(stage_source=False)
         s3_key: str = f"{activity_id}/complete.wav"
 
         result: list[S3OperationResult] = await s3_client.download_files_batch(

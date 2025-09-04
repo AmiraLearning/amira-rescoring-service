@@ -158,8 +158,10 @@ class AudioPreparationEngine:
                         "AuditMode": str(self._save_padded_audio).lower(),
                     },
                 )
-            except Exception:
-                pass
+            except Exception as metric_e:
+                logger.debug(
+                    f"EMF metric emission failed (non-fatal): {type(metric_e).__name__}: {metric_e}"
+                )
         else:
             output.error_message = f"No valid audio found for activity {activity_id}"
             logger.warning(f"Activity {activity_id} has no valid audio - all audio files are empty")

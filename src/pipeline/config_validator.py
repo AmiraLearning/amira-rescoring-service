@@ -161,8 +161,18 @@ class ConfigurationValidator:
 
         metadata = config.metadata
 
-        # Validate date range
-        if metadata.processing_start_time >= metadata.processing_end_time:
+        # Validate date presence and range
+        start = metadata.processing_start_time
+        end = metadata.processing_end_time
+
+        if start is None and end is None:
+            logger.debug("No processing date range provided; upstream may derive it via hours-ago.")
+            return
+        if (start is None) ^ (end is None):
+            raise ConfigurationError(
+                "Both processing_start_time and processing_end_time must be set together"
+            )
+        if start is not None and end is not None and start >= end:
             raise ConfigurationError("processing_start_time must be before processing_end_time")
 
         # Validate limit

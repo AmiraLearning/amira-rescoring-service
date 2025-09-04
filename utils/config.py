@@ -26,9 +26,13 @@ if os.getenv("ENABLE_FILE_LOG", "0") == "1":
 
 
 class PipelineMetadataConfig(BaseModel):
-    """Pipeline metadata configuration."""
+    """Pipeline metadata configuration.
 
-    # Default to last 24 hours if not specified
+    Either provide an explicit date range via ``processing_start_time`` and
+    ``processing_end_time`` or set the ``PROCESSING_HOURS_AGO`` environment
+    variable to derive a rolling window. Implicit defaults are not applied.
+    """
+
     processing_start_time: datetime | None = None
     processing_end_time: datetime | None = None
     activity_file: str | None = None
@@ -95,13 +99,22 @@ class AwsConfig(BaseModel):
     """AWS configuration."""
 
     region: str = "us-east-2"
-    aws_region: str = "us-east-2"  # Alias for region
+    aws_region: str = "us-east-2"
     athena_schema: str = "production_amira_datalake"
     s3_bucket: str = "production-amira-datalake"
     athena_s3_staging_dir: str = "athena"
     audio_env: str = "prod2"
     appsync_env: str = "prod2"
     aws_profile: str = "legacy"
+
+    @model_validator(mode="after")
+    def normalize_region(self) -> "AwsConfig":
+        """Ensure ``aws_region`` is the source of truth and keep ``region`` in sync."""
+
+        primary: str = (self.aws_region or "").strip() or (self.region or "").strip()
+        self.aws_region = primary or "us-east-2"
+        self.region = self.aws_region
+        return self
 
 
 class PipelineConfig(BaseModel):
@@ -118,26 +131,18 @@ class PipelineConfig(BaseModel):
 
     @model_validator(mode="after")
     def validate_config_consistency(self) -> "PipelineConfig":
-        """Validate configuration consistency across fields."""
-        # Set default date range if not specified
-        if self.metadata.processing_start_time is None:
-            # Default to last 24 hours
-            self.metadata.processing_end_time = datetime.now()
-            self.metadata.processing_start_time = self.metadata.processing_end_time - timedelta(
-                hours=24
-            )
-            logger.info(
-                f"Using default date range: last 24 hours "
-                f"({self.metadata.processing_start_time} to {self.metadata.processing_end_time})"
-            )
-        elif self.metadata.processing_end_time is None:
-            # If only start time is specified, use 24 hours from start
-            self.metadata.processing_end_time = self.metadata.processing_start_time + timedelta(
-                hours=24
+        """Validate configuration consistency across fields without implicit defaults."""
+
+        start = self.metadata.processing_start_time
+        end = self.metadata.processing_end_time
+
+        if (start is None) ^ (end is None):
+            raise ValueError(
+                "Both processing_start_time and processing_end_time must be set together, "
+                "or omit both and set PROCESSING_HOURS_AGO."
             )
 
-        # Validate the date range
-        if self.metadata.processing_start_time >= self.metadata.processing_end_time:
+        if start is not None and end is not None and start >= end:
             raise ValueError("processing_start_time must be before processing_end_time")
         return self
 
@@ -150,17 +155,14 @@ class PipelineConfig(BaseModel):
         Raises:
             ValueError: If validation fails
         """
-        # Validate audio directory exists or can be created
         try:
             self.audio.audio_dir.mkdir(parents=True, exist_ok=True)
         except Exception as e:
             raise ValueError(f"Cannot create audio directory {self.audio.audio_dir}: {e}")
 
-        # Validate story phrase file exists if specified
         if not self.cached.story_phrase_path.exists():
             logger.warning(f"Story phrase file not found: {self.cached.story_phrase_path}")
 
-        # Validate Triton configuration if enabled
         if self.w2v2.use_triton:
             if not self.w2v2.triton_url or not self.w2v2.triton_url.strip():
                 raise ValueError("triton_url is required when use_triton is True")
@@ -215,14 +217,12 @@ def load_config(*, config_path: str | None = None) -> PipelineConfig:
     if os.getenv("AWS_REGION"):
         region_env = os.getenv("AWS_REGION", config.aws.aws_region)
         config.aws.aws_region = region_env
-        # Keep alias in sync
         config.aws.region = region_env
     if os.getenv("ALIGNER_CONFIDENCE_WEIGHTING"):
         config.enable_confidence_weighting = os.getenv(
             "ALIGNER_CONFIDENCE_WEIGHTING", "false"
         ).lower() in {"1", "true", "yes", "on"}
 
-    # Override date range from environment if present
     if os.getenv("PROCESSING_START_TIME"):
         try:
             from dateutil import parser  # type: ignore[import-untyped]
@@ -250,7 +250,6 @@ def load_config(*, config_path: str | None = None) -> PipelineConfig:
         except Exception as e:
             logger.warning(f"Failed to parse PROCESSING_HOURS_AGO: {e}")
 
-    # Perform comprehensive validation
     try:
         config.validate_runtime_requirements()
         ConfigurationValidator.validate_full_configuration(config)

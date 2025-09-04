@@ -879,28 +879,39 @@ class ProductionS3Client:
         async with self._operation_semaphore:
             start_time = time.time()
 
-            try:
+            async def _do() -> list[Any]:
                 client = await self._get_client()
-
                 try:
                     paginator = client.get_paginator("list_objects_v2")
-                    objects: list[Any] = []
+                    items: list[Any] = []
                     async for page in paginator.paginate(
                         Bucket=operation.bucket, Prefix=operation.key
                     ):
-                        objects.extend(page.get("Contents", []))
-                    duration = time.time() - start_time
-
-                    return S3OperationResult(
-                        success=True,
-                        operation=operation,
-                        data={"objects": objects, "count": len(objects)},
-                        duration_ms=duration * 1000,
-                    )
-
+                        items.extend(page.get("Contents", []))
+                    return items
                 finally:
                     await self._return_client(client)
 
+            try:
+                async for attempt in AsyncRetrying(
+                    stop=stop_after_attempt(self._config.max_retries),
+                    wait=wait_random_exponential(
+                        multiplier=self._config.retry_backoff_base,
+                        max=self._config.retry_backoff_max,
+                    ),
+                    retry=retry_if_exception(self._is_retryable_exception),
+                    reraise=True,
+                    before_sleep=before_sleep_log(self._logger, "warning"),
+                ):
+                    with attempt:
+                        objects = await _do()
+                duration = time.time() - start_time
+                return S3OperationResult(
+                    success=True,
+                    operation=operation,
+                    data={"objects": objects, "count": len(objects)},
+                    duration_ms=duration * 1000,
+                )
             except Exception as e:
                 duration = time.time() - start_time
                 return S3OperationResult(
@@ -954,24 +965,33 @@ class ProductionS3Client:
         async with self._operation_semaphore:
             start_time: float = time.time()
 
-            try:
+            async def _do() -> dict[str, Any]:
                 client = await self._get_client()
-
                 try:
-                    response = await client.head_object(Bucket=operation.bucket, Key=operation.key)
-
-                    duration_success: float = time.time() - start_time
-
-                    return S3OperationResult(
-                        success=True,
-                        operation=operation,
-                        data={"metadata": response},
-                        duration_ms=duration_success * 1000,
-                    )
-
+                    return await client.head_object(Bucket=operation.bucket, Key=operation.key)
                 finally:
                     await self._return_client(client)
 
+            try:
+                async for attempt in AsyncRetrying(
+                    stop=stop_after_attempt(self._config.max_retries),
+                    wait=wait_random_exponential(
+                        multiplier=self._config.retry_backoff_base,
+                        max=self._config.retry_backoff_max,
+                    ),
+                    retry=retry_if_exception(self._is_retryable_exception),
+                    reraise=True,
+                    before_sleep=before_sleep_log(self._logger, "warning"),
+                ):
+                    with attempt:
+                        response = await _do()
+                duration_success: float = time.time() - start_time
+                return S3OperationResult(
+                    success=True,
+                    operation=operation,
+                    data={"metadata": response},
+                    duration_ms=duration_success * 1000,
+                )
             except Exception as e:
                 duration_error: float = time.time() - start_time
                 return S3OperationResult(
