@@ -21,7 +21,14 @@ from loguru import logger
 from pydantic import BaseModel
 from tenacity import AsyncRetrying, before_sleep_log, stop_after_attempt, wait_random_exponential
 
-from infra.s3_client import ProductionS3Client, S3OperationResult
+from infra.s3_client import (
+    ProductionS3Client,
+    S3DownloadRequest,
+    S3HeadRequest,
+    S3ListRequest,
+    S3OperationResult,
+    S3UploadRequest,
+)
 from utils.audio_metadata import SegmentMetadataResult
 
 # Use centralized bucket resolver to avoid duplication
@@ -61,7 +68,9 @@ async def s3_find(
         List of S3Object instances
     """
     cleaned_prefix: str = prefix.lstrip(delimiter)
-    result = await s3_client.list_objects_batch([(bucket, cleaned_prefix)])
+    result = await s3_client.list_objects_batch(
+        [S3ListRequest(bucket=bucket, prefix=cleaned_prefix)]
+    )
 
     if not result or not result[0].success:
         logger.warning(f"Failed to list objects in s3://{bucket}/{prefix}")
@@ -138,7 +147,7 @@ async def load_activity_manifest(
         tmp_path: str = tf.name
     try:
         results: list[S3OperationResult] = await s3_client.download_files_batch(
-            [(bucket, manifest_key, tmp_path)]
+            [S3DownloadRequest(bucket=bucket, key=manifest_key, local_path=tmp_path)]
         )
         if not results or not results[0].success:
             return None
@@ -177,7 +186,9 @@ async def write_activity_manifest(
         tmp_path: str = tf.name
         tf.write(json.dumps(payload).encode("utf-8"))
     try:
-        await s3_client.upload_files_batch([(tmp_path, bucket, manifest_key)])
+        await s3_client.upload_files_batch(
+            [S3UploadRequest(local_path=tmp_path, bucket=bucket, key=manifest_key)]
+        )
     except Exception as e:
         logger.warning(f"Failed to write manifest for {activity_id}: {e}")
     finally:
@@ -205,8 +216,12 @@ async def download_segment_files(
 
     bucket: str = bucket_for(stage_source=stage_source)
 
-    download_operations: list[tuple[str, str, str]] = [
-        (bucket, segment_file, str(Path(destination_path) / segment_file))
+    download_operations: list[S3DownloadRequest] = [
+        S3DownloadRequest(
+            bucket=bucket,
+            key=segment_file,
+            local_path=str(Path(destination_path) / segment_file),
+        )
         for segment_file in segment_file_names
     ]
 
@@ -257,8 +272,8 @@ async def get_segment_metadata(
 
     bucket = bucket_for(stage_source=stage_source)
 
-    head_requests: list[tuple[str, str]] = [
-        (bucket, segment_file) for segment_file in segment_file_names
+    head_requests: list[S3HeadRequest] = [
+        S3HeadRequest(bucket=bucket, key=segment_file) for segment_file in segment_file_names
     ]
     head_results: list[S3OperationResult] = await s3_client.head_objects_batch(head_requests)
 
@@ -323,7 +338,7 @@ async def get_segment_metadata(
                         f"retry during segment metadata head call: segment_meta_file {segment_meta_file}..."
                     )
                     retry_results: list[S3OperationResult] = await s3_client.head_objects_batch(
-                        [(bucket, segment_meta_file)]
+                        [S3HeadRequest(bucket=bucket, key=segment_meta_file)]
                     )
                     if retry_results and retry_results[0].success:
                         retry_result: S3OperationResult = retry_results[0]

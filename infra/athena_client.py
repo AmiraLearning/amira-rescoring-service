@@ -26,6 +26,8 @@ from pydantic import BaseModel, Field
 from infra.s3_client import (
     HighPerformanceS3Config,
     ProductionS3Client,
+    S3DownloadRequest,
+    S3ListRequest,
     S3OperationResult,
 )
 
@@ -579,7 +581,9 @@ class ProductionAthenaClient:
 
         try:
             results: list[S3OperationResult] = await s3_client.download_files_batch(
-                [(bucket, key, str(local_path))], progress=progress, task_id=task_id
+                [S3DownloadRequest(bucket=bucket, key=key, local_path=str(local_path))],
+                progress=progress,
+                task_id=task_id,
             )
             if not results or not results[0].success:
                 error_msg: str = (
@@ -603,7 +607,7 @@ class ProductionAthenaClient:
             s3_client: ProductionS3Client = await self._get_s3_client()
 
             list_results: list[S3OperationResult] = await s3_client.list_objects_batch(
-                [(bucket, prefix)]
+                [S3ListRequest(bucket=bucket, prefix=prefix)]
             )
             if not list_results or not list_results[0].success:
                 error_msg: str = list_results[0].error or "Unknown" if list_results else "Unknown"

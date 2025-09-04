@@ -17,18 +17,27 @@ def setup_logging(*, service: str | None = None) -> None:
     logger.remove()
 
     level_env: str = os.getenv("LOG_LEVEL", "INFO")
-    json_env: str = os.getenv("LOG_JSON", "true")
+
+    # Auto-detect local development: default to human-readable format unless explicitly set
+    # Check if running in Lambda or container environments
+    is_lambda = os.getenv("AWS_LAMBDA_FUNCTION_NAME") is not None
+    is_container = os.getenv("ECS_CONTAINER_METADATA_URI") is not None
+
+    # Default to human-readable format for local development
+    default_json = "true" if (is_lambda or is_container) else "false"
+    json_env: str = os.getenv("LOG_JSON", default_json)
     serialize: bool = json_env.lower() in {"1", "true", "yes", "on"}
 
     if serialize:
         logger.add(sys.stdout, level=level_env, serialize=True)
     else:
+        # Use cleaner format for local development
         fmt: Final[str] = (
-            "{time:YYYY-MM-DD HH:mm:ss.SSS} | {level} | {extra[service]} | {message}"
-            if service
-            else "{time:YYYY-MM-DD HH:mm:ss.SSS} | {level} | {message}"
+            "<green>{time:HH:mm:ss.SSS}</green> | <level>{level: <8}</level> | <cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - <level>{message}</level>"
+            if not service
+            else "<green>{time:HH:mm:ss.SSS}</green> | <level>{level: <8}</level> | <blue>{extra[service]}</blue> | <cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - <level>{message}</level>"
         )
-        logger.add(sys.stdout, level=level_env, format=fmt)
+        logger.add(sys.stdout, level=level_env, format=fmt, colorize=True)
 
     if service:
         logger.configure(extra={"service": service})

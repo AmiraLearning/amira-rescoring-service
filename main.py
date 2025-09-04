@@ -81,8 +81,19 @@ def run(
         "--use-local-activity",
         help="Use local activities.parquet instead of GraphQL",
     ),
+    json_logs: bool = typer.Option(
+        False,
+        "--json-logs",
+        help="Output logs in JSON format instead of human-readable format",
+    ),
 ) -> None:
     """Run the CPU-GPU Parallel LNS Scoring Pipeline."""
+    # Set environment variable before setup_logging if json_logs is requested
+    if json_logs:
+        import os
+
+        os.environ["LOG_JSON"] = "true"
+
     setup_logging(service="cli")
     typer.echo("Scoring Pipeline Runner\n========================")
     typer.echo("This script runs the scoring pipeline for letter names and sounds.\n")

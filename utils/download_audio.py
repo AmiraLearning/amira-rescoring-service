@@ -10,7 +10,7 @@ from pathlib import Path
 from loguru import logger
 from pydantic import BaseModel
 
-from infra.s3_client import HighPerformanceS3Config, ProductionS3Client
+from infra.s3_client import HighPerformanceS3Config, ProductionS3Client, S3UploadRequest
 from utils.config import RECONSTITUTED_PHRASE_AUDIO
 from utils.phrase_slicing import PhraseSlicer
 from utils.s3_audio_operations import (
@@ -200,7 +200,9 @@ async def _upload_sliced_audio_to_s3(
             / wav_file.name
         )
 
-        upload_operations.append((str(wav_file), bucket_name, str(s3_path)))
+        upload_operations.append(
+            S3UploadRequest(local_path=str(wav_file), bucket=bucket_name, key=str(s3_path))
+        )
 
     if upload_operations:
         try:

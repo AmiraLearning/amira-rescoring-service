@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Self
+from typing import TYPE_CHECKING, Any, Self
 
 import numpy as np
 from pydantic import BaseModel, ConfigDict, Field, field_serializer, model_validator
 
 if TYPE_CHECKING:  # pragma: no cover - for type checkers only
-    import torch
+    pass
 
 from .constants import DeviceType
 
@@ -74,7 +74,7 @@ class PreprocessResult(BaseModel):
         preprocess_time_ms: The time taken to preprocess the audio.
     """
 
-    input_values: torch.Tensor
+    input_values: Any  # Will be torch.Tensor at runtime
     preprocess_time_ms: float
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
@@ -87,7 +87,7 @@ class InferenceResult(BaseModel):
         model_inference_time_ms: The time taken to run the model inference.
     """
 
-    logits: torch.Tensor
+    logits: Any  # Will be torch.Tensor at runtime
     model_inference_time_ms: float
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
@@ -104,7 +104,7 @@ class DecodePredictionResult(BaseModel):
 
     transcription: str
     pred_tokens: list[str]
-    predicted_ids: torch.Tensor
+    predicted_ids: Any  # Will be torch.Tensor at runtime
     decode_time_ms: float
     model_config = ConfigDict(arbitrary_types_allowed=True)
 

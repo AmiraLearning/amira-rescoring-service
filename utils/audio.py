@@ -12,7 +12,7 @@ import torchaudio
 from loguru import logger
 from pydantic import BaseModel, ConfigDict, Field
 
-from infra.s3_client import ProductionS3Client, S3OperationResult
+from infra.s3_client import ProductionS3Client, S3DownloadRequest, S3OperationResult
 from src.pipeline.exceptions import AudioProcessingError
 from utils.config import S3_SPEECH_ROOT_PROD
 from utils.extract_phrases import extract_phrase_slices_tutor_style
@@ -63,7 +63,7 @@ async def download_complete_audio_from_s3(
         s3_key: str = f"{activity_id}/complete.wav"
 
         result: list[S3OperationResult] = await s3_client.download_files_batch(
-            [(bucket, s3_key, str(complete_audio_path))]
+            [S3DownloadRequest(bucket=bucket, key=s3_key, local_path=str(complete_audio_path))]
         )
 
         if result and result[0].success:

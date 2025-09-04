@@ -1,5 +1,5 @@
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Final
 
@@ -7,6 +7,8 @@ import yaml
 from loguru import logger
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from src.pipeline.config_validator import ConfigurationValidator
+from src.pipeline.exceptions import ConfigurationError
 from src.pipeline.inference.models import W2VConfig
 
 DEFAULT_CONFIG_PATH: Final[str] = "config_parallel.yaml"
@@ -26,10 +28,9 @@ if os.getenv("ENABLE_FILE_LOG", "0") == "1":
 class PipelineMetadataConfig(BaseModel):
     """Pipeline metadata configuration."""
 
-    # TODO no hardcoding dates
-
-    processing_start_time: datetime = datetime(2025, 1, 9, 0, 0, 0)
-    processing_end_time: datetime = datetime(2025, 1, 10, 23, 59, 59)
+    # Default to last 24 hours if not specified
+    processing_start_time: datetime | None = None
+    processing_end_time: datetime | None = None
     activity_file: str | None = None
     activity_id: str | None = None
     limit: int = 5
@@ -118,8 +119,25 @@ class PipelineConfig(BaseModel):
     @model_validator(mode="after")
     def validate_config_consistency(self) -> "PipelineConfig":
         """Validate configuration consistency across fields."""
-        metadata = self.metadata
-        if metadata and metadata.processing_start_time >= metadata.processing_end_time:
+        # Set default date range if not specified
+        if self.metadata.processing_start_time is None:
+            # Default to last 24 hours
+            self.metadata.processing_end_time = datetime.now()
+            self.metadata.processing_start_time = self.metadata.processing_end_time - timedelta(
+                hours=24
+            )
+            logger.info(
+                f"Using default date range: last 24 hours "
+                f"({self.metadata.processing_start_time} to {self.metadata.processing_end_time})"
+            )
+        elif self.metadata.processing_end_time is None:
+            # If only start time is specified, use 24 hours from start
+            self.metadata.processing_end_time = self.metadata.processing_start_time + timedelta(
+                hours=24
+            )
+
+        # Validate the date range
+        if self.metadata.processing_start_time >= self.metadata.processing_end_time:
             raise ValueError("processing_start_time must be before processing_end_time")
         return self
 
@@ -204,10 +222,42 @@ def load_config(*, config_path: str | None = None) -> PipelineConfig:
             "ALIGNER_CONFIDENCE_WEIGHTING", "false"
         ).lower() in {"1", "true", "yes", "on"}
 
-    # Validate runtime requirements
+    # Override date range from environment if present
+    if os.getenv("PROCESSING_START_TIME"):
+        try:
+            from dateutil import parser  # type: ignore[import-untyped]
+
+            config.metadata.processing_start_time = parser.parse(os.getenv("PROCESSING_START_TIME"))
+        except Exception as e:
+            logger.warning(f"Failed to parse PROCESSING_START_TIME: {e}")
+
+    if os.getenv("PROCESSING_END_TIME"):
+        try:
+            config.metadata.processing_end_time = parser.parse(os.getenv("PROCESSING_END_TIME"))
+        except Exception as e:
+            logger.warning(f"Failed to parse PROCESSING_END_TIME: {e}")
+
+    if os.getenv("PROCESSING_HOURS_AGO"):
+        try:
+            hours_ago = int(os.getenv("PROCESSING_HOURS_AGO", "0"))
+            config.metadata.processing_end_time = datetime.now()
+            config.metadata.processing_start_time = config.metadata.processing_end_time - timedelta(
+                hours=hours_ago
+            )
+            logger.info(
+                f"Using PROCESSING_HOURS_AGO={hours_ago}: {config.metadata.processing_start_time} to {config.metadata.processing_end_time}"
+            )
+        except Exception as e:
+            logger.warning(f"Failed to parse PROCESSING_HOURS_AGO: {e}")
+
+    # Perform comprehensive validation
     try:
         config.validate_runtime_requirements()
+        ConfigurationValidator.validate_full_configuration(config)
+    except ConfigurationError as e:
+        logger.error(f"Configuration validation failed: {e}")
+        raise
     except Exception as e:
-        logger.warning(f"Configuration validation failed: {e}")
+        logger.warning(f"Non-critical configuration validation warning: {e}")
 
     return config

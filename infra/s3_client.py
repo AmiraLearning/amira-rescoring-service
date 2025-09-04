@@ -60,6 +60,40 @@ class S3Operation:
 
 
 @dataclass
+class S3UploadRequest:
+    """Request for S3 upload operation."""
+
+    local_path: str
+    bucket: str
+    key: str
+
+
+@dataclass
+class S3DownloadRequest:
+    """Request for S3 download operation."""
+
+    bucket: str
+    key: str
+    local_path: str
+
+
+@dataclass
+class S3ListRequest:
+    """Request for S3 list operation."""
+
+    bucket: str
+    prefix: str
+
+
+@dataclass
+class S3HeadRequest:
+    """Request for S3 head operation."""
+
+    bucket: str
+    key: str
+
+
+@dataclass
 class S3OperationResult:
     """Result of an S3 operation."""
 
@@ -438,14 +472,14 @@ class ProductionS3Client:
 
     async def download_files_batch(
         self,
-        operations: list[tuple[str, str, str]],
+        operations: list[S3DownloadRequest],
         progress: Progress | None = None,
         task_id: Any | None = None,
     ) -> list[S3OperationResult]:
         """Download multiple files concurrently with optimal performance.
 
         Args:
-            operations: List of (bucket, key, local_path) tuples.
+            operations: List of S3DownloadRequest objects.
             progress: Rich progress bar object.
             task_id: Task ID for the progress bar.
 
@@ -461,9 +495,14 @@ class ProductionS3Client:
             operation_count=len(operations),
         )
 
-        s3_operations = [
-            S3Operation(bucket=bucket, key=key, local_path=local_path, operation_type="download")
-            for bucket, key, local_path in operations
+        s3_operations: list[S3Operation] = [
+            S3Operation(
+                bucket=op.bucket,
+                key=op.key,
+                local_path=op.local_path,
+                operation_type="download",
+            )
+            for op in operations
         ]
 
         tasks: list[Awaitable[S3OperationResult]] = [
@@ -592,14 +631,13 @@ class ProductionS3Client:
                 duration_ms=(time.time() - start_time) * 1000,
             )
 
-    # TODO nuke this tuple nonsenses
     async def upload_files_batch(
-        self, operations: list[tuple[str, str, str]]
+        self, operations: list[S3UploadRequest]
     ) -> list[S3OperationResult]:
         """Upload multiple files concurrently with optimal performance.
 
         Args:
-            operations: List of (local_path, bucket, key) tuples.
+            operations: List of S3UploadRequest objects.
 
         Returns:
             List of operation results.
@@ -614,8 +652,13 @@ class ProductionS3Client:
         )
 
         s3_operations: list[S3Operation] = [
-            S3Operation(bucket=bucket, key=key, local_path=local_path, operation_type="upload")
-            for local_path, bucket, key in operations
+            S3Operation(
+                bucket=op.bucket,
+                key=op.key,
+                local_path=op.local_path,
+                operation_type="upload",
+            )
+            for op in operations
         ]
 
         tasks: list[Awaitable[S3OperationResult]] = [
@@ -791,11 +834,11 @@ class ProductionS3Client:
                 await client.abort_multipart_upload(Bucket=bucket, Key=key, UploadId=upload_id)
             raise
 
-    async def list_objects_batch(self, requests: list[tuple[str, str]]) -> list[S3OperationResult]:
+    async def list_objects_batch(self, requests: list[S3ListRequest]) -> list[S3OperationResult]:
         """List objects from multiple buckets/prefixes concurrently.
 
         Args:
-            requests: List of (bucket, prefix) tuples.
+            requests: List of S3ListRequest objects.
 
         Returns:
             List of operation results with object listings.
@@ -804,8 +847,8 @@ class ProductionS3Client:
             return []
 
         operations: list[S3Operation] = [
-            S3Operation(bucket=bucket, key=prefix, operation_type="list")
-            for bucket, prefix in requests
+            S3Operation(bucket=req.bucket, key=req.prefix, operation_type="list")
+            for req in requests
         ]
 
         tasks: list[Awaitable[S3OperationResult]] = [
@@ -867,11 +910,11 @@ class ProductionS3Client:
                     duration_ms=duration * 1000,
                 )
 
-    async def head_objects_batch(self, requests: list[tuple[str, str]]) -> list[S3OperationResult]:
+    async def head_objects_batch(self, requests: list[S3HeadRequest]) -> list[S3OperationResult]:
         """Get metadata for multiple objects concurrently.
 
         Args:
-            requests: List of (bucket, key) tuples.
+            requests: List of S3HeadRequest objects.
 
         Returns:
             List of operation results with object metadata.
@@ -880,7 +923,7 @@ class ProductionS3Client:
             return []
 
         operations: list[S3Operation] = [
-            S3Operation(bucket=bucket, key=key, operation_type="head") for bucket, key in requests
+            S3Operation(bucket=req.bucket, key=req.key, operation_type="head") for req in requests
         ]
 
         tasks: list[Awaitable[S3OperationResult]] = [

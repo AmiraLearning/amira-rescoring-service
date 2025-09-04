@@ -12,7 +12,13 @@ from loguru import logger
 from pydantic import BaseModel
 from tenacity import AsyncRetrying, before_sleep_log, stop_after_attempt, wait_random_exponential
 
-from infra.s3_client import ProductionS3Client, S3OperationResult
+from infra.s3_client import (
+    ProductionS3Client,
+    S3DownloadRequest,
+    S3ListRequest,
+    S3OperationResult,
+    S3UploadRequest,
+)
 
 
 class S3Object(BaseModel):
@@ -52,7 +58,9 @@ async def s3_find(
         before_sleep=before_sleep_log(logger, "warning"),
     ):
         with attempt:
-            operations: list[tuple[str, str]] = [(source_bucket, prefix_path)]
+            operations: list[S3ListRequest] = [
+                S3ListRequest(bucket=source_bucket, prefix=prefix_path)
+            ]
             results = await s3_client.list_objects_batch(operations)
             result = results[0] if results else None
 
@@ -147,7 +155,9 @@ async def load_activity_manifest(
 
     try:
         temp_path: str = f"/tmp/{manifest_key.replace('/', '_')}"
-        operations: list[tuple[str, str, str]] = [(bucket, manifest_key, temp_path)]
+        operations: list[S3DownloadRequest] = [
+            S3DownloadRequest(bucket=bucket, key=manifest_key, local_path=temp_path)
+        ]
         results: list[S3OperationResult] = await s3_client.download_files_batch(operations)
         result: S3OperationResult | None = results[0] if results else None
 
@@ -191,7 +201,9 @@ async def write_activity_manifest(
         temp_file: Path = Path("/tmp") / f"temp_{manifest_key.replace('/', '_')}"
         temp_file.write_bytes(content)
 
-        operations: list[tuple[str, str, str]] = [(str(temp_file), bucket, manifest_key)]
+        operations: list[S3UploadRequest] = [
+            S3UploadRequest(local_path=str(temp_file), bucket=bucket, key=manifest_key)
+        ]
         results: list[S3OperationResult] = await s3_client.upload_files_batch(operations)
         result: S3OperationResult | None = results[0] if results else None
 
@@ -230,10 +242,10 @@ async def download_segment_files(
     bucket: str = bucket_for(stage_source=stage_source)
     _ensure_parent_dir(path=destination_path)
 
-    operations: list[tuple[str, str, str]] = []
+    operations: list[S3DownloadRequest] = []
     for s3_key in segment_file_names:
         local_file: Path = Path(destination_path) / Path(s3_key).name
-        operations.append((bucket, s3_key, str(local_file)))
+        operations.append(S3DownloadRequest(bucket=bucket, key=s3_key, local_path=str(local_file)))
 
     try:
         results: list[S3OperationResult] = await s3_client.download_files_batch(operations)
