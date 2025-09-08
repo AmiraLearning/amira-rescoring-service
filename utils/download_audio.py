@@ -21,7 +21,7 @@ from utils.s3_audio_operations import (
 )
 
 
-def resolve_bucket(stage_source: bool) -> str:
+def resolve_bucket(*, stage_source: bool) -> str:
     """Resolve S3 bucket name based on environment (delegates to shared helper)."""
     return _bucket_for(stage_source=stage_source)
 

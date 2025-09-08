@@ -178,7 +178,10 @@ def _get_cached_engine(config: PipelineConfig) -> Any:
 
 
 async def process_activity(
-    activity_id: str, *, correlation_id: str | None = None
+    activity_id: str,
+    *,
+    correlation_id: str | None = None,
+    story_id: str | None = None,
 ) -> LambdaProcessingResult:
     start_time = time.time()
     apply_lambda_optimizations()
@@ -189,6 +192,11 @@ async def process_activity(
     config.metadata.activity_id = activity_id
     if correlation_id:
         config.metadata.correlation_id = correlation_id
+    if story_id is not None:
+        setattr(config.metadata, "story_id", story_id)
+    # Optional fields for logging/metrics only
+    # We do not need to call GraphQL when provided by the message
+    # Keep GraphQL path available only when SKIP_ACTIVITY_QUERY=false for local/manual use
 
     # Get or create cached engine for warm starts
     cached_engine = _get_cached_engine(config)
@@ -270,11 +278,14 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
                     body_text = record.get("body", "{}")
                     body = json.loads(body_text) if isinstance(body_text, str) else body_text
                     activity_id = body.get("activityId")
+                    story_id = body.get("storyId")
                     if not activity_id:
                         raise ValueError("Missing activityId")
                     message_id = record.get("messageId")
                     with logger.contextualize(correlationId=message_id, activityId=activity_id):
-                        result = await process_activity(activity_id, correlation_id=message_id)
+                        result = await process_activity(
+                            activity_id, correlation_id=message_id, story_id=story_id
+                        )
                     return True, result.processing_time, None
                 except (ValueError, KeyError, json.JSONDecodeError) as e:
                     logger.error(

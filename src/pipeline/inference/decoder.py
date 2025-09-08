@@ -16,7 +16,7 @@ from .phonetics import LongestMatchResult, PhoneticTrie
 _cached_phonetic_trie: PhoneticTrie | None = None
 
 
-def get_cached_phonetic_trie(phonetic_elements: list[str] | None = None) -> PhoneticTrie:
+def get_cached_phonetic_trie(*, phonetic_elements: list[str] | None = None) -> PhoneticTrie:
     """Get or create a cached PhoneticTrie instance for Lambda optimization."""
     global _cached_phonetic_trie
     target_elements = phonetic_elements or VALID_PHONETIC_ELEMENTS
@@ -41,7 +41,7 @@ class PhonemeDecoder:
     """
 
     def __init__(self, *, phonetic_elements: list[str] | None = None) -> None:
-        self._phonetic_trie = get_cached_phonetic_trie(phonetic_elements)
+        self._phonetic_trie = get_cached_phonetic_trie(phonetic_elements=phonetic_elements)
 
     def decode(self, *, pred_tokens: list[str], max_probs: np.ndarray | None) -> PhoneticTranscript:
         """Decode predicted tokens to a phonetic transcript.

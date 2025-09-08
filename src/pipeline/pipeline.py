@@ -41,6 +41,7 @@ from src.pipeline.query import (
 )
 from utils.config import PipelineConfig
 from utils.logging import emit_emf_metric
+from utils.standardized_metrics import emit_standardized_metric
 
 from .inference.metrics_constants import (
     DIM_ACTIVITY_ID,
@@ -63,7 +64,7 @@ class ActivityFields(StrEnum):
     RECORDS = "records"
 
 
-def convert_grouped_data_to_phrases(grouped_data: Any) -> list[dict[str, Any]]:
+def convert_grouped_data_to_phrases(*, grouped_data: Any) -> list[dict[str, Any]]:
     """
     Convert grouped DataFrame data to list of phrase dictionaries.
 
@@ -73,6 +74,7 @@ def convert_grouped_data_to_phrases(grouped_data: Any) -> list[dict[str, Any]]:
     Returns:
         List of phrase dictionaries suitable for ActivityInput
     """
+    # TODO i hate hasattr
     data_dict = grouped_data.to_dicts() if hasattr(grouped_data, "to_dicts") else grouped_data
     if isinstance(data_dict, dict):
         phrase_keys = [k for k in data_dict.keys() if k != "activityId"]
@@ -171,8 +173,33 @@ async def load_and_prepare_data(
         )
     )
 
-    activity_df_fallback: pl.DataFrame = await load_activity_data(config=config)
-    story_phrase_df_fallback: pl.DataFrame = load_story_phrase_data(config=config)
+    # TODO do we actually need two paths here?
+    # Fast path: if single activity and SKIP_ACTIVITY_QUERY=true, synthesize a minimal activity_df
+    skip_query: bool = os.getenv("SKIP_ACTIVITY_QUERY", "false").lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+    single_activity: str | None = getattr(config.metadata, "activity_id", None)
+    if skip_query and single_activity:
+        story_phrase_df_fallback: pl.DataFrame = load_story_phrase_data(config=config)
+        story_id_hint = getattr(config.metadata, "story_id", None)
+        activity_df_fallback = pl.DataFrame(
+            {
+                "activityId": [single_activity],
+                "storyId": [
+                    story_id_hint
+                    if story_id_hint is not None
+                    else story_phrase_df_fallback.select(pl.col("storyId").first()).to_series()[0]
+                    if "storyId" in story_phrase_df_fallback.columns
+                    else None
+                ],
+            }
+        )
+    else:
+        activity_df_fallback = await load_activity_data(config=config)
+        story_phrase_df_fallback = load_story_phrase_data(config=config)
     phrase_df_fallback: pl.DataFrame = await merge_activities_with_phrases(
         activity_df=activity_df_fallback, story_phrase_df=story_phrase_df_fallback
     )
@@ -273,8 +300,8 @@ async def process_activity(
         phrases_input=phrase_inputs, activity_id=activity_id, config=config
     )
 
-    all_elements = []
-    all_confidences = []
+    all_elements: list[str] = []
+    all_confidences: list[float] = []
 
     engine_local = engine
     if engine_local is None:
@@ -291,7 +318,7 @@ async def process_activity(
             logger.warning(f"Failed to initialize inference engine on-demand: {e}")
             engine_local = None
 
-    correlation_id = (
+    correlation_id: str | None = (
         str(config.metadata.correlation_id)
         if hasattr(config, "metadata")
         and hasattr(config.metadata, "correlation_id")
@@ -397,8 +424,8 @@ def perform_alignment(
             "total_alignments": 0,
             "alignment_accuracy": 0.0,
         }
-    all_expected_text = []
-    all_reference_phonemes = []
+    all_expected_text: list[str] = []
+    all_reference_phonemes: list[str] = []
 
     for phrase in activity_outputs.phrases:
         expected_text: list[str] = (
@@ -473,7 +500,7 @@ def perform_alignment(
     logger.info(f"Alignment errors by phrase: {phrase_errors_nested}")
 
     # Validate alignment array lengths match expected (should now be guaranteed)
-    expected_total_length = len(all_expected_text)
+    expected_total_length: int = len(all_expected_text)
     actual_total_length = len(flattened_errors) if flattened_errors else 0
 
     if actual_total_length != expected_total_length:
@@ -498,18 +525,17 @@ def perform_alignment(
         "alignment_accuracy": accuracy,
     }
 
-    try:
-        emit_emf_metric(
-            namespace=NS_ALIGNMENT,
-            metrics={
-                MET_ALIGN_ERROR_COUNT: float(error_count),
-                MET_ALIGN_TOTAL: float(total_count),
-                MET_ALIGN_ACCURACY: float(accuracy),
-            },
-            dimensions={},
-        )
-    except Exception as e:
-        logger.debug(f"Metrics emission failed (non-fatal): {type(e).__name__}: {e}")
+    # Emit standardized metrics with consistent dimensions for better dashboarding
+    emit_standardized_metric(
+        namespace=NS_ALIGNMENT,
+        metrics={
+            MET_ALIGN_ERROR_COUNT: float(error_count),
+            MET_ALIGN_TOTAL: float(total_count),
+            MET_ALIGN_ACCURACY: float(accuracy),
+        },
+        activity_id=None,  # activity_id not available in this context
+        additional_dimensions={"AlignmentType": "phoneme_accuracy"},
+    )
 
     return field_values
 
@@ -589,16 +615,17 @@ async def process_single_activity(
             else str(activity_id)
         )
         phrase_count: int = len(processed_activity.activity_outputs.phrases)
-        emit_emf_metric(
+        emit_standardized_metric(
             namespace=NS_ACTIVITY,
             metrics={
                 MET_ACTIVITY_TOTAL_MS: total_ms,
                 MET_ACTIVITY_PHRASES: float(phrase_count),
                 MET_ACTIVITY_SUCCESS: 1.0,
             },
-            dimensions={
-                DIM_ACTIVITY_ID: str(activity_id),
-                DIM_CORRELATION_ID: correlation_id,
+            activity_id=str(activity_id),
+            additional_dimensions={
+                "PhraseCount": str(phrase_count),
+                "ProcessingStatus": "success",
             },
         )
     except Exception as e:
@@ -669,7 +696,7 @@ async def run_activity_pipeline(
 
     semaphore = asyncio.Semaphore(max_concurrency)
 
-    async def _run_one(idx: int, activity_id: str) -> dict[str, Any]:
+    async def _run_one(*, idx: int, activity_id: str) -> dict[str, Any]:
         async with semaphore:
             if idx < len(records_list):
                 return await process_single_activity(
@@ -681,7 +708,7 @@ async def run_activity_pipeline(
             logger.warning(f"No records found for activity {activity_id}")
             return {}
 
-    tasks = [_run_one(idx, aid) for idx, aid in enumerate(activity_ids)]
+    tasks = [_run_one(idx=idx, activity_id=aid) for idx, aid in enumerate(activity_ids)]
     results = await asyncio.gather(*tasks, return_exceptions=True)
     for r in results:
         if isinstance(r, dict) and r:

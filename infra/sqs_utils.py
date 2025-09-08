@@ -9,6 +9,9 @@ class JobMessage(BaseModel):
     """Job message."""
 
     activity_id: str
+    story_id: str | None = None
+    student_id: str | None = None
+    created_at: str | None = None
     source: str
     timestamp: int | None = Field(default_factory=lambda: int(time.time()))
 

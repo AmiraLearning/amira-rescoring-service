@@ -20,7 +20,7 @@ class ConfigurationValidator:
             ConfigurationError: If required environment variables are missing or invalid.
         """
         critical_env_vars: list[str] = []
-        optional_env_vars = [
+        optional_env_vars: list[tuple[str, str]] = [
             ("AWS_REGION", "us-east-2"),
             ("AWS_PROFILE", "legacy"),
             ("MAX_ACTIVITY_CONCURRENCY", "4"),
@@ -28,8 +28,7 @@ class ConfigurationValidator:
             ("MAX_CONCURRENT_UPLOADS", "32"),
         ]
 
-        # Check critical variables (none currently required)
-        missing_critical = []
+        missing_critical: list[str] = []
         for var in critical_env_vars:
             if not os.getenv(var):
                 missing_critical.append(var)
@@ -39,13 +38,12 @@ class ConfigurationValidator:
                 f"Missing required environment variables: {', '.join(missing_critical)}"
             )
 
-        # Warn about optional variables using defaults
         for var, default in optional_env_vars:
             if not os.getenv(var):
                 logger.debug(f"Environment variable {var} not set, using default: {default}")
 
     @staticmethod
-    def validate_aws_configuration(config: Any) -> None:
+    def validate_aws_configuration(*, config: Any) -> None:
         """Validate AWS configuration settings.
 
         Args:
@@ -59,15 +57,12 @@ class ConfigurationValidator:
 
         aws = config.aws
 
-        # Validate region
         if not aws.aws_region or not aws.aws_region.strip():
             raise ConfigurationError("AWS region must be specified")
 
-        # Validate S3 bucket
         if not aws.s3_bucket or not aws.s3_bucket.strip():
             raise ConfigurationError("S3 bucket must be specified")
 
-        # Validate Athena settings
         if not aws.athena_schema or not aws.athena_schema.strip():
             raise ConfigurationError("Athena schema must be specified")
 
@@ -76,7 +71,7 @@ class ConfigurationValidator:
         )
 
     @staticmethod
-    def validate_inference_configuration(config: Any) -> None:
+    def validate_inference_configuration(*, config: Any) -> None:
         """Validate inference engine configuration.
 
         Args:
@@ -91,7 +86,6 @@ class ConfigurationValidator:
         w2v = config.w2v2
 
         if w2v.use_triton:
-            # Validate Triton-specific settings
             if not w2v.triton_url or not w2v.triton_url.strip():
                 raise ConfigurationError("triton_url is required when use_triton is True")
 
@@ -105,11 +99,9 @@ class ConfigurationValidator:
                 f"Triton configuration validated: {w2v.triton_url} with model {w2v.triton_model}"
             )
         else:
-            # Validate local model settings
             if not w2v.model_path or not w2v.model_path.strip():
                 raise ConfigurationError("model_path is required when use_triton is False")
 
-            # Check if model path exists (warning only)
             model_path = Path(w2v.model_path)
             if not model_path.exists():
                 logger.warning(f"Model path does not exist: {w2v.model_path}")
@@ -117,7 +109,7 @@ class ConfigurationValidator:
             logger.info(f"Local model configuration validated: {w2v.model_path}")
 
     @staticmethod
-    def validate_audio_configuration(config: Any) -> None:
+    def validate_audio_configuration(*, config: Any) -> None:
         """Validate audio processing configuration.
 
         Args:
@@ -131,13 +123,11 @@ class ConfigurationValidator:
 
         audio = config.audio
 
-        # Validate audio directory
         try:
             audio.audio_dir.mkdir(parents=True, exist_ok=True)
         except Exception as e:
             raise ConfigurationError(f"Cannot create audio directory {audio.audio_dir}: {e}")
 
-        # Validate padded seconds range
         if audio.padded_seconds < 0 or audio.padded_seconds > 30:
             raise ConfigurationError("padded_seconds must be between 0 and 30")
 
@@ -146,7 +136,7 @@ class ConfigurationValidator:
         )
 
     @staticmethod
-    def validate_metadata_configuration(config: Any) -> None:
+    def validate_metadata_configuration(*, config: Any) -> None:
         """Validate metadata configuration including date ranges.
 
         Args:
@@ -161,7 +151,6 @@ class ConfigurationValidator:
 
         metadata = config.metadata
 
-        # Validate date presence and range
         start = metadata.processing_start_time
         end = metadata.processing_end_time
 
@@ -175,11 +164,9 @@ class ConfigurationValidator:
         if start is not None and end is not None and start >= end:
             raise ConfigurationError("processing_start_time must be before processing_end_time")
 
-        # Validate limit
         if metadata.limit <= 0:
             raise ConfigurationError("limit must be a positive integer")
 
-        # Warn if using default dates (likely hardcoded)
         from datetime import datetime
 
         default_start = datetime(2025, 1, 9, 0, 0, 0)
@@ -199,7 +186,7 @@ class ConfigurationValidator:
         )
 
     @staticmethod
-    def validate_full_configuration(config: Any) -> None:
+    def validate_full_configuration(*, config: Any) -> None:
         """Perform comprehensive configuration validation.
 
         Args:
@@ -212,12 +199,11 @@ class ConfigurationValidator:
 
         try:
             ConfigurationValidator.validate_environment_variables()
-            ConfigurationValidator.validate_aws_configuration(config)
-            ConfigurationValidator.validate_inference_configuration(config)
-            ConfigurationValidator.validate_audio_configuration(config)
-            ConfigurationValidator.validate_metadata_configuration(config)
+            ConfigurationValidator.validate_aws_configuration(config=config)
+            ConfigurationValidator.validate_inference_configuration(config=config)
+            ConfigurationValidator.validate_audio_configuration(config=config)
+            ConfigurationValidator.validate_metadata_configuration(config=config)
 
-            # Additional cross-configuration validations
             if hasattr(config, "cached") and config.cached.story_phrase_path:
                 if not config.cached.story_phrase_path.exists():
                     logger.warning(

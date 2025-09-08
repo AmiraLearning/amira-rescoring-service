@@ -4,6 +4,7 @@ import os
 import time
 from typing import Any
 
+import aioboto3
 from pydantic import BaseModel, field_validator
 
 from infra.sqs_utils import JobMessage, SQSEnqueuer
@@ -27,32 +28,32 @@ class LambdaResponse(BaseModel):
 
 
 def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
-    handler_start = time.time()
+    handler_start: float = time.time()
 
     try:
         if "body" in event and isinstance(event["body"], str):
-            payload = json.loads(event["body"])
+            payload: dict[str, Any] = json.loads(event["body"])
         else:
             payload = event
 
-        request = ManualEnqueueRequest.model_validate(payload)
+        request: ManualEnqueueRequest = ManualEnqueueRequest.model_validate(payload)
 
-        messages = [
+        messages: list[JobMessage] = [
             JobMessage(activity_id=activity_id, source=request.source)
             for activity_id in request.activity_ids
         ]
 
-        import aioboto3
-
         async def enqueue_messages() -> int:
             session = aioboto3.Session()
             async with session.client("sqs") as sqs_client:
-                enqueuer = SQSEnqueuer(client=sqs_client, queue_url=os.environ["JOBS_QUEUE_URL"])
+                enqueuer: SQSEnqueuer = SQSEnqueuer(
+                    client=sqs_client, queue_url=os.environ["JOBS_QUEUE_URL"]
+                )
                 return await enqueuer.enqueue_batch(messages)
 
-        count = asyncio.run(enqueue_messages())
+        count: int = asyncio.run(enqueue_messages())
 
-        response = LambdaResponse(
+        response: LambdaResponse = LambdaResponse(
             status_code=200,
             body=json.dumps(
                 {

@@ -267,7 +267,7 @@ def load_config(*, config_path: str | None = None) -> PipelineConfig:
 
     try:
         config.validate_runtime_requirements()
-        ConfigurationValidator.validate_full_configuration(config)
+        ConfigurationValidator.validate_full_configuration(config=config)
     except ConfigurationError as e:
         logger.error(f"Configuration validation failed: {e}")
         raise

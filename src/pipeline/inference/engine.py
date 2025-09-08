@@ -49,7 +49,7 @@ _ENGINE_CACHE_MAX: int = int(os.getenv("ENGINE_CACHE_MAX", str(ENGINE_CACHE_MAX_
 class ThreadSafeLRUCache:
     """Thread-safe LRU cache for inference engines."""
 
-    def __init__(self, maxsize: int = 2):
+    def __init__(self, *, maxsize: int = 2):
         self.maxsize = maxsize
         self.cache: dict[str, Any] = {}
         self.access_order: list[str] = []
@@ -267,14 +267,19 @@ class Wav2Vec2InferenceEngine:
             except Exception as e:
                 logger.warning(f"torch.compile unavailable or failed; continuing without it: {e}")
 
+        # CPU quantization with intelligent thresholding
         if self._device.type == "cpu" and os.getenv("W2V2_QUANTIZE", "false").lower() == "true":
-            try:
-                self._model = torch.quantization.quantize_dynamic(
-                    self._model, {torch.nn.Linear}, dtype=torch.qint8
-                )
-                logger.info("Applied dynamic quantization to W2V2 model (CPU)")
-            except Exception as e:
-                logger.warning(f"Dynamic quantization failed, continuing without it: {e}")
+            should_quantize = self._should_enable_quantization()
+            if should_quantize:
+                try:
+                    self._model = torch.quantization.quantize_dynamic(
+                        self._model, {torch.nn.Linear}, dtype=torch.qint8
+                    )
+                    logger.info("Applied dynamic quantization to W2V2 model (CPU)")
+                except Exception as e:
+                    logger.warning(f"Dynamic quantization failed, continuing without it: {e}")
+            else:
+                logger.info("Skipping quantization due to system resource constraints")
 
         self._model.eval()
         logger.info(f"Model loaded on {self._device}")
@@ -458,6 +463,59 @@ class Wav2Vec2InferenceEngine:
             max_probs=max_probs,
             confidence_time_ms=(time.time() - conf_start) * MS_PER_SECOND,
         )
+
+    def _should_enable_quantization(self) -> bool:
+        """Determine if quantization should be enabled based on system resources.
+
+        Returns:
+            True if quantization should be enabled, False otherwise
+        """
+        try:
+            import psutil
+
+            # Check CPU core count
+            cpu_count = psutil.cpu_count(logical=True) or 1
+            if cpu_count < self._w2v_config.quantize_min_cpu_cores:
+                logger.info(
+                    f"CPU core count ({cpu_count}) below minimum threshold "
+                    f"({self._w2v_config.quantize_min_cpu_cores}) for quantization"
+                )
+                return False
+
+            # Check available memory
+            if self._w2v_config.quantize_skip_on_low_memory:
+                memory = psutil.virtual_memory()
+                available_gb = memory.available / (1024**3)
+                min_memory_gb = 4.0
+
+                if available_gb < min_memory_gb:
+                    logger.info(
+                        f"Available memory ({available_gb:.1f}GB) below minimum threshold "
+                        f"({min_memory_gb}GB) for quantization"
+                    )
+                    return False
+
+            # Check if we're in a memory-constrained environment (Lambda, etc.)
+            lambda_memory = os.getenv("AWS_LAMBDA_FUNCTION_MEMORY_SIZE")
+            if lambda_memory:
+                memory_mb = int(lambda_memory)
+                if memory_mb < 4096:  # Less than 4GB
+                    logger.info(
+                        f"Lambda memory ({memory_mb}MB) too low for quantization, "
+                        "skipping to prevent OOM"
+                    )
+                    return False
+
+            return True
+
+        except ImportError:
+            logger.warning("psutil not available, proceeding with quantization")
+            return True
+        except Exception as e:
+            logger.warning(
+                f"Error checking system resources for quantization: {e}, proceeding anyway"
+            )
+            return True
 
     def _log_gpu_memory_usage(self) -> None:
         """Log current GPU memory usage statistics.

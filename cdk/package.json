@@ -11,24 +11,29 @@
     "clean": "rm -rf dist cdk.out",
     "lint": "eslint . --ext .ts",
     "lint:fix": "eslint . --ext .ts --fix",
-    "deploy": "cdk deploy -a 'node dist/bin/amira-letter-scoring.js'",
-    "destroy": "cdk destroy -a 'node dist/bin/amira-letter-scoring.js'",
-    "deploy-parallel": "cdk deploy -a 'node dist/bin/amira-lambda-parallel.js' AmiraLambdaParallelStack",
-    "destroy-parallel": "cdk destroy -a 'node dist/bin/amira-lambda-parallel.js' AmiraLambdaParallelStack"
+    "deploy": "npm run build && npx cdk deploy -a 'node dist/bin/amira-letter-scoring.js'",
+    "destroy": "npm run build && npx cdk destroy -a 'node dist/bin/amira-letter-scoring.js'",
+    "deploy-parallel": "npm run build && npx cdk deploy -a 'node dist/bin/amira-lambda-parallel.js' AmiraLambdaParallelStack",
+    "destroy-parallel": "npm run build && npx cdk destroy -a 'node dist/bin/amira-lambda-parallel.js' AmiraLambdaParallelStack",
+    "diff": "npm run build && npx cdk diff",
+    "diff-parallel": "npm run build && npx cdk diff -a 'node dist/bin/amira-lambda-parallel.js' AmiraLambdaParallelStack",
+    "synth": "npm run build && npx cdk synth",
+    "synth-parallel": "npm run build && npx cdk synth -a 'node dist/bin/amira-lambda-parallel.js' AmiraLambdaParallelStack"
   },
   "devDependencies": {
     "@types/jest": "^29.5.5",
-    "@types/node": "20.6.2",
+    "@types/node": "^24.3.1",
     "@typescript-eslint/eslint-plugin": "^6.0.0",
     "@typescript-eslint/parser": "^6.0.0",
+    "cdk-nag": "^2.37.17",
     "eslint": "^8.0.0",
     "jest": "^29.7.0",
     "ts-jest": "^29.1.1",
-    "typescript": "~5.2.2"
+    "typescript": "^5.9.2"
   },
   "dependencies": {
-    "aws-cdk-lib": "2.212.0",
-    "constructs": "10.4.2",
+    "aws-cdk-lib": "^2.214.0",
+    "constructs": "^10.4.2",
     "source-map-support": "^0.5.21"
   }
 }

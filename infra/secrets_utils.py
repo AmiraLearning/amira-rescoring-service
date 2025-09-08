@@ -14,7 +14,7 @@ from utils.constants import APPSYNC_SECRET_PREFIX, DEFAULT_REGION, MAX_CACHE_SIZ
 MAX_CACHE_SIZE = MAX_CACHE_SIZE_DEFAULT
 
 
-def mask_sensitive_data(data: str, prefix_length: int = 4, suffix_length: int = 4) -> str:
+def mask_sensitive_data(*, data: str, prefix_length: int = 4, suffix_length: int = 4) -> str:
     """Mask sensitive data for logging, keeping only prefix and suffix.
 
     Args:
@@ -149,8 +149,8 @@ def get_appsync_credentials(*, env: str = "legacy") -> tuple[str, str]:
     try:
         secret_data: dict[str, Any] = get_secret(secret_name=secret_name)
         credentials = AppSyncCredentials.model_validate(secret_data)
-        masked_url = mask_sensitive_data(credentials.url, prefix_length=8, suffix_length=0)
-        masked_key = mask_sensitive_data(credentials.api_key)
+        masked_url = mask_sensitive_data(data=credentials.url, prefix_length=8, suffix_length=0)
+        masked_key = mask_sensitive_data(data=credentials.api_key)
         logger.debug(
             f"Retrieved AppSync credentials from Secrets Manager: {secret_name} (URL: {masked_url}, Key: {masked_key})"
         )
@@ -161,8 +161,10 @@ def get_appsync_credentials(*, env: str = "legacy") -> tuple[str, str]:
 
         env_credentials: AppSyncCredentials | None = _get_appsync_from_environment()
         if env_credentials:
-            masked_url = mask_sensitive_data(env_credentials.url, prefix_length=8, suffix_length=0)
-            masked_key = mask_sensitive_data(env_credentials.api_key)
+            masked_url = mask_sensitive_data(
+                data=env_credentials.url, prefix_length=8, suffix_length=0
+            )
+            masked_key = mask_sensitive_data(data=env_credentials.api_key)
             logger.info(
                 f"Using AppSync credentials from environment variables (URL: {masked_url}, Key: {masked_key})"
             )

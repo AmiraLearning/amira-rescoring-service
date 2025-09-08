@@ -40,7 +40,7 @@ LOWER PRIORITY STARTS HERE:
 **CI/CD & Quality**
 - Add tests for: complete-audio error flag path; AppSync success vs. failure logging; `utils/s3_audio_operations.s3_find` parsing; decoder robust mode.
 - Set coverage targets for core layers; add resilience tests for intermittent S3 failures and Triton unavailability.
-- Add progressive deploy (canary) and automated rollback hooks; gate releases on health checks.
+- Gate releases on health checks.
 - Add concurrency test for inference engine cache (multi-thread warm + get) to ensure lock correctness.
 - Add decoder edge-case tests (consecutive separators, empty segments, mismatched confidences length).
 
@@ -167,3 +167,134 @@ As more teams use your platform, you need to ensure it remains stable, fair, and
   - Action:
     - Emit custom CloudWatch metrics from your job processing containers with the Project or JobId as a dimension.
     - Create a "Job Status" page or API endpoint that provides logs, progress (e.g., "752 of 1000 files processed"), and a link to the results in S3.
+
+
+
+### What to ship (concise, high-signal)
+- Model-quality parity/eval artifacts (goldens, thresholds, report, CI gate)
+- ROI metrics tied to business (latency/throughput/cost, simple one-pager)
+
+### 1) Model-quality parity and eval
+- Define datasets:
+  - Goldens: 200–500 representative activities across accents/noise/lengths.
+  - Shadow/bulk: 5–10k recent jobs for throughput/cost.
+- Metrics and thresholds (acceptance gates):
+  - ASR alignment: WER/CER, phoneme alignment accuracy, letter-sound scoring agreement.
+  - Performance: p95 end-to-end ≤ target, throughput ≥ target, zero DLQ over N runs.
+  - Regression rule: fail if ΔWER > +0.5% abs or Δagreement > −0.25% abs.
+- Artifacts:
+  - Store eval JSON, JUnit XML, plots in S3 `results/eval/YYYYMMDD/` and commit summary to `docs/ROI.md`.
+- CI gate:
+  - Pre-merge: run eval on goldens; block on thresholds.
+  - Nightly/weekly: run shadow eval; raise alarm on drift.
+
+Example eval result schema and writer:
+```python
+# scripts/eval_parity.py (Python 3.13)
+from __future__ import annotations
+from dataclasses import dataclass, asdict
+from pathlib import Path
+import json
+
+@dataclass(frozen=True, slots=True)
+class Metric:
+    name: str
+    value: float
+    lower_is_better: bool
+
+@dataclass(frozen=True, slots=True)
+class EvalResult:
+    model: str
+    baseline_model: str
+    dataset: str
+    metrics: list[Metric]
+    passed: bool
+
+def main(*, out: str) -> None:
+    metrics: list[Metric] = [
+        Metric("wer_delta_abs", 0.004, True),
+        Metric("letter_score_agreement_delta_abs", -0.001, False),
+        Metric("p95_ms", 420.0, True),
+    ]
+    passed: bool = (metrics[0].value <= 0.005) and (metrics[1].value >= -0.002) and (metrics[2].value <= 500)
+    result = EvalResult("w2v2-opt", "w2v2-baseline", "goldens_v1", metrics, passed)
+    Path(out).write_text(json.dumps(asdict(result), indent=2))
+
+if __name__ == "__main__":
+    main(out="eval_result.json")
+```
+
+Add to CI:
+```bash
+uv run python scripts/eval_parity.py
+jq -e '.passed == true' eval_result.json
+```
+
+### 2) Automated rollout safety
+- Lambda (DockerImageFunction):
+  - Version + alias + canary deployment; pre/post-traffic hooks run a 50-item smoke eval.
+```ts
+// After creating processingLambda
+import * as codedeploy from 'aws-cdk-lib/aws-codedeploy';
+import * as lambda from 'aws-cdk-lib/aws-lambda';
+
+const version = processingLambda.currentVersion;
+const alias = new lambda.Alias(this, 'ProcessingProdAlias', { aliasName: 'prod', version });
+
+new codedeploy.LambdaDeploymentGroup(this, 'ProcessingDG', {
+  alias,
+  deploymentConfig: codedeploy.LambdaDeploymentConfig.CANARY_10PERCENT_5MINUTES,
+  alarms: [/* p95 latency, errors, DLQ age */],
+});
+```
+- ECS (Triton service):
+  - Circuit breaker with rollback; keep ALB health checks strict; scale protections.
+```ts
+const service = new ecs.Ec2Service(this, 'TritonService', {
+  cluster,
+  taskDefinition,
+  circuitBreaker: { rollback: true },
+  minHealthyPercent: 100,
+  maxHealthyPercent: 200,
+});
+```
+- Rollback alarms (actionable):
+  - Lambda: Errors, Throttles, p95 latency > SLO.
+  - ECS: ALB 5xx rate, TargetGroup UnhealthyHostCount > 0, Triton p95 > SLO, GPU util extremes.
+  - SQS: composite alarm on depth + age.
+- Smoke test hook (optional):
+  - Pre-traffic Lambda posts 50 known samples → verifies success rate ≥ 98%, p95 ≤ SLO, zero DLQ.
+
+### 3) ROI metrics tied to business
+- KPIs to publish (docs/ROI.md and dashboard):
+  - Throughput: activities/hour; Wall-clock to drain N jobs.
+  - Latency: p50/p95/p99 end-to-end.
+  - Reliability: error rate, DLQ rate, MTTR.
+  - Cost: $/1k activities (S3 + SQS + Lambda + ECS).
+  - Developer velocity: time-to-deploy, config change lead time.
+- Compute and persist:
+  - Add CloudWatch widgets for p95, DLQ, throughput.
+  - Export a daily job to append a summary row to `docs/ROI.md` or `data/roi.csv`.
+Example cost snapshot (Cost Explorer):
+```python
+# scripts/cost_snapshot.py
+import boto3, datetime as dt
+ce = boto3.client("ce")
+start = (dt.date.today() - dt.timedelta(days=7)).isoformat()
+end = dt.date.today().isoformat()
+res = ce.get_cost_and_usage(
+  TimePeriod={"Start": start, "End": end},
+  Granularity="DAILY",
+  Metrics=["UnblendedCost"],
+  GroupBy=[{"Type":"DIMENSION","Key":"SERVICE"}],
+  Filter={"And":[{"Dimensions":{"Key":"REGION","Values":["us-east-1"]}}]}
+)
+print(res)
+```
+- ROI one-pager (update your `docs/ROI_TEMPLATE.md`):
+  - Fill Before/After table with: 12h → Z min, p95 A → B ms, $/1k C → D, error rate E → F, DLQ 0.
+
+### 4) Checks that close the loop
+- A lightweight README “Runbook” section: scale knobs, alarm meanings, rollback steps.
+
+This makes the platform “above level” unequivocal: measurable quality parity, safe deploys by default, and ROI that leadership can read in one minute.

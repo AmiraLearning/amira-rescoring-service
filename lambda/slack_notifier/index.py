@@ -114,6 +114,16 @@ class SlackNotification:
     def format_error_alert(
         self, alarm_name: str, alarm_description: str, metric_value: float
     ) -> dict[str, Any]:
+        """Format error alert notification.
+
+        Args:
+            alarm_name: Name of the alarm.
+            alarm_description: Description of the alarm.
+            metric_value: Value of the metric.
+
+        Returns:
+            Dictionary containing the error alert notification.
+        """
         return {
             "text": f"Amira Processing Alert: {alarm_name}",
             "attachments": [
@@ -133,9 +143,17 @@ class SlackNotification:
         }
 
     def send_message(self, message: dict[str, Any]) -> bool:
+        """Send message to Slack.
+
+        Args:
+            message: Dictionary containing the message to send.
+
+        Returns:
+            Boolean indicating whether the message was sent successfully.
+        """
         try:
-            data = json.dumps(message).encode("utf-8")
-            req = urllib.request.Request(
+            data: bytes = json.dumps(message).encode("utf-8")
+            req: urllib.request.Request = urllib.request.Request(
                 self.webhook_url,
                 data=data,
                 headers={"Content-Type": "application/json"},
@@ -165,19 +183,18 @@ def extract_job_metrics_from_cloudwatch(event: dict[str, Any]) -> JobSummary:
 
     import boto3
 
-    cloudwatch = boto3.client("cloudwatch")
+    cloudwatch: boto3.client = boto3.client("cloudwatch")
 
-    # Extract alarm details
     event.get("AlarmData", {})
-    alarm_name = event.get("AlarmName", "Unknown")
+    alarm_name: str = event.get("AlarmName", "Unknown")
 
     # Set time range for metrics query (last hour)
-    end_time = datetime.utcnow()
+    end_time: datetime = datetime.utcnow()
     start_time = end_time - timedelta(hours=1)
 
     try:
         # Query job completion metrics
-        completed_response = cloudwatch.get_metric_statistics(
+        completed_response: dict[str, Any] = cloudwatch.get_metric_statistics(
             Namespace="Amira/Jobs",
             MetricName="JobsCompleted",
             StartTime=start_time,
@@ -186,7 +203,7 @@ def extract_job_metrics_from_cloudwatch(event: dict[str, Any]) -> JobSummary:
             Statistics=["Sum"],
         )
 
-        failed_response = cloudwatch.get_metric_statistics(
+        failed_response: dict[str, Any] = cloudwatch.get_metric_statistics(
             Namespace="Amira/Jobs",
             MetricName="JobsFailed",
             StartTime=start_time,
@@ -195,7 +212,7 @@ def extract_job_metrics_from_cloudwatch(event: dict[str, Any]) -> JobSummary:
             Statistics=["Sum"],
         )
 
-        processing_time_response = cloudwatch.get_metric_statistics(
+        processing_time_response: dict[str, Any] = cloudwatch.get_metric_statistics(
             Namespace="Amira/Jobs",
             MetricName="ProcessingTime",
             StartTime=start_time,
@@ -205,9 +222,9 @@ def extract_job_metrics_from_cloudwatch(event: dict[str, Any]) -> JobSummary:
         )
 
         # Extract metrics or use defaults
-        completed_count = 0
-        failed_count = 0
-        avg_processing_time = 0.0
+        completed_count: int = 0
+        failed_count: int = 0
+        avg_processing_time: float = 0.0
 
         if completed_response["Datapoints"]:
             completed_count = int(completed_response["Datapoints"][0].get("Sum", 0))
@@ -218,9 +235,9 @@ def extract_job_metrics_from_cloudwatch(event: dict[str, Any]) -> JobSummary:
         if processing_time_response["Datapoints"]:
             avg_processing_time = float(processing_time_response["Datapoints"][0].get("Average", 0))
 
-        total_jobs = completed_count + failed_count
-        duration_minutes = 60.0  # 1 hour window
-        throughput_per_hour = int(total_jobs) if total_jobs > 0 else 0
+        total_jobs: int = completed_count + failed_count
+        duration_minutes: float = 60.0  # 1 hour window
+        throughput_per_hour: int = int(total_jobs) if total_jobs > 0 else 0
 
         return JobSummary(
             total_enqueued=total_jobs,  # Approximation

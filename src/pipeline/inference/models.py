@@ -42,6 +42,18 @@ class W2VConfig(BaseModel):
     batch_all_phrases: bool = False  # Lambda-style single inference call
     fast_init: bool = False  # Skip expensive optimizations during init for cold start
 
+    # CPU quantization threshold tuning
+    quantize_min_cpu_cores: int = Field(
+        default=2,
+        ge=1,
+        le=16,
+        description="Minimum CPU cores required to enable quantization (may regress on low-core systems)",
+    )
+    quantize_skip_on_low_memory: bool = Field(
+        default=True,
+        description="Skip quantization when available memory is below 4GB to prevent OOM",
+    )
+
     @model_validator(mode="after")
     def _validate_triton_https(self) -> Self:
         """Ensure Triton URL is HTTPS-only when Triton is enabled.

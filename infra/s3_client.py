@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any, Final
 
 import aioboto3
+import psutil
 from aiobotocore.config import AioConfig
 from botocore.exceptions import (
     BotoCoreError,
@@ -45,6 +46,12 @@ DEFAULT_MULTIPART_CHUNKSIZE: Final[int] = 16 * 1024 * 1024  # 16MB
 DEFAULT_MAX_RETRIES: Final[int] = 5
 DEFAULT_RETRY_BACKOFF_BASE: Final[float] = 0.1
 DEFAULT_RETRY_BACKOFF_MAX: Final[float] = 60.0
+
+# Memory backpressure configuration
+DEFAULT_MAX_MEMORY_USAGE_PCT: Final[float] = 85.0  # 85% memory usage threshold
+DEFAULT_MIN_BUFFER_SIZE: Final[int] = 1024  # 1KB minimum
+DEFAULT_MAX_BUFFER_SIZE: Final[int] = 1024 * 1024  # 1MB maximum
+DEFAULT_MAX_IN_FLIGHT_BYTES: Final[int] = 512 * 1024 * 1024  # 512MB total in-flight limit
 
 
 @dataclass
@@ -189,11 +196,28 @@ class HighPerformanceS3Config(BaseModel):
         default=8192,
         ge=1024,
         le=65536,
-        description="Buffer size for streaming operations",
+        description="Initial buffer size for streaming operations",
     )
     client_pool_size: int = Field(default=20, ge=5, le=100, description="Size of S3 client pool")
     use_head_for_progress: bool = Field(
         default=False, description="Issue HEAD to set progress totals before downloads"
+    )
+
+    # Memory backpressure and adaptive sizing
+    max_memory_usage_percent: float = Field(
+        default=DEFAULT_MAX_MEMORY_USAGE_PCT,
+        ge=50.0,
+        le=95.0,
+        description="Maximum memory usage percentage before applying backpressure",
+    )
+    adaptive_buffer_sizing: bool = Field(
+        default=True, description="Enable adaptive buffer sizing based on memory pressure"
+    )
+    max_in_flight_bytes: int = Field(
+        default=DEFAULT_MAX_IN_FLIGHT_BYTES,
+        ge=50 * 1024 * 1024,  # 50MB minimum
+        le=2 * 1024 * 1024 * 1024,  # 2GB maximum
+        description="Maximum total bytes allowed in-flight across all operations",
     )
 
     @classmethod
@@ -356,6 +380,76 @@ class ProductionS3Client:
         self._operation_count: int = 0
         self._total_bytes_transferred: int = 0
         self._total_operation_time: float = 0.0
+
+        # Memory backpressure tracking
+        self._in_flight_bytes: int = 0
+        self._in_flight_lock = asyncio.Lock()
+        self._memory_pressure_factor: float = 1.0
+
+    def _calculate_memory_pressure_factor(self) -> float:
+        """Calculate memory pressure factor for adaptive sizing.
+
+        Returns:
+            Float between 0.1 and 1.0 representing memory pressure.
+            Lower values indicate higher pressure.
+        """
+        try:
+            memory = psutil.virtual_memory()
+            memory_usage_pct = memory.percent
+
+            if memory_usage_pct >= self._config.max_memory_usage_percent:
+                # High memory pressure - reduce buffer sizes significantly
+                return 0.1
+            elif memory_usage_pct >= (self._config.max_memory_usage_percent - 10):
+                # Moderate memory pressure - reduce buffer sizes moderately
+                return 0.5
+            else:
+                # Low memory pressure - use full buffer sizes
+                return 1.0
+        except Exception:
+            # Default to conservative approach if memory monitoring fails
+            return 0.5
+
+    def _get_adaptive_buffer_size(self) -> int:
+        """Get buffer size adapted to current memory pressure.
+
+        Returns:
+            Buffer size in bytes, adapted to memory pressure.
+        """
+        if not self._config.adaptive_buffer_sizing:
+            return self._config.buffer_size
+
+        base_size = self._config.buffer_size
+        pressure_factor = self._calculate_memory_pressure_factor()
+        self._memory_pressure_factor = pressure_factor
+
+        # Apply pressure factor with bounds
+        adapted_size = int(base_size * pressure_factor)
+        return max(DEFAULT_MIN_BUFFER_SIZE, min(DEFAULT_MAX_BUFFER_SIZE, adapted_size))
+
+    async def _reserve_in_flight_bytes(self, *, bytes_count: int) -> bool:
+        """Reserve bytes for in-flight operations with backpressure.
+
+        Args:
+            bytes_count: Number of bytes to reserve
+
+        Returns:
+            True if reservation succeeded, False if would exceed limits
+        """
+        async with self._in_flight_lock:
+            if self._in_flight_bytes + bytes_count > self._config.max_in_flight_bytes:
+                return False
+            self._in_flight_bytes += bytes_count
+            return True
+
+    async def _release_in_flight_bytes(self, *, bytes_count: int) -> None:
+        """Release reserved bytes from in-flight operations.
+
+        Args:
+            bytes_count: Number of bytes to release
+        """
+        async with self._in_flight_lock:
+            self._in_flight_bytes = max(0, self._in_flight_bytes - bytes_count)
 
     @staticmethod
     def _is_retryable_exception(e: BaseException) -> bool:
@@ -583,15 +677,36 @@ class ProductionS3Client:
 
                 try:
                     bytes_written: int = 0
-                    with open(local_path, "wb") as f:
-                        while True:
-                            chunk: bytes = await body.read(self._config.buffer_size)
-                            if not chunk:
-                                break
-                            f.write(chunk)
-                            bytes_written += len(chunk)
-                            if progress and task_id is not None:
-                                progress.update(task_id, completed=bytes_written)
+                    buffer_size = self._get_adaptive_buffer_size()
+
+                    # Reserve expected bytes if we have size information
+                    reserved_bytes = total_size if total_size else 0
+                    if reserved_bytes > 0:
+                        can_reserve = await self._reserve_in_flight_bytes(
+                            bytes_count=reserved_bytes
+                        )
+                        if not can_reserve:
+                            # Apply backpressure - reduce buffer size further
+                            buffer_size = min(buffer_size, DEFAULT_MIN_BUFFER_SIZE)
+
+                    try:
+                        with open(local_path, "wb") as f:
+                            while True:
+                                chunk: bytes = await body.read(buffer_size)
+                                if not chunk:
+                                    break
+                                f.write(chunk)
+                                bytes_written += len(chunk)
+                                if progress and task_id is not None:
+                                    progress.update(task_id, completed=bytes_written)
+
+                                # Check memory pressure periodically and adapt buffer size
+                                if bytes_written % (buffer_size * 10) == 0:
+                                    buffer_size = self._get_adaptive_buffer_size()
+                    finally:
+                        # Release reserved bytes
+                        if reserved_bytes > 0:
+                            await self._release_in_flight_bytes(bytes_count=reserved_bytes)
 
                     file_size = local_path.stat().st_size if local_path.exists() else 0
                     return S3OperationResult(
@@ -1079,6 +1194,10 @@ class ProductionS3Client:
             ),
             "clients_created": self._clients_created,
             "client_pool_size": self._config.client_pool_size,
+            "in_flight_bytes": self._in_flight_bytes,
+            "memory_pressure_factor": self._memory_pressure_factor,
+            "max_in_flight_bytes": self._config.max_in_flight_bytes,
+            "adaptive_buffer_sizing": self._config.adaptive_buffer_sizing,
         }
 
 

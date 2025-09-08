@@ -6,10 +6,16 @@ NS_ACTIVITY: Final[str] = "Amira/Activity"
 NS_ALIGNMENT: Final[str] = "Amira/Alignment"
 NS_DECODER: Final[str] = "Amira/Decoder"
 
-# Common dimensions
+# Standard dimensions (consistent across all metrics for better dashboarding)
+DIM_SERVICE: Final[str] = "Service"
+DIM_STAGE: Final[str] = "Stage"
 DIM_DEVICE: Final[str] = "Device"
+DIM_INSTANCE_ID: Final[str] = "InstanceId"
+
+# Context dimensions
 DIM_CORRELATION_ID: Final[str] = "CorrelationId"
 DIM_ACTIVITY_ID: Final[str] = "ActivityId"
+DIM_MODEL: Final[str] = "Model"
 
 # Inference metrics
 MET_INFER_TOTAL_MS: Final[str] = "InferenceTotalMs"

@@ -100,7 +100,7 @@ class AudioPreparationEngine:
         from concurrent.futures import ThreadPoolExecutor, as_completed
 
         try:
-            max_workers_env = int(os.getenv("AUDIO_PREP_MAX_WORKERS", "8"))
+            max_workers_env: int = int(os.getenv("AUDIO_PREP_MAX_WORKERS", "8"))
             max_workers: int = max(1, max_workers_env)
         except Exception:
             max_workers = 8
@@ -108,10 +108,20 @@ class AudioPreparationEngine:
         def _work(
             phrase: PhraseInput,
         ) -> tuple[int, ProcessedPhraseOutput | None, str | None]:
+            """Work function for processing a single phrase.
+
+            Args:
+                phrase: The phrase input.
+
+            Returns:
+                tuple[int, ProcessedPhraseOutput | None, str | None]: The index, processed phrase, and error message.
+            """
             idx: int = phrase.phraseIndex
             try:
                 logger.info(f"Processing phrase {idx} for activity {activity_id}")
-                res = self._process_single_phrase(activity_id=activity_id, phrase_data=phrase)
+                res: ProcessedPhraseOutput | None = self._process_single_phrase(
+                    activity_id=activity_id, phrase_data=phrase
+                )
                 return idx, res, None
             except FileNotFoundError as e:
                 error_msg = f"Audio file not found for phrase {idx}: {e}"
@@ -127,9 +137,18 @@ class AudioPreparationEngine:
                 return idx, None, error_msg
 
         with ThreadPoolExecutor(max_workers=max_workers) as pool:
+            """Process phrases in parallel.
+
+            Args:
+                pool: The thread pool.
+                phrases: The phrases to process.
+
+            Returns:
+                None
+            """
             futures = {pool.submit(_work, p): p.phraseIndex for p in phrases}
             for fut in as_completed(futures):
-                phrase_index = futures[fut]
+                phrase_index: int = futures[fut]
                 _, processed_phrase, err = fut.result()
                 if err is not None:
                     output.phrases_failed += 1
@@ -327,7 +346,7 @@ class AudioPreparationEngine:
         Returns:
             bool: True if complete.wav is downloaded, False otherwise.
         """
-        complete_audio_path = (
+        complete_audio_path: Path = (
             Path(self._audio_base_dir) / "complete_audio" / activity_id / "complete.wav"
         )
 
@@ -343,7 +362,7 @@ class AudioPreparationEngine:
                 logger.warning(f"Unable to stat complete audio for {activity_id}; re-downloading")
 
         logger.info(f"Downloading complete audio for activity {activity_id}")
-        download_success = await download_complete_audio_from_s3(
+        download_success: bool = await download_complete_audio_from_s3(
             activity_id=activity_id,
             audio_dir=self._audio_base_dir,
             s3_client=self._s3_client,

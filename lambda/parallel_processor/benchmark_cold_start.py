@@ -13,51 +13,54 @@ import aioboto3
 
 
 async def test_lambda_cold_start(function_name: str, num_tests: int) -> dict[str, Any]:
-    """Test Lambda cold start performance"""
-    session = aioboto3.Session()
+    """Test Lambda cold start performance
+
+    Args:
+        function_name: Name of the Lambda function to test.
+        num_tests: Number of tests to run.
+
+    Returns:
+        Dictionary containing cold start times.
+    """
+    session: aioboto3.Session = aioboto3.Session()
     async with session.client("lambda", region_name="us-east-1") as lambda_client:
-        cold_start_times = []
-        warm_times = []
+        cold_start_times: list[float] = []
+        warm_times: list[float] = []
 
         print(f"Testing {function_name} cold start performance...")
 
-        # Force cold start by updating environment
-        for i in range(num_tests):
-            # Update env to force cold start
-            env_update = {"TEST_RUN": str(int(time.time()))}
+        for idx in range(num_tests):
+            env_update: dict[str, str] = {"TEST_RUN": str(int(time.time()))}
             await lambda_client.update_function_configuration(
                 FunctionName=function_name, Environment={"Variables": env_update}
             )
 
-            # Wait for update to complete
             await asyncio.sleep(2)
 
-            # Test cold start
-            test_payload = {
+            test_payload: dict[str, Any] = {
                 "Records": [
                     {
-                        "body": json.dumps({"activityId": f"test-{i}"}),
-                        "messageId": f"msg-{i}",
+                        "body": json.dumps({"activityId": f"test-{idx}"}),
+                        "messageId": f"msg-{idx}",
                     }
                 ]
             }
 
-            start_time = time.time()
+            start_time: float = time.time()
             await lambda_client.invoke(FunctionName=function_name, Payload=json.dumps(test_payload))
             cold_start_time = time.time() - start_time
             cold_start_times.append(cold_start_time)
 
-            print(f"  Cold start {i + 1}: {cold_start_time:.3f}s")
+            print(f"  Cold start {idx + 1}: {cold_start_time:.3f}s")
 
-            # Test warm execution
-            start_time = time.time()
+            start_time: float = time.time()
             await lambda_client.invoke(FunctionName=function_name, Payload=json.dumps(test_payload))
-            warm_time = time.time() - start_time
+            warm_time: float = time.time() - start_time
             warm_times.append(warm_time)
 
-            await asyncio.sleep(1)  # Brief pause between tests
+            await asyncio.sleep(1)
 
-        results = {
+        results: dict[str, Any] = {
             "avg_cold_start": sum(cold_start_times) / len(cold_start_times),
             "min_cold_start": min(cold_start_times),
             "max_cold_start": max(cold_start_times),
@@ -78,38 +81,43 @@ async def test_lambda_cold_start(function_name: str, num_tests: int) -> dict[str
 async def benchmark_concurrent_cold_starts(
     function_name: str, concurrency: int = 100
 ) -> dict[str, Any]:
-    """Test concurrent cold start performance"""
-    session = aioboto3.Session()
+    """Test concurrent cold start performance
+
+    Args:
+        function_name: Name of the Lambda function to test.
+        concurrency: Number of concurrent tests to run.
+
+    Returns:
+        Dictionary containing concurrent cold start times.
+    """
+    session: aioboto3.Session = aioboto3.Session()
     async with session.client("lambda", region_name="us-east-1") as lambda_client:
         print(f"Testing {concurrency} concurrent cold starts...")
 
-        # Force cold start
         await lambda_client.update_function_configuration(
             FunctionName=function_name,
             Environment={"Variables": {"CONCURRENT_TEST": str(int(time.time()))}},
         )
         await asyncio.sleep(3)
 
-        # Create concurrent invocations
-        async def invoke_lambda(i: int) -> float:
-            test_payload = {
+        async def invoke_lambda(idx: int) -> float:
+            test_payload: dict[str, Any] = {
                 "Records": [
                     {
-                        "body": json.dumps({"activityId": f"concurrent-test-{i}"}),
-                        "messageId": f"concurrent-msg-{i}",
+                        "body": json.dumps({"activityId": f"concurrent-test-{idx}"}),
+                        "messageId": f"concurrent-msg-{idx}",
                     }
                 ]
             }
 
-            start_time = time.time()
+            start_time: float = time.time()
             await lambda_client.invoke(FunctionName=function_name, Payload=json.dumps(test_payload))
             return time.time() - start_time
 
-        # Run concurrent tests
-        start_time = time.time()
-        tasks = [invoke_lambda(i) for i in range(concurrency)]
-        execution_times = await asyncio.gather(*tasks)
-        total_time = time.time() - start_time
+        start_time: float = time.time()
+        tasks: list[float] = [invoke_lambda(idx) for idx in range(concurrency)]
+        execution_times: list[float] = await asyncio.gather(*tasks)
+        total_time: float = time.time() - start_time
 
         print("\nConcurrent Results:")
         print(f"   {concurrency} invocations in {total_time:.3f}s")
@@ -129,21 +137,21 @@ if __name__ == "__main__":
     import sys
 
     if len(sys.argv) < 2:
-        print("Usage: python benchmark_cold_start.py <function-name>")
+        print("Usage: python benchmark_cold_start.py <function-name> <num-tests> <concurrency>")
         print("Example: python benchmark_cold_start.py AmiraLambdaParallelStack-ProcessingFunction")
         sys.exit(1)
 
-    function_name = sys.argv[1]
+    function_name: str = sys.argv[1]
 
     print("Lambda Cold Start Benchmark")
     print("=" * 50)
 
-    # Test sequential cold starts
-    sequential_results = asyncio.run(test_lambda_cold_start(function_name, num_tests=5))
+    sequential_results: dict[str, Any] = asyncio.run(
+        test_lambda_cold_start(function_name, num_tests=5)
+    )
 
-    # Test concurrent cold starts
     print("\n" + "=" * 50)
-    concurrent_results = asyncio.run(
+    concurrent_results: dict[str, Any] = asyncio.run(
         benchmark_concurrent_cold_starts(function_name, concurrency=50)
     )
 

@@ -61,6 +61,49 @@ class MergeColumns(StrEnum):
     PHRASE_INDEX = "phraseIndex"
 
 
+# Centralized defaults for activity selection
+ACTIVITY_TABLE: Final[str] = "activity_v"
+ACTIVITY_DEFAULT_TYPE: Final[str] = "letterNamingAndSounds"
+ACTIVITY_DEFAULT_STATUS: Final[str] = "under_review"
+ACTIVITY_DEFAULT_DISTRICTS: Final[tuple[str, ...]] = ("955168", "1000022968")
+
+
+def build_activity_query(
+    *,
+    start_time: str,
+    end_time: str,
+    table: str = ACTIVITY_TABLE,
+    activity_type: str = ACTIVITY_DEFAULT_TYPE,
+    status: str = ACTIVITY_DEFAULT_STATUS,
+    districts: tuple[str, ...] = ACTIVITY_DEFAULT_DISTRICTS,
+) -> str:
+    """Build the canonical Athena SQL for activity selection.
+
+    Args:
+        start_time: Inclusive start timestamp (YYYY-MM-DD HH:MM:SS)
+        end_time: Exclusive end timestamp (YYYY-MM-DD HH:MM:SS)
+        table: Source table/view name.
+        activity_type: Activity type filter.
+        status: Status filter.
+        districts: Optional district ID allowlist; empty to omit.
+
+    Returns:
+        SQL string with parameters applied.
+    """
+    base_select = (
+        f"SELECT activityid, storyid, studentid, districtid, type, createdat, status, displaystatus "
+        f"FROM {table} "
+        f"WHERE type = '{activity_type}' "
+        f"AND status = '{status}' "
+        f"AND createdat >= TIMESTAMP '{start_time}' "
+        f"AND createdat < TIMESTAMP '{end_time}'"
+    )
+    if districts:
+        in_clause = ", ".join([f"'{d}'" for d in districts])
+        return base_select + f" AND districtid IN ({in_clause})"
+    return base_select
+
+
 async def load_activity_data(*, config: PipelineConfig) -> pl.DataFrame:
     """Fetch activity data based on config and save activities.parquet.
 
