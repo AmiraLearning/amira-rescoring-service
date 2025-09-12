@@ -6,6 +6,7 @@ from gql import Client, gql
 from gql.transport.requests import RequestsHTTPTransport
 from loguru import logger
 from pydantic import BaseModel
+from requests import adapters
 from tenacity import retry, stop_after_attempt, wait_exponential_jitter
 
 from infra.secrets_utils import get_appsync_credentials
@@ -200,7 +201,7 @@ def _get_cached_session() -> requests.Session:
         _cached_session = requests.Session()
 
         # Configure connection pooling for better performance
-        adapter = requests.adapters.HTTPAdapter(
+        adapter = adapters.HTTPAdapter(
             pool_connections=2,  # Number of connection pools
             pool_maxsize=5,  # Maximum number of connections in pool
             max_retries=0,  # Let tenacity handle retries

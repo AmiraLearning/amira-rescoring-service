@@ -53,9 +53,9 @@ async def test_lambda_cold_start(function_name: str, num_tests: int) -> dict[str
 
             print(f"  Cold start {idx + 1}: {cold_start_time:.3f}s")
 
-            start_time: float = time.time()
+            warm_start_time: float = time.time()
             await lambda_client.invoke(FunctionName=function_name, Payload=json.dumps(test_payload))
-            warm_time: float = time.time() - start_time
+            warm_time: float = time.time() - warm_start_time
             warm_times.append(warm_time)
 
             await asyncio.sleep(1)
@@ -115,8 +115,9 @@ async def benchmark_concurrent_cold_starts(
             return time.time() - start_time
 
         start_time: float = time.time()
-        tasks: list[float] = [invoke_lambda(idx) for idx in range(concurrency)]
-        execution_times: list[float] = await asyncio.gather(*tasks)
+        tasks = [invoke_lambda(idx) for idx in range(concurrency)]
+        exec_times_tuple = await asyncio.gather(*tasks)
+        execution_times: list[float] = list(exec_times_tuple)
         total_time: float = time.time() - start_time
 
         print("\nConcurrent Results:")

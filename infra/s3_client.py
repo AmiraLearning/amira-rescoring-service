@@ -12,7 +12,7 @@ import time
 from collections.abc import Awaitable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Final
+from typing import Annotated, Any, Final
 
 import aioboto3
 import psutil
@@ -116,108 +116,50 @@ class HighPerformanceS3Config(BaseModel):
     aws_profile: str = Field(default="legacy", description="AWS profile for authentication")
     aws_region: str = Field(default="us-east-1", description="AWS region")
 
-    max_connections: int = Field(
-        default=DEFAULT_MAX_CONNECTIONS,
-        ge=50,
-        le=5000,  # Increased limit for cloud deployment
-        description="Maximum total connections in pool (optimized for cloud)",
+    max_connections: Annotated[int, Field(ge=50, le=5000)] = DEFAULT_MAX_CONNECTIONS
+    max_connections_per_host: Annotated[int, Field(ge=20, le=2000)] = (
+        DEFAULT_MAX_CONNECTIONS_PER_HOST
     )
-    max_connections_per_host: int = Field(
-        default=DEFAULT_MAX_CONNECTIONS_PER_HOST,
-        ge=20,
-        le=2000,  # Increased limit for cloud deployment
-        description="Maximum connections per host (optimized for cloud)",
+    connection_timeout: Annotated[int, Field(ge=10, le=300)] = DEFAULT_CONNECTION_TIMEOUT
+    read_timeout: Annotated[int, Field(ge=30, le=1800)] = DEFAULT_READ_TIMEOUT
+
+    max_concurrent_downloads: Annotated[int, Field(ge=10, le=2000)] = (
+        DEFAULT_MAX_CONCURRENT_DOWNLOADS
     )
-    connection_timeout: int = Field(
-        default=DEFAULT_CONNECTION_TIMEOUT,
-        ge=10,
-        le=300,
-        description="Connection timeout in seconds",
-    )
-    read_timeout: int = Field(
-        default=DEFAULT_READ_TIMEOUT,
-        ge=30,
-        le=1800,
-        description="Read timeout in seconds",
+    max_concurrent_uploads: Annotated[int, Field(ge=5, le=1000)] = DEFAULT_MAX_CONCURRENT_UPLOADS
+    max_concurrent_operations: Annotated[int, Field(ge=20, le=5000)] = (
+        DEFAULT_MAX_CONCURRENT_OPERATIONS
     )
 
-    max_concurrent_downloads: int = Field(
-        default=DEFAULT_MAX_CONCURRENT_DOWNLOADS,
-        ge=10,
-        le=2000,  # Increased for cloud deployment
-        description="Maximum concurrent downloads (optimized for cloud)",
+    multipart_threshold: Annotated[int, Field(ge=5 * 1024 * 1024, le=1024 * 1024 * 1024)] = (
+        DEFAULT_MULTIPART_THRESHOLD
     )
-    max_concurrent_uploads: int = Field(
-        default=DEFAULT_MAX_CONCURRENT_UPLOADS,
-        ge=5,
-        le=1000,  # Increased for cloud deployment
-        description="Maximum concurrent uploads (optimized for cloud)",
-    )
-    max_concurrent_operations: int = Field(
-        default=DEFAULT_MAX_CONCURRENT_OPERATIONS,
-        ge=20,
-        le=5000,  # Increased for cloud deployment
-        description="Maximum concurrent operations (optimized for cloud)",
-    )
-
-    multipart_threshold: int = Field(
-        default=DEFAULT_MULTIPART_THRESHOLD,
-        ge=5 * 1024 * 1024,
-        le=1024 * 1024 * 1024,
-        description="Multipart upload threshold in bytes",
-    )
-    multipart_chunksize: int = Field(
-        default=DEFAULT_MULTIPART_CHUNKSIZE,
-        ge=5 * 1024 * 1024,
-        le=100 * 1024 * 1024,
-        description="Multipart chunk size in bytes",
+    multipart_chunksize: Annotated[int, Field(ge=5 * 1024 * 1024, le=100 * 1024 * 1024)] = (
+        DEFAULT_MULTIPART_CHUNKSIZE
     )
     max_bandwidth: int | None = Field(
         default=None, description="Maximum bandwidth in bytes/sec (None for unlimited)"
     )
 
-    max_retries: int = Field(
-        default=DEFAULT_MAX_RETRIES, ge=1, le=10, description="Maximum retry attempts"
-    )
-    retry_backoff_base: float = Field(
-        default=DEFAULT_RETRY_BACKOFF_BASE,
-        ge=0.01,
-        le=1.0,
-        description="Base retry backoff time",
-    )
-    retry_backoff_max: float = Field(
-        default=DEFAULT_RETRY_BACKOFF_MAX,
-        ge=1.0,
-        le=300.0,
-        description="Maximum retry backoff time",
-    )
+    max_retries: Annotated[int, Field(ge=1, le=10)] = DEFAULT_MAX_RETRIES
+    retry_backoff_base: Annotated[float, Field(ge=0.01, le=1.0)] = DEFAULT_RETRY_BACKOFF_BASE
+    retry_backoff_max: Annotated[float, Field(ge=1.0, le=300.0)] = DEFAULT_RETRY_BACKOFF_MAX
 
-    buffer_size: int = Field(
-        default=8192,
-        ge=1024,
-        le=65536,
-        description="Initial buffer size for streaming operations",
-    )
-    client_pool_size: int = Field(default=20, ge=5, le=100, description="Size of S3 client pool")
+    buffer_size: Annotated[int, Field(ge=1024, le=65536)] = 8192
+    client_pool_size: Annotated[int, Field(ge=5, le=100)] = 20
     use_head_for_progress: bool = Field(
         default=False, description="Issue HEAD to set progress totals before downloads"
     )
 
     # Memory backpressure and adaptive sizing
-    max_memory_usage_percent: float = Field(
-        default=DEFAULT_MAX_MEMORY_USAGE_PCT,
-        ge=50.0,
-        le=95.0,
-        description="Maximum memory usage percentage before applying backpressure",
+    max_memory_usage_percent: Annotated[float, Field(ge=50.0, le=95.0)] = (
+        DEFAULT_MAX_MEMORY_USAGE_PCT
     )
     adaptive_buffer_sizing: bool = Field(
         default=True, description="Enable adaptive buffer sizing based on memory pressure"
     )
-    max_in_flight_bytes: int = Field(
-        default=DEFAULT_MAX_IN_FLIGHT_BYTES,
-        ge=50 * 1024 * 1024,  # 50MB minimum
-        le=2 * 1024 * 1024 * 1024,  # 2GB maximum
-        description="Maximum total bytes allowed in-flight across all operations",
+    max_in_flight_bytes: Annotated[int, Field(ge=50 * 1024 * 1024, le=2 * 1024 * 1024 * 1024)] = (
+        DEFAULT_MAX_IN_FLIGHT_BYTES
     )
 
     @classmethod
@@ -603,9 +545,8 @@ class ProductionS3Client:
             for op in s3_operations
         ]
 
-        results: list[S3OperationResult | BaseException] = await asyncio.gather(
-            *tasks, return_exceptions=True
-        )
+        results_tuple = await asyncio.gather(*tasks, return_exceptions=True)
+        results: list[S3OperationResult | BaseException] = list(results_tuple)
 
         processed_results: list[S3OperationResult] = []
         for result in results:
@@ -656,7 +597,11 @@ class ProductionS3Client:
             client = await self._get_client()
             try:
                 if operation.local_path is None:
-                    raise ValueError("local_path is required for upload operations")
+                    return S3OperationResult(
+                        success=False,
+                        operation=operation,
+                        error="local_path is required for upload operations",
+                    )
                 local_path = Path(operation.local_path)
                 local_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -679,14 +624,12 @@ class ProductionS3Client:
                     bytes_written: int = 0
                     buffer_size = self._get_adaptive_buffer_size()
 
-                    # Reserve expected bytes if we have size information
                     reserved_bytes = total_size if total_size else 0
                     if reserved_bytes > 0:
                         can_reserve = await self._reserve_in_flight_bytes(
                             bytes_count=reserved_bytes
                         )
                         if not can_reserve:
-                            # Apply backpressure - reduce buffer size further
                             buffer_size = min(buffer_size, DEFAULT_MIN_BUFFER_SIZE)
 
                     try:
@@ -700,11 +643,9 @@ class ProductionS3Client:
                                 if progress and task_id is not None:
                                     progress.update(task_id, completed=bytes_written)
 
-                                # Check memory pressure periodically and adapt buffer size
                                 if bytes_written % (buffer_size * 10) == 0:
                                     buffer_size = self._get_adaptive_buffer_size()
                     finally:
-                        # Release reserved bytes
                         if reserved_bytes > 0:
                             await self._release_in_flight_bytes(bytes_count=reserved_bytes)
 
@@ -719,33 +660,26 @@ class ProductionS3Client:
             finally:
                 await self._return_client(client)
 
-        try:
-            async for attempt in AsyncRetrying(
-                stop=stop_after_attempt(self._config.max_retries),
-                wait=wait_random_exponential(
-                    multiplier=self._config.retry_backoff_base,
-                    max=self._config.retry_backoff_max,
-                ),
-                retry=retry_if_exception(lambda e: self._is_retryable_exception(e)),
-                reraise=True,
-            ):
-                with attempt:
-                    result = await _do()
-            duration = time.time() - start_time
-            if result.success:
-                file_size = int(result.data.get("file_size", 0)) if result.data else 0
-                self._operation_count += 1
-                self._total_bytes_transferred += file_size
-                self._total_operation_time += duration
-            result.duration_ms = duration * 1000
-            return result
-        except Exception as e:
-            return S3OperationResult(
-                success=False,
-                operation=operation,
-                error=str(e),
-                duration_ms=(time.time() - start_time) * 1000,
-            )
+        result: S3OperationResult
+        async for attempt in AsyncRetrying(
+            stop=stop_after_attempt(self._config.max_retries),
+            wait=wait_random_exponential(
+                multiplier=self._config.retry_backoff_base,
+                max=self._config.retry_backoff_max,
+            ),
+            retry=retry_if_exception(lambda e: self._is_retryable_exception(e)),
+            reraise=True,
+        ):
+            with attempt:
+                result = await _do()
+        duration = time.time() - start_time
+        if result.success:
+            file_size = int(result.data.get("file_size", 0)) if result.data else 0
+            self._operation_count += 1
+            self._total_bytes_transferred += file_size
+            self._total_operation_time += duration
+        result.duration_ms = duration * 1000
+        return result
 
     async def upload_files_batch(
         self, operations: list[S3UploadRequest]
@@ -781,9 +715,8 @@ class ProductionS3Client:
             self._upload_single_with_semaphore(op) for op in s3_operations
         ]
 
-        results: list[S3OperationResult | BaseException] = await asyncio.gather(
-            *tasks, return_exceptions=True
-        )
+        results_tuple = await asyncio.gather(*tasks, return_exceptions=True)
+        results: list[S3OperationResult | BaseException] = list(results_tuple)
 
         processed_results: list[S3OperationResult] = []
         for result in results:
@@ -822,7 +755,11 @@ class ProductionS3Client:
             client = await self._get_client()
             try:
                 if operation.local_path is None:
-                    raise ValueError("local_path is required for download operations")
+                    return S3OperationResult(
+                        success=False,
+                        operation=operation,
+                        error="local_path is required for download operations",
+                    )
                 local_path = Path(operation.local_path)
 
                 if not local_path.exists():
@@ -853,33 +790,26 @@ class ProductionS3Client:
             finally:
                 await self._return_client(client)
 
-        try:
-            async for attempt in AsyncRetrying(
-                stop=stop_after_attempt(self._config.max_retries),
-                wait=wait_random_exponential(
-                    multiplier=self._config.retry_backoff_base,
-                    max=self._config.retry_backoff_max,
-                ),
-                retry=retry_if_exception(lambda e: self._is_retryable_exception(e)),
-                reraise=True,
-            ):
-                with attempt:
-                    result = await _do()
-            duration = time.time() - start_time
-            if result.success:
-                file_size = int(result.data.get("file_size", 0)) if result.data else 0
-                self._operation_count += 1
-                self._total_bytes_transferred += file_size
-                self._total_operation_time += duration
-            result.duration_ms = duration * 1000
-            return result
-        except Exception as e:
-            return S3OperationResult(
-                success=False,
-                operation=operation,
-                error=str(e),
-                duration_ms=(time.time() - start_time) * 1000,
-            )
+        result: S3OperationResult
+        async for attempt in AsyncRetrying(
+            stop=stop_after_attempt(self._config.max_retries),
+            wait=wait_random_exponential(
+                multiplier=self._config.retry_backoff_base,
+                max=self._config.retry_backoff_max,
+            ),
+            retry=retry_if_exception(lambda e: self._is_retryable_exception(e)),
+            reraise=True,
+        ):
+            with attempt:
+                result = await _do()
+        duration = time.time() - start_time
+        if result.success:
+            file_size = int(result.data.get("file_size", 0)) if result.data else 0
+            self._operation_count += 1
+            self._total_bytes_transferred += file_size
+            self._total_operation_time += duration
+        result.duration_ms = duration * 1000
+        return result
 
     async def _multipart_upload(
         self,
@@ -931,7 +861,8 @@ class ProductionS3Client:
 
         try:
             tasks = [asyncio.create_task(_guarded_upload(i)) for i in range(1, num_parts + 1)]
-            part_results = await asyncio.gather(*tasks, return_exceptions=True)
+            part_results_tuple = await asyncio.gather(*tasks, return_exceptions=True)
+            part_results = list(part_results_tuple)
             completed = [r for r in part_results if isinstance(r, dict)]
             if len(completed) != num_parts:
                 # Abort on any failure
@@ -970,9 +901,8 @@ class ProductionS3Client:
             self._list_objects_single(op) for op in operations
         ]
 
-        results: list[S3OperationResult | BaseException] = await asyncio.gather(
-            *tasks, return_exceptions=True
-        )
+        results_tuple = await asyncio.gather(*tasks, return_exceptions=True)
+        results: list[S3OperationResult | BaseException] = list(results_tuple)
 
         processed_results: list[S3OperationResult] = []
         for result in results:
@@ -1006,6 +936,7 @@ class ProductionS3Client:
                     return items
                 finally:
                     await self._return_client(client)
+                return []
 
             try:
                 async for attempt in AsyncRetrying(
@@ -1055,9 +986,8 @@ class ProductionS3Client:
             self._head_object_single(op) for op in operations
         ]
 
-        results: list[S3OperationResult | BaseException] = await asyncio.gather(
-            *tasks, return_exceptions=True
-        )
+        results_tuple = await asyncio.gather(*tasks, return_exceptions=True)
+        results: list[S3OperationResult | BaseException] = list(results_tuple)
 
         processed_results: list[S3OperationResult] = []
         for result in results:
@@ -1085,6 +1015,7 @@ class ProductionS3Client:
                     return await client.head_object(Bucket=operation.bucket, Key=operation.key)
                 finally:
                     await self._return_client(client)
+                return {}
 
             try:
                 async for attempt in AsyncRetrying(
@@ -1183,14 +1114,19 @@ class ProductionS3Client:
 
     def get_performance_metrics(self) -> dict[str, Any]:
         """Get performance metrics for monitoring."""
-        avg_operation_time: float = self._total_operation_time / max(1, self._operation_count)
+        avg_operation_time: float = self._total_operation_time / max(
+            1.0, float(self._operation_count)
+        )
 
         return {
             "operation_count": self._operation_count,
             "total_bytes_transferred": self._total_bytes_transferred,
             "avg_operation_time_ms": avg_operation_time * 1_000,
             "throughput_mbps": (
-                self._total_bytes_transferred / max(1, self._total_operation_time) / 1_024 / 1_024
+                self._total_bytes_transferred
+                / max(1.0, float(self._total_operation_time))
+                / 1_024
+                / 1_024
             ),
             "clients_created": self._clients_created,
             "client_pool_size": self._config.client_pool_size,

@@ -1,6 +1,7 @@
 import json
 import os
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import UTC, datetime
@@ -50,20 +51,20 @@ class SlackNotification:
             ],
         }
 
-    def _estimate_completion_time(self, jobs_count: int) -> str:
+    def _estimate_completion_time(self, jobs_count: int) -> str | None:
         """Estimate completion time for parallel pipeline based on job count."""
-        # Estimate based on historical data: ~45s per job, 10 parallel workers
-        if jobs_count == 0:
-            return "0 minutes"
-        estimated_minutes = max(
-            1, (jobs_count * 45) // (10 * 60)
-        )  # 10 parallel workers, 45s per job
-        if estimated_minutes < 60:
-            return f"~{estimated_minutes} minutes"
-        else:
-            hours = estimated_minutes // 60
-            minutes = estimated_minutes % 60
-            return f"~{hours}h {minutes}m"
+        # THIS ESTIMATE IS BOGUS
+        # if jobs_count == 0:
+        #     return "0 minutes"
+        # estimated_minutes = max(
+        #     1, (jobs_count * 45) // (10 * 60)
+        # )
+        # if estimated_minutes < 60:
+        #     return f"~{estimated_minutes} minutes"
+        # else:
+        #     hours = estimated_minutes // 60
+        #     minutes = estimated_minutes % 60
+        #     return f"~{hours}h {minutes}m"
 
     def format_job_completion_message(
         self, summary: JobSummary, environment: str = "unknown"
@@ -74,7 +75,6 @@ class SlackNotification:
             else 0
         )
 
-        # Determine status and color based on success rate and DLQ
         if success_rate >= 95 and summary.dlq_count == 0:
             color = "good"
             status_text = "Excellent"
@@ -183,23 +183,21 @@ def extract_job_metrics_from_cloudwatch(event: dict[str, Any]) -> JobSummary:
 
     import boto3
 
-    cloudwatch: boto3.client = boto3.client("cloudwatch")
+    cloudwatch = boto3.client("cloudwatch")
 
     event.get("AlarmData", {})
     alarm_name: str = event.get("AlarmName", "Unknown")
 
-    # Set time range for metrics query (last hour)
     end_time: datetime = datetime.utcnow()
     start_time = end_time - timedelta(hours=1)
 
     try:
-        # Query job completion metrics
         completed_response: dict[str, Any] = cloudwatch.get_metric_statistics(
             Namespace="Amira/Jobs",
             MetricName="JobsCompleted",
             StartTime=start_time,
             EndTime=end_time,
-            Period=3600,  # 1 hour
+            Period=3600,
             Statistics=["Sum"],
         )
 
@@ -221,7 +219,6 @@ def extract_job_metrics_from_cloudwatch(event: dict[str, Any]) -> JobSummary:
             Statistics=["Average"],
         )
 
-        # Extract metrics or use defaults
         completed_count: int = 0
         failed_count: int = 0
         avg_processing_time: float = 0.0
@@ -246,11 +243,10 @@ def extract_job_metrics_from_cloudwatch(event: dict[str, Any]) -> JobSummary:
             duration_minutes=duration_minutes,
             avg_processing_time=avg_processing_time,
             throughput_per_hour=throughput_per_hour,
-            dlq_count=0,  # Would need separate DLQ query
+            dlq_count=0,
         )
 
     except Exception:
-        # Fallback to alarm event data if CloudWatch query fails
         return JobSummary(
             total_enqueued=1,
             total_completed=0 if "fail" in alarm_name.lower() else 1,
@@ -285,12 +281,10 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
     environment = os.environ.get("AUDIO_ENV", "unknown")
 
     try:
-        # Check if this is a direct invocation (pipeline kickoff)
         if event.get("source") == "pipeline_kickoff":
             jobs_enqueued = event.get("jobs_enqueued", 0)
             message = notifier.format_pipeline_kickoff_message(jobs_enqueued, environment)
         else:
-            # Handle SNS-triggered events (alarms, completion)
             sns_data = parse_sns_message(event)
 
             if sns_data.get("AlarmName") == "JobCompletionDetected":

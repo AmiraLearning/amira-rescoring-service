@@ -50,7 +50,7 @@ async def enqueue_activities_from_athena(enqueuer: JobEnqueuer) -> int:
     try:
         override_query = os.environ.get("ATHENA_QUERY")
         if override_query and override_query.strip():
-            query_str = override_query
+            query_str: str = override_query
         else:
             from datetime import datetime, timedelta
 
@@ -66,7 +66,7 @@ async def enqueue_activities_from_athena(enqueuer: JobEnqueuer) -> int:
             districts_env = os.environ.get("DISTRICTS_FILTER", "955168,1000022968")
             districts = tuple([d.strip() for d in districts_env.split(",") if d.strip()])
 
-            query_str: str = build_activity_query(
+            query_str = build_activity_query(
                 start_time=start_str,
                 end_time=end_str,
                 table=table,
@@ -106,6 +106,7 @@ async def enqueue_activities_from_athena(enqueuer: JobEnqueuer) -> int:
             return await sqs_enqueuer.enqueue_batch(messages=messages)
     finally:
         await athena.close()
+    return 0
 
 
 async def send_slack_kickoff_notification(jobs_enqueued: int) -> None:

@@ -72,9 +72,28 @@ disallow_untyped_defs = true
 namespace_packages = true
 explicit_package_bases = true
 ignore_missing_imports = true
+follow_imports = "skip"
 plugins = []
+
 exclude = [
     "cdk\\.out/.*",
     "node_modules/.*",
     "target/.*"
+]
+
+[[tool.mypy.overrides]]
+module = "transformers.*"
+ignore_missing_imports = true
+follow_imports = "skip"
+
+[tool.pyrefly]
+project-excludes = [
+    "**/cdk.out/**/*",
+    "**/node_modules/**/*",
+    "**/target/**/*",
+]
+python-version = "3.12.0"
+ignore-missing-imports = [
+    "transformers.*",
+    "*",
 ]

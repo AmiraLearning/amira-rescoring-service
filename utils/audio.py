@@ -4,7 +4,7 @@ import warnings
 import wave
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Final
+from typing import Annotated, Any, Final
 
 import numpy as np
 import torch
@@ -113,7 +113,12 @@ def _load_audio_file(*, file_path: Path) -> tuple[torch.Tensor, int]:
             else use_torchcodec_env in {"1", "true", "yes", "on"}
         )
         if use_torchcodec and _USE_TORCHCODEC:
-            return torchaudio.load_with_torchcodec(str(file_path))
+            loader = getattr(torchaudio, "load_with_torchcodec", None)
+            if callable(loader):
+                loaded_any = loader(str(file_path))
+                if isinstance(loaded_any, tuple) and len(loaded_any) == 2:
+                    tensor, sr = loaded_any
+                    return tensor, int(sr)
         import warnings
 
         with warnings.catch_warnings():
@@ -133,7 +138,10 @@ def _load_audio_file(*, file_path: Path) -> tuple[torch.Tensor, int]:
         timeout_val = int(os.getenv("AUDIO_READ_TIMEOUT_SEC", str(DEFAULT_AUDIO_READ_TIMEOUT_SEC)))
         with ThreadPoolExecutor(max_workers=1) as pool:
             future = pool.submit(_do_read)
-            return future.result(timeout=timeout_val)
+            result = future.result(timeout=timeout_val)
+            return result
+    # Fallback (should be unreachable)
+    return torch.zeros(1), DEFAULT_SAMPLING_RATE
 
 
 PCM_WAV_HEADER_SIZE: Final[int] = 44
@@ -156,8 +164,9 @@ def _is_wav_empty(*, path: Path) -> bool:
         except (OSError, AttributeError) as e:
             logger.debug(f"File stat check failed: {type(e).__name__}: {e}")
         try:
-            info: torchaudio.info = torchaudio.info(str(path))
-            return int(getattr(info, "num_frames", 0)) == 0
+            info_obj = torchaudio.info(str(path))
+            num_frames = int(getattr(info_obj, "num_frames", 0))
+            return num_frames == 0
         except (RuntimeError, OSError, AttributeError) as e:
             logger.warning(
                 f"Failed to determine WAV frame count for {path}: {type(e).__name__}: {e}"
@@ -182,20 +191,18 @@ def _load_and_resample(*, path: Path) -> torch.Tensor | None:
 class AudioSegmentRequest(BaseModel):
     """Request model for audio segment loading."""
 
-    file_path: Path = Field(..., description="Path to the audio file")
-    seconds: int = Field(..., gt=0, description="Number of seconds to extract")
-    is_previous: bool = Field(
-        ..., description="If True, extract from end; if False, from beginning"
-    )
+    file_path: Path = Field(description="Path to the audio file")
+    seconds: Annotated[int, Field(gt=0)]
+    is_previous: bool
 
 
 class PaddedAudioSaveRequest(BaseModel):
     """Request model for saving padded audio."""
 
-    padded_path: Path = Field(..., description="Path where padded audio should be saved")
-    processed_speech: torch.Tensor = Field(..., description="Processed audio tensor to save")
-    activity_id: str = Field(..., description="Activity identifier for logging")
-    phrase_index: int = Field(..., ge=0, description="Phrase index for logging")
+    padded_path: Path
+    processed_speech: torch.Tensor
+    activity_id: str
+    phrase_index: Annotated[int, Field(ge=0)]
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
@@ -203,13 +210,11 @@ class PaddedAudioSaveRequest(BaseModel):
 class PadAudioRequest(BaseModel):
     """Request model for padding audio in memory."""
 
-    audio_dir: str = Field(..., description="Base audio directory")
-    activity_id: str = Field(..., description="Activity ID")
-    phrase_index: int = Field(..., ge=0, description="Phrase index (>= 0)")
-    padded_seconds: int = Field(
-        DEFAULT_PADDED_SECONDS, gt=0, description="Seconds to pad from adjacent phrases"
-    )
-    save_padded_audio: bool = Field(False, description="Whether to save padded audio to disk")
+    audio_dir: str
+    activity_id: str
+    phrase_index: Annotated[int, Field(ge=0)]
+    padded_seconds: Annotated[int, Field(gt=0)] = DEFAULT_PADDED_SECONDS
+    save_padded_audio: bool = False
 
 
 async def download_tutor_style_audio(

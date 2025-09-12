@@ -128,13 +128,21 @@ class BenchmarkSuite(BaseModel):
         times_ms = [t * MS_PER_SECOND for t in execution_times]
         success_rate = successful_runs / self.runs
 
+        # Ensure times_ms is a list[float] for statistics and min/max overloads
+        times_list: list[float] = list(times_ms)
+        mean_time_ms = statistics.mean(times_list)
+        median_time_ms = statistics.median(times_list)
+        std_dev_ms = statistics.stdev(times_list) if len(times_list) > 1 else 0.0
+        min_time_ms = min(times_list)
+        max_time_ms = max(times_list)
+
         return BenchmarkResult(
             config_name=config_name,
-            mean_time_ms=statistics.mean(times_ms),
-            median_time_ms=statistics.median(times_ms),
-            std_dev_ms=statistics.stdev(times_ms) if len(times_ms) > 1 else 0.0,
-            min_time_ms=min(times_ms),
-            max_time_ms=max(times_ms),
+            mean_time_ms=mean_time_ms,
+            median_time_ms=median_time_ms,
+            std_dev_ms=std_dev_ms,
+            min_time_ms=min_time_ms,
+            max_time_ms=max_time_ms,
             speedup_factor=1.0,  # Will be calculated relative to baseline
             success_rate=success_rate,
         )

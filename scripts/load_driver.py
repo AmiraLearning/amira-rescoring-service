@@ -209,7 +209,7 @@ class LoadDriver:
             return {}
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description="Amira Letter Scoring Load Test Driver")
     parser.add_argument("--queue-url", required=True, help="SQS Queue URL")
     parser.add_argument("--messages", type=int, default=1000, help="Total messages to send")

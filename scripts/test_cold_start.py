@@ -10,7 +10,7 @@ import statistics
 import time
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Final
+from typing import Annotated, Final
 
 from loguru import logger
 from pydantic import BaseModel, Field
@@ -60,7 +60,7 @@ class BenchmarkConfig(BaseModel):
         default="models/wav2vec2-ft-large-eng-phoneme-amirabet_2025-04-24",
         description="Path to W2V2 model",
     )
-    runs: int = Field(default=3, ge=1, description="Number of benchmark runs")
+    runs: Annotated[int, Field(ge=1)] = 3
 
     def create_strategy_config(self, *, strategy: OptimizationStrategy) -> W2VConfig:
         """Create W2V config for specific optimization strategy.
@@ -80,7 +80,7 @@ class BenchmarkConfig(BaseModel):
 
         match strategy:
             case OptimizationStrategy.BASELINE:
-                pass  # Use base config as-is
+                pass
             case OptimizationStrategy.FAST_INIT:
                 base_config["fast_init"] = True
             case OptimizationStrategy.JIT_TRACE:
@@ -129,7 +129,7 @@ class ColdStartBenchmarker:
         for run_idx in range(self._config.runs):
             start_time = time.perf_counter()
 
-            engine: Wav2Vec2InferenceEngine = Wav2Vec2InferenceEngine(w2v_config=w2v_config)
+            engine = Wav2Vec2InferenceEngine(w2v_config=w2v_config)
 
             init_time = time.perf_counter() - start_time
             times.append(init_time)

@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from pathlib import Path
-from typing import Any, Final
+from typing import Annotated, Any, Final
 from urllib.parse import urlparse
 
 import aioboto3
@@ -127,44 +127,19 @@ class AthenaClientConfig(BaseModel):
     s3_staging_path: str = Field(
         default=DEFAULT_STAGING_DIR, description="S3 path prefix for staging results"
     )
-    max_execution_checks: int = Field(
-        default=DEFAULT_MAX_EXECUTION_CHECKS,
-        ge=1,
-        le=3600,
-        description="Maximum number of status checks",
-    )
-    sleep_time: int = Field(
-        default=DEFAULT_SLEEP_TIME,
-        ge=1,
-        le=60,
-        description="Sleep time between status checks in seconds",
-    )
-    query_timeout: int = Field(
-        default=DEFAULT_QUERY_TIMEOUT,
-        ge=60,
-        le=7200,
-        description="Maximum query execution time in seconds",
-    )
+    max_execution_checks: Annotated[int, Field(ge=1, le=3600)] = DEFAULT_MAX_EXECUTION_CHECKS
+    sleep_time: Annotated[int, Field(ge=1, le=60)] = DEFAULT_SLEEP_TIME
+    query_timeout: Annotated[int, Field(ge=60, le=7200)] = DEFAULT_QUERY_TIMEOUT
     auto_cleanup: bool = Field(
         default=True, description="Automatically cleanup staging files after query"
     )
     enable_result_reuse: bool = Field(default=True, description="Enable Athena result reuse cache")
-    result_reuse_max_age_minutes: int = Field(
-        default=1000,
-        ge=1,
-        le=1440,
-        description="Max age in minutes for result reuse cache",
-    )
+    result_reuse_max_age_minutes: Annotated[int, Field(ge=1, le=1440)] = 1000
 
     enable_local_cache: bool = Field(
         default=False, description="Enable local on-disk cache for DataFrame results"
     )
-    local_cache_ttl_minutes: int = Field(
-        default=60,
-        ge=1,
-        le=10080,
-        description="TTL in minutes for local DataFrame cache",
-    )
+    local_cache_ttl_minutes: Annotated[int, Field(ge=1, le=10080)] = 60
     local_cache_dir: str = Field(
         default=str(Path.home() / ".cache" / "amira" / "athena"),
         description="Directory for local cache files",
@@ -401,6 +376,8 @@ class ProductionAthenaClient:
                 )
             )
             raise
+        # Unreachable safeguard for static analysis
+        return pl.DataFrame()
 
     async def _execute_query_with_retry(
         self,

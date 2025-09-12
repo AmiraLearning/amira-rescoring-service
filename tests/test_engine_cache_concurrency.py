@@ -119,7 +119,7 @@ class TestThreadSafeLRUCache:
             def __init__(self, name: str):
                 self.name = name
 
-            def __del__(self):
+            def __del__(self) -> None:
                 evicted_items.append(self.name)
 
         def rapid_insertion(start_id: int) -> None:

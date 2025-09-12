@@ -9,7 +9,7 @@ import argparse
 import os
 from datetime import UTC, datetime, timedelta
 from enum import IntEnum
-from typing import Any, Final
+from typing import Annotated, Any, Final
 
 import boto3
 from botocore.exceptions import BotoCoreError, ClientError
@@ -29,7 +29,7 @@ class CleanupConfig(BaseModel):
 
     bucket: str = Field(..., description="S3 bucket name")
     prefix: str = Field(..., description="S3 key prefix for staging objects")
-    age_days: int = Field(default=7, ge=0, description="Delete objects older than this many days")
+    age_days: Annotated[int, Field(ge=0)] = 7
     region: str = Field(default="us-east-1", description="AWS region for S3 client")
 
     @field_validator("bucket")

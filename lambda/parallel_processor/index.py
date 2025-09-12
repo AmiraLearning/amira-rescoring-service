@@ -58,8 +58,7 @@ def apply_lambda_optimizations() -> None:
             and hasattr(torch.backends.openmp, "is_available")
             and torch.backends.openmp.is_available()
         ):
-            if hasattr(torch.backends.openmp, "enabled"):
-                torch.backends.openmp.enabled = True
+            pass
 
         _optimizations_applied = True
 
@@ -239,7 +238,7 @@ def publish_batch_metrics(successes: int, failures: int, total_time: float) -> N
             metrics.append(
                 {
                     "MetricName": "BatchThroughput",
-                    "Value": successes / (total_time / 60) if total_time > 0 else 0,
+                    "Value": int(successes / (total_time / 60)) if total_time > 0 else 0,
                     "Unit": "Count/Minute",
                     "Dimensions": [{"Name": "Processor", "Value": "existing-pipeline-arm64"}],
                 }
@@ -274,6 +273,7 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
             record: dict[str, Any], sem: asyncio.Semaphore
         ) -> tuple[bool, float, str | None]:
             async with sem:
+                activity_id: str | None = None
                 try:
                     body_text = record.get("body", "{}")
                     body = json.loads(body_text) if isinstance(body_text, str) else body_text
@@ -289,12 +289,12 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
                     return True, result.processing_time, None
                 except (ValueError, KeyError, json.JSONDecodeError) as e:
                     logger.error(
-                        f"Activity processing data error for {activity_id if 'activity_id' in locals() else 'unknown'}: {type(e).__name__}: {e}"
+                        f"Activity processing data error for {activity_id or 'unknown'}: {type(e).__name__}: {e}"
                     )
                     return False, 0.0, record.get("messageId")
                 except Exception as e:
                     logger.error(
-                        f"Unexpected activity processing error for {activity_id if 'activity_id' in locals() else 'unknown'}: {type(e).__name__}: {e}"
+                        f"Unexpected activity processing error for {activity_id or 'unknown'}: {type(e).__name__}: {e}"
                     )
                     return False, 0.0, record.get("messageId")
 

@@ -4,7 +4,7 @@
 import statistics
 import time
 from pathlib import Path
-from typing import Final
+from typing import Annotated, Final, cast
 
 import torch
 from loguru import logger
@@ -22,7 +22,7 @@ DEFAULT_BENCHMARK_RUNS: Final[int] = 5
 class ModelPaths(BaseModel):
     """Model file paths configuration."""
 
-    model_dir: Path = Field(..., description="Directory containing model files")
+    model_dir: Path = Field(description="Directory containing model files")
 
     @property
     def pytorch_path(self) -> Path:
@@ -46,15 +46,15 @@ class ModelPaths(BaseModel):
 class ConversionMetrics(BaseModel):
     """Metrics from model conversion process."""
 
-    load_time_seconds: float = Field(..., ge=0, description="Time to load original model")
-    convert_time_seconds: float = Field(..., ge=0, description="Time to convert to safetensors")
-    original_size_mb: float = Field(..., ge=0, description="Original model size in MB")
-    safetensors_size_mb: float = Field(..., ge=0, description="Safetensors model size in MB")
+    load_time_seconds: Annotated[float, Field(ge=0)] = 0.0
+    convert_time_seconds: Annotated[float, Field(ge=0)] = 0.0
+    original_size_mb: Annotated[float, Field(ge=0)] = 0.0
+    safetensors_size_mb: Annotated[float, Field(ge=0)] = 0.0
 
     @property
     def size_ratio(self) -> float:
         """Size ratio of safetensors to original."""
-        return self.safetensors_size_mb / self.original_size_mb
+        return self.safetensors_size_mb / self.original_size_mb if self.original_size_mb else 0.0
 
     @property
     def total_time_seconds(self) -> float:
@@ -65,10 +65,8 @@ class ConversionMetrics(BaseModel):
 class BenchmarkMetrics(BaseModel):
     """Metrics from loading benchmark comparison."""
 
-    pytorch_times: list[float] = Field(..., min_length=1, description="PyTorch loading times")
-    safetensors_times: list[float] = Field(
-        ..., min_length=1, description="Safetensors loading times"
-    )
+    pytorch_times: Annotated[list[float], Field(min_length=1)] = []
+    safetensors_times: Annotated[list[float], Field(min_length=1)] = []
 
     @property
     def pytorch_stats(self) -> dict[str, float]:
@@ -93,7 +91,11 @@ class BenchmarkMetrics(BaseModel):
     @property
     def speedup_factor(self) -> float:
         """Loading speedup factor."""
-        return self.pytorch_stats["mean"] / self.safetensors_stats["mean"]
+        return (
+            self.pytorch_stats["mean"] / self.safetensors_stats["mean"]
+            if self.safetensors_stats["mean"]
+            else 0.0
+        )
 
     @property
     def improvement_percent(self) -> float:
@@ -122,7 +124,8 @@ class ModelConverter:
         """Load PyTorch model with timing measurement."""
         logger.info(f"Loading PyTorch model from {self._paths.model_dir}")
         start_time = time.perf_counter()
-        model: Wav2Vec2ForCTC = Wav2Vec2ForCTC.from_pretrained(str(self._paths.model_dir))
+        model = Wav2Vec2ForCTC.from_pretrained(str(self._paths.model_dir))
+        model = cast(Wav2Vec2ForCTC, model)
         load_time = time.perf_counter() - start_time
         logger.info(f"Model loaded in {load_time:.3f}s")
         return model, load_time
@@ -200,7 +203,8 @@ class LoadingBenchmarker:
 
         for idx in range(runs):
             start = time.perf_counter()
-            model: Wav2Vec2ForCTC = Wav2Vec2ForCTC.from_pretrained(str(self._paths.model_dir))
+            model = Wav2Vec2ForCTC.from_pretrained(str(self._paths.model_dir))
+            model = cast(Wav2Vec2ForCTC, model)
             self._clear_model_memory(model=model)
             elapsed: float = time.perf_counter() - start
             times.append(elapsed)
@@ -215,9 +219,8 @@ class LoadingBenchmarker:
 
         for idx in range(runs):
             start: float = time.perf_counter()
-            model: Wav2Vec2ForCTC = Wav2Vec2ForCTC.from_pretrained(
-                str(self._paths.model_dir), use_safetensors=True
-            )
+            model = Wav2Vec2ForCTC.from_pretrained(str(self._paths.model_dir), use_safetensors=True)
+            model = cast(Wav2Vec2ForCTC, model)
             self._clear_model_memory(model=model)
             elapsed: float = time.perf_counter() - start
             times.append(elapsed)
