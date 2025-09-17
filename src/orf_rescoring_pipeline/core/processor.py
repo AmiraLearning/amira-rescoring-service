@@ -171,7 +171,9 @@ def _fetch_model_features_from_appsync(
 ) -> list[dict[str, Any]]:
     """Fetch model features from AppSync for the given activity."""
     features_query = appsync.get_custom_activity_features(feature_list=REQUIRED_FEATURE_FIELDS)
-    return features_query(activity_id=activity_id)
+    from typing import cast
+
+    return cast(list[dict[str, Any]], features_query(activity_id=activity_id))
 
 
 def _execute_audio_transcription_phase(

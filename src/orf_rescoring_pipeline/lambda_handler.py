@@ -8,8 +8,6 @@ independently with proper resource management and error handling.
 
 from typing import Any, Final
 
-from amira_pyutils.general.environment import Environment, Environments
-from amira_pyutils.services.appsync import AppSync
 from loguru import logger
 from pydantic import BaseModel, Field, ValidationError
 
@@ -21,6 +19,19 @@ from orf_rescoring_pipeline.utils.transcription import (
     KaldiASRClient,
     W2VASRClient,
 )
+from typing import TYPE_CHECKING
+
+# TODO(amira_pyutils): Replace temporary stubs with real imports when available
+if TYPE_CHECKING:  # pragma: no cover - types only
+    from amira_pyutils.services.appsync import AppSync as _AppSync
+    from amira_pyutils.general.environment import (
+        Environment as _Environment,
+        Environments as _Environments,
+    )
+
+AppSync = Any
+Environment = Any
+Environments = Any
 
 DEFAULT_ENV_NAME: Final[str] = "prod2"
 
@@ -236,7 +247,12 @@ def _execute_processing_pipeline(
         model_features_cache=None,
     )
 
-    return result[0] if isinstance(result, tuple) else result
+    from typing import Any as _Any, cast as _cast
+
+    if isinstance(result, tuple):
+        # result like (success, ...)
+        return bool(result[0])
+    return bool(_cast(bool, result))
 
 
 def _create_success_response(*, result: ProcessingResult) -> dict[str, Any]:

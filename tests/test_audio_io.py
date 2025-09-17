@@ -39,7 +39,7 @@ def test_audio_mmap_path_used(monkeypatch: Any, tmp_path: Path) -> None:
     def fake_wav_read(path: str, mmap: bool = False) -> Any:
         assert mmap is True
         sr = 16000
-        data = np.zeros((16000,), dtype=np.int16)
+        data: Any = np.zeros((16000,), dtype=np.int16)
         return sr, data
 
     monkeypatch.setattr("utils.audio.scipy.io.wavfile.read", fake_wav_read, raising=False)

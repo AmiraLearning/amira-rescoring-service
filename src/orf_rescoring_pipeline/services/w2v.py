@@ -10,8 +10,6 @@ import aiohttp
 import numpy as np
 import orjson as json
 from aiohttp import ClientSession, ClientTimeout, WSMsgType
-from amira_pyutils.shared.core.errors import AmiraError
-from amira_pyutils.shared.core.logging import get_logger
 from tenacity import (
     retry,
     retry_if_exception_type,
@@ -20,11 +18,23 @@ from tenacity import (
 )
 
 
+import logging
+
+
+class AmiraError(Exception):
+    """Base error with optional retryable flag."""
+
+    def __init__(self, msg: str | None = None, retryable: bool | None = None) -> None:
+        super().__init__(msg if msg is not None else "")
+        self.retryable = retryable
+
+
 class W2VError(AmiraError):
     """Error for W2V client failures."""
 
 
-logger = get_logger(__name__)
+# TODO(amira_pyutils): replace with amira_pyutils logger
+logger = logging.getLogger(__name__)
 
 DEFAULT_SESSION_TIMEOUT: Final[float] = 30.0
 DEFAULT_REQUEST_TIMEOUT: Final[float] = 30.0
@@ -450,7 +460,7 @@ class W2VClient:
         elif ws.close_code == aiohttp.WSCloseCode.ABNORMAL_CLOSURE:
             raise ConnectionResetError("Internal server error handling session")
 
-    @retry(
+    @retry(  # type: ignore[misc]
         stop=stop_after_attempt(DEFAULT_MAX_RETRIES),
         wait=wait_exponential(multiplier=DEFAULT_BACKOFF_FACTOR),
         retry=retry_if_exception_type((aiohttp.ClientError, asyncio.TimeoutError)),

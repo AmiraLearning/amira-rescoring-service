@@ -1,7 +1,7 @@
 """Models for the inference pipeline."""
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Annotated, Any, Self
+from typing import TYPE_CHECKING, Annotated, Any, Self, cast
 
 import numpy as np
 from pydantic import BaseModel, ConfigDict, Field, field_serializer, model_validator
@@ -212,7 +212,7 @@ class GPUInferenceResult(BaseModel):
         """
         if value is None:
             return None
-        return value.tolist()
+        return cast(list[float], value.tolist())
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 

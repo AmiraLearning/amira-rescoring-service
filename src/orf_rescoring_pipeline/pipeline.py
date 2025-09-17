@@ -7,7 +7,7 @@ individual activities without batch operations.
 """
 
 import logging
-from typing import Any
+from typing import Any, cast
 
 from orf_rescoring_pipeline.lambda_handler import handler
 
@@ -33,7 +33,7 @@ def process_single_activity_entry(
     """
     event = {"activity_id": activity_id, "env_name": env_name, "debug": debug}
 
-    result = handler(event, None)
+    result = cast(dict[str, Any], handler(event, None))
 
     if result["statusCode"] == 200:
         logger.info(f"Successfully processed activity {activity_id}")

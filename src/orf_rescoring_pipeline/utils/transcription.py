@@ -6,7 +6,6 @@ transcribing audio data with word-level timing information essential for
 the alignment process.
 """
 
-import asyncio
 import io
 import json
 import logging
@@ -19,8 +18,8 @@ import aiohttp
 import numpy as np
 import requests
 import soundfile as sf
-from amira_pyutils.services.kaldi import KaldiClient
-from amira_pyutils.services.w2v_client import W2VStackClient
+from orf_rescoring_pipeline.services.kaldi import KaldiClient, KaldiConfig, KaldiResult
+from orf_rescoring_pipeline.services.w2v import W2VClient, W2VConfig
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_fixed
 
 from orf_rescoring_pipeline.models import Activity, TranscriptItem, WordItem
@@ -77,7 +76,7 @@ class DeepgramASRClient:
         transcript_dir.mkdir(parents=True, exist_ok=True)
         return transcript_dir / f"{activity_id}_deepgram_transcript.json"
 
-    def _load_cached_transcript(self, activity_id: str) -> dict | None:
+    def _load_cached_transcript(self, activity_id: str) -> dict[str, Any] | None:
         """Load cached transcript if available.
 
         Args:
@@ -90,10 +89,12 @@ class DeepgramASRClient:
         if transcript_path.exists():
             logger.info(f"Activity {activity_id}: Loading cached transcript")
             with open(transcript_path) as f:
-                return json.load(f)
+                from typing import cast
+
+                return cast(dict[str, Any], json.load(f))
         return None
 
-    def _save_transcript(self, activity_id: str, transcript_json: dict) -> None:
+    def _save_transcript(self, activity_id: str, transcript_json: dict[str, Any]) -> None:
         """Save transcript to cache file.
 
         Args:
@@ -104,7 +105,7 @@ class DeepgramASRClient:
         with open(transcript_path, "w") as f:
             json.dump(transcript_json, f)
 
-    def _create_transcript_item(self, transcript_json: dict) -> TranscriptItem:
+    def _create_transcript_item(self, transcript_json: dict[str, Any]) -> TranscriptItem:
         """Create TranscriptItem from Deepgram response.
 
         Args:
@@ -281,10 +282,10 @@ class KaldiASRClient:
 
     def __init__(self) -> None:
         """Initialize Kaldi ASR client with hardcoded URLs and graph ID."""
-        self.general_client = KaldiClient(url=GENERAL_KALDI_URL)
-        self.partner_client = KaldiClient(url=PARTNER_KALDI_URL)
+        self.general_client = KaldiClient(config=KaldiConfig(url=GENERAL_KALDI_URL))
+        self.partner_client = KaldiClient(config=KaldiConfig(url=PARTNER_KALDI_URL))
 
-    def _get_asr_client(self, activity: Activity) -> KaldiClient:
+    def _get_asr_client(self, *, activity: Activity) -> KaldiClient:
         """Get the appropriate ASR client based on activity story type.
 
         Args:
@@ -306,7 +307,7 @@ class KaldiASRClient:
             )
 
     def _calculate_audio_duration(
-        self, audio_data: bytes, activity_id: str, phrase_index: int
+        self, *, audio_data: bytes, activity_id: str, phrase_index: int
     ) -> None:
         """Calculate and log audio duration for debugging purposes.
 
@@ -327,7 +328,7 @@ class KaldiASRClient:
                 f"Activity {activity_id}: Transcribing phrase {phrase_index} with Kaldi client"
             )
 
-    def _create_transcript_item(self, kaldi_data: dict) -> TranscriptItem:
+    def _create_transcript_item(self, *, kaldi_data: KaldiResult) -> TranscriptItem:
         """Create TranscriptItem from Kaldi response.
 
         Args:
@@ -336,18 +337,18 @@ class KaldiASRClient:
         Returns:
             Structured transcript item.
         """
-        words = [
+        words: list[WordItem] = [
             WordItem(
-                word=word_data["word"],
-                start=word_data["start_time"],
-                end=word_data["end_time"],
-                confidence=word_data["confidence"],
+                word=word_data.word,
+                start=word_data.start_time,
+                end=word_data.end_time,
+                confidence=word_data.confidence,
             )
-            for word_data in kaldi_data["transcription"]
+            for word_data in kaldi_data.data.transcription
         ]
-        return TranscriptItem(transcript=kaldi_data["text"], words=words)
+        return TranscriptItem(transcript=kaldi_data.data.text, words=words)
 
-    @retry(
+    @retry(  # type: ignore[misc]
         stop=stop_after_attempt(RETRY_MAX_ATTEMPTS),
         wait=wait_fixed(RETRY_WAIT_SECONDS),
         retry=retry_if_exception_type(Exception),
@@ -366,35 +367,30 @@ class KaldiASRClient:
         Returns:
             TranscriptItem with transcript and word-level timing, or None if failed.
         """
-        client = self._get_asr_client(activity)
+        client = self._get_asr_client(activity=activity)
         lm_phrase_id = f"{activity.story_id}_{phrase_index + 1}"
 
         logger.info(
             f"Activity {activity.activity_id}: Transcribing phrase {phrase_index} with Kaldi client {client._url}"
         )
 
-        self._calculate_audio_duration(audio_data, activity.activity_id, phrase_index)
+        self._calculate_audio_duration(
+            audio_data=audio_data, activity_id=activity.activity_id, phrase_index=phrase_index
+        )
 
         with tempfile.NamedTemporaryFile(suffix=".wav", delete=False, buffering=0) as tmp_file:
             tmp_file.write(audio_data)
 
         try:
-            metadata: dict[str, dict[str, Any]] = {"asr": {}}
-            loop = asyncio.get_event_loop()
-            from functools import partial
-
-            fetch_fn = partial(
-                client.fetch_kaldi_data,
-                kaldi_type="kaldi",
+            result = await client.transcribe_audio(
+                audio_path=tmp_file.name,
                 graph_id=KALDI_GRAPH_ID,
                 lm_phrase_id=lm_phrase_id,
-                metadata=metadata,
-                audio_path=tmp_file.name,
+                kaldi_type="kaldi",
             )
-            result = await loop.run_in_executor(None, fetch_fn)
 
-            kaldi_data = result["asr"]["kaldi"]["data"]
-            transcript_item = self._create_transcript_item(kaldi_data)
+            kaldi_data = result.data
+            transcript_item = self._create_transcript_item(kaldi_data=kaldi_data)
 
             logger.info(
                 f"Activity {activity.activity_id}: Kaldi transcription completed for phrase {phrase_index} - "
@@ -424,7 +420,7 @@ class W2VASRClient:
 
     def __init__(self) -> None:
         """Initialize W2V ASR client with hardcoded endpoint."""
-        self.w2v_client = W2VStackClient(W2V_ENDPOINT)
+        self.w2v_client = W2VClient(config=W2VConfig(url=W2V_ENDPOINT))
         logger.info(f"W2VASRClient initialized with endpoint={W2V_ENDPOINT}")
 
     def _resample_audio(self, audio: np.ndarray, original_sr: int) -> np.ndarray:
@@ -492,13 +488,13 @@ class W2VASRClient:
 
         return audio
 
-    @retry(
+    @retry(  # type: ignore[misc]
         stop=stop_after_attempt(RETRY_MAX_ATTEMPTS),
         wait=wait_fixed(RETRY_WAIT_SECONDS),
         retry=retry_if_exception_type(Exception),
         reraise=True,
     )
-    def transcribe(
+    async def transcribe(
         self, activity: Activity, phrase_index: int, audio_data: bytes
     ) -> TranscriptItem | None:
         """Transcribe phrase audio data using W2V API.
@@ -513,19 +509,19 @@ class W2VASRClient:
         """
         logger.info(f"Activity {activity.activity_id}: Transcribing phrase {phrase_index} with W2V")
 
-        audio = self._load_audio_data(audio_data, activity.activity_id, phrase_index)
-
-        w2v_response = self.w2v_client.transcribe(
-            audio, incremental=True, streaming=False, as_pm=False
+        audio = self._load_audio_data(
+            audio_data=audio_data, activity_id=activity.activity_id, phrase_index=phrase_index
         )
 
-        if "transcription" not in w2v_response:
-            logger.warning(
-                f"Activity {activity.activity_id}: W2V response missing 'transcription' field"
-            )
+        w2v_response = await self.w2v_client.transcribe_batch(
+            audio=audio, incremental=True, streaming=False, as_pm=False
+        )
+
+        if w2v_response.status != "success":
+            logger.warning(f"Activity {activity.activity_id}: W2V response status is not 'success'")
             return None
 
-        transcription_data = w2v_response["transcription"]
+        transcription_data = w2v_response.data["transcription"]
 
         logger.info(
             f"Activity {activity.activity_id}: W2V transcription completed for phrase {phrase_index} - {len(transcription_data)} characters"

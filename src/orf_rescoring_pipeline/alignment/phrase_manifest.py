@@ -234,7 +234,7 @@ class PhraseBuilder:
         phrase_index, seq_num = map(int, parts.groups())
         return S3SegmentMetadata(sequenceNumber=seq_num, phraseIndex=phrase_index)
 
-    @retry(
+    @retry(  # type: ignore[misc]
         stop=stop_after_attempt(RETRY_MAX_ATTEMPTS),
         wait=wait_exponential(multiplier=RETRY_MIN_WAIT, max=RETRY_MAX_WAIT),
         reraise=True,

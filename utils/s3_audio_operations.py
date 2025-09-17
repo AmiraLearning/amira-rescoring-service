@@ -187,7 +187,8 @@ async def load_activity_manifest(
             if temp_file.exists():
                 content: bytes = temp_file.read_bytes()
                 temp_file.unlink()
-                return json.loads(content.decode("utf-8"))
+                data = json.loads(content.decode("utf-8"))
+                return data if isinstance(data, dict) else None
 
     except Exception as e:
         logger.debug(f"No manifest found for {activity_id}: {e}")

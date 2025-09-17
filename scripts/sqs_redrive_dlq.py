@@ -8,7 +8,7 @@ back to the main processing queue with proper error handling and batch processin
 import argparse
 import os
 import sys
-from typing import Final
+from typing import Final, cast
 
 import boto3
 from botocore.exceptions import BotoCoreError, ClientError
@@ -96,7 +96,7 @@ class SQSRedriveClient:
         response = self._client.receive_message(
             QueueUrl=queue_url, MaxNumberOfMessages=BATCH_SIZE, WaitTimeSeconds=WAIT_TIME_SECONDS
         )
-        return response.get("Messages", [])
+        return cast(list[dict[str, str]], response.get("Messages", []))
 
     def _send_messages_to_destination(
         self, *, messages: list[dict[str, str]], dest_url: str

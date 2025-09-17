@@ -123,7 +123,9 @@ def _load_audio_file(*, file_path: Path) -> tuple[torch.Tensor, int]:
 
         with warnings.catch_warnings():
             warnings.filterwarnings("ignore", category=UserWarning, module="torchaudio")
-            return torchaudio.load(str(file_path))
+            from typing import cast
+
+            return cast(tuple[torch.Tensor, int], torchaudio.load(str(file_path)))
 
     use_signal: bool = threading.current_thread() is threading.main_thread()
     if use_signal:
@@ -185,7 +187,9 @@ def _load_and_resample(*, path: Path) -> torch.Tensor | None:
         return None
     speech, sr = _load_audio_file(file_path=path)
     resampler = _get_resampler(orig=sr)
-    return resampler(speech.squeeze(0))
+    from typing import cast
+
+    return cast(torch.Tensor, resampler(speech.squeeze(0)))
 
 
 class AudioSegmentRequest(BaseModel):
@@ -397,7 +401,9 @@ def _try_load_existing_padded_audio(*, padded_path: Path) -> np.ndarray | None:
         speech = resampler(speech.squeeze(0))
         if speech.numel() == 0:
             return None
-        return speech.numpy()
+        from typing import cast
+
+        return cast(np.ndarray, speech.numpy())
     except Exception as e:
         logger.warning(f"Failed to load existing padded audio {padded_path}: {e}")
         return None
@@ -513,7 +519,9 @@ def load_complete_audio_in_memory(*, audio_dir: str, activity_id: str) -> np.nda
         speech = resampler(speech.squeeze(0))
 
         logger.info(f"Successfully loaded complete audio for {activity_id}")
-        return speech.numpy()
+        from typing import cast
+
+        return cast(np.ndarray, speech.numpy())
 
     except Exception as e:
         logger.error(f"Failed to load complete audio for {activity_id}: {e}")

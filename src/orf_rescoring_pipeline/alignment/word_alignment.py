@@ -3,12 +3,21 @@ import threading
 from pathlib import Path
 from typing import Final
 
+from enum import StrEnum
+from typing import Sequence, TypeVar
+from abc import ABC, abstractmethod
+from typing import Generic
+from types import MappingProxyType
+
+from infra.s3_client import HighPerformanceS3Config, preload_s3_client_async
 import amira_pyutils.services.s3 as s3_utils
 from amira_fe.phon_level_alignment import phoneme_align_dash
 from amira_fe.word_level_alignment import align_texts_dash
-from amira_pyutils.data.abstract_alignment import AlignmentConfig, WordSelection
-from amira_pyutils.general.language import LanguageHandling
-from amira_pyutils.general.phon_alphabets import english2amirabet
+from amira_pyutils.abstract_alignment import AlignmentConfig, WordSelection
+from amira_pyutils.language import LanguageHandling
+from amira_pyutils.phone_alphabets import english2amirabet
+
+# TODO this is the meet of the imports
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +41,7 @@ def _get_phoneme_dict_path() -> Path:
     return Path(__file__).parent.parent / PHONEME_DICT_FILENAME
 
 
-def _download_phoneme_dict_from_s3(*, file_path: Path) -> None:
+async def _download_phoneme_dict_from_s3(*, file_path: Path) -> None:
     """Download phoneme dictionary from S3 to local cache.
 
     Args:
@@ -43,7 +52,7 @@ def _download_phoneme_dict_from_s3(*, file_path: Path) -> None:
     """
     logger.info("Downloading phoneme dictionary from S3...")
     address = s3_utils.s3_addr_from_uri(S3_PHONEME_DICT_URI)
-    success = s3_utils.s3_try_download_file(address.bucket, address.key, file_path)
+    success = await s3_utils.s3_try_download_file(address.bucket, address.key, file_path)
     if not success:
         raise FileNotFoundError(
             f"Failed to download {address.bucket}/{address.key} to {file_path}."
@@ -51,7 +60,7 @@ def _download_phoneme_dict_from_s3(*, file_path: Path) -> None:
     logger.info(f"Phoneme dictionary cached at {file_path}")
 
 
-def _parse_phoneme_dict_file(*, file_path: Path) -> dict[str, str]:
+async def _parse_phoneme_dict_file(*, file_path: Path) -> dict[str, str]:
     """Parse phoneme dictionary file into word-to-phoneme mapping.
 
     Args:
@@ -71,7 +80,7 @@ def _parse_phoneme_dict_file(*, file_path: Path) -> dict[str, str]:
     return phoneme_dict
 
 
-def _load_phoneme_dict_from_s3() -> dict[str, str]:
+async def _load_phoneme_dict_from_s3() -> dict[str, str]:
     """Load the phoneme dictionary from S3 with thread-safe caching.
 
     Returns:
@@ -90,9 +99,9 @@ def _load_phoneme_dict_from_s3() -> dict[str, str]:
     if not file_path.exists():
         with _download_lock:
             if not file_path.exists():
-                _download_phoneme_dict_from_s3(file_path=file_path)
+                await _download_phoneme_dict_from_s3(file_path=file_path)
 
-    _phoneme_dict_cache = _parse_phoneme_dict_file(file_path=file_path)
+    _phoneme_dict_cache = await _parse_phoneme_dict_file(file_path=file_path)
     return _phoneme_dict_cache
 
 
@@ -244,7 +253,17 @@ def get_word_level_transcript_alignment_w2v(
         return [WORD_NO_MATCH_SCORE] * len(story_phrase.split())
 
     config = _create_w2v_alignment_config()
-    phoneme_dict = _load_phoneme_dict_from_s3()
+
+    # TODO(amira_pyutils/s3_client): Replace sync bridge with real client wiring
+    def _load_phoneme_dict_from_s3_sync() -> dict[str, str]:
+        try:
+            import asyncio
+
+            return asyncio.run(_load_phoneme_dict_from_s3())
+        except Exception:
+            return {}
+
+    phoneme_dict = _load_phoneme_dict_from_s3_sync()
 
     story_words = story_phrase.split()
     story_in_amirabet = _convert_words_to_amirabet(words=story_words, phoneme_dict=phoneme_dict)

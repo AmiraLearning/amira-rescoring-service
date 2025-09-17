@@ -309,7 +309,7 @@ def _create_default_phrase_data(
     ]
 
 
-@retry(
+@retry(  # type: ignore[misc]
     stop=stop_after_attempt(RETRY_MAX_ATTEMPTS),
     wait=wait_exponential(
         multiplier=RETRY_MIN_WAIT_SECONDS,
@@ -372,7 +372,7 @@ def _process_single_page(
     *,
     page_index: int,
     activity: Activity,
-    manifest_pages: list,
+    manifest_pages: list[Any],
 ) -> tuple[int, int, int]:
     """Process alignment for a single page.
 
@@ -432,7 +432,7 @@ def _get_timing_file_path(*, activity: Activity) -> Path:
 def process_activity_timing(
     *,
     activity: Activity,
-    manifest_pages: list,
+    manifest_pages: list[Any],
     save_files: bool = True,
 ) -> None:
     """Process page-level timing alignment for an activity.

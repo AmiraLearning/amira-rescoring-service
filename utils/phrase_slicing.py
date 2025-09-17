@@ -114,7 +114,8 @@ async def load_activity_manifest(
         if not results or not results[0].success:
             return None
         with open(tmp_path) as f:
-            return json.load(f)
+            data = json.load(f)
+            return data if isinstance(data, dict) else None
     except Exception as e:
         logger.warning(f"Failed to load manifest for {activity_id}: {e}")
         return None

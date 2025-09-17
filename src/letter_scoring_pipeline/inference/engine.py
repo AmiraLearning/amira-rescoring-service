@@ -3,7 +3,7 @@ import os
 import time
 import traceback
 from threading import Lock, RLock
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 import torch
@@ -141,7 +141,7 @@ async def preload_inference_engine_async(
             engine.infer(input_data=InferenceInput(audio_array=dummy, inference_id="warmup"))
         return engine
 
-    return await asyncio.to_thread(_build)
+    return cast("Wav2Vec2InferenceEngine | TritonInferenceEngine", await asyncio.to_thread(_build))
 
 
 class Wav2Vec2InferenceEngine:
@@ -274,7 +274,7 @@ class Wav2Vec2InferenceEngine:
             should_quantize = self._should_enable_quantization()
             if should_quantize:
                 try:
-                    self._model = torch.quantization.quantize_dynamic(
+                    self._model = torch.quantization.quantize_dynamic(  # type: ignore[attr-defined]
                         self._model, {torch.nn.Linear}, dtype=torch.qint8
                     )
                     logger.info("Applied dynamic quantization to W2V2 model (CPU)")
@@ -305,7 +305,7 @@ class Wav2Vec2InferenceEngine:
             dummy_input: torch.Tensor = torch.zeros((1, sample_length), device=self._device)
 
             logger.debug(f"Initializing JIT trace with input shape {dummy_input.shape}")
-            traced_result = torch.jit.trace(self._model, dummy_input, strict=False)
+            traced_result = torch.jit.trace(self._model, dummy_input, strict=False)  # type: ignore[no-untyped-call]
             if isinstance(traced_result, torch.jit.ScriptModule):
                 self._traced_model = traced_result
             else:
@@ -387,7 +387,7 @@ class Wav2Vec2InferenceEngine:
                 autocast_dtype = torch.bfloat16
 
             try:
-                with torch.amp.autocast(device_type="cuda", dtype=autocast_dtype):
+                with torch.amp.autocast(device_type="cuda", dtype=autocast_dtype):  # type: ignore[attr-defined]
                     logger.debug(f"Running model with CUDA autocast (dtype={autocast_dtype})")
                     logits = model_to_use(input_values)
                     if not isinstance(logits, torch.Tensor):
@@ -405,7 +405,7 @@ class Wav2Vec2InferenceEngine:
                         logits = logits.logits
         elif self._device.type == "mps" and use_amp and hasattr(torch, "autocast"):
             try:
-                with torch.amp.autocast(device_type="mps"):
+                with torch.amp.autocast(device_type="mps"):  # type: ignore[attr-defined]
                     logger.debug("Running model with MPS autocast")
                     logits = model_to_use(input_values)
                     if not isinstance(logits, torch.Tensor):
@@ -727,14 +727,14 @@ def get_cached_engine(
     # Try to get from cache first
     engine = _engine_cache.get(cache_key)
     if engine is not None:
-        return engine
+        return cast("Wav2Vec2InferenceEngine | TritonInferenceEngine", engine)
 
     # Create new engine with lock to prevent duplicate creation
     with _engine_creation_lock:
         # Double-check pattern: another thread might have created it while we waited
         engine = _engine_cache.get(cache_key)
         if engine is not None:
-            return engine
+            return cast("Wav2Vec2InferenceEngine | TritonInferenceEngine", engine)
 
         logger.info(f"Creating new inference engine with key: {cache_key}")
 
@@ -748,7 +748,7 @@ def get_cached_engine(
 
             # Cache the newly created engine
             _engine_cache.put(cache_key, engine)
-            return engine
+            return cast("Wav2Vec2InferenceEngine | TritonInferenceEngine", engine)
 
         except Exception as e:
             logger.error(f"Failed to create inference engine: {type(e).__name__}: {e}")

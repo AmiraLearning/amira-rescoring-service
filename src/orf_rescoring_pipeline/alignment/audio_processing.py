@@ -24,7 +24,7 @@ RETRY_MIN_WAIT: Final[float] = 1.0
 RETRY_MAX_WAIT: Final[float] = 10.0
 
 
-@retry(
+@retry(  # type: ignore[misc]
     stop=stop_after_attempt(RETRY_MAX_ATTEMPTS),
     wait=wait_exponential(multiplier=RETRY_MIN_WAIT, max=RETRY_MAX_WAIT),
     reraise=True,

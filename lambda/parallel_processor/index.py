@@ -10,9 +10,9 @@ from botocore.exceptions import ClientError, ConnectionError
 from loguru import logger
 from pydantic import BaseModel
 
-from src.pipeline.inference.models import W2VConfig
-from src.pipeline.pipeline import run_activity_pipeline
-from utils.config import PipelineConfig
+from src.letter_scoring_pipeline.inference.models import W2VConfig
+from src.letter_scoring_pipeline.pipeline import run_activity_pipeline
+from utils.config import PipelineConfig, AwsConfig
 from utils.logging import setup_logging
 
 SCHEMA_VERSION_RESULT: Final[str] = "activity-results-v1"
@@ -69,7 +69,7 @@ def apply_lambda_optimizations() -> None:
 
 
 def create_lambda_config() -> PipelineConfig:
-    from utils.config import AwsConfig
+    from utils.config import AwsConfig, PipelineConfig
 
     aws_config = AwsConfig(
         aws_profile=os.environ.get("AWS_PROFILE", "default"),
@@ -170,7 +170,7 @@ def write_results_to_s3(result: LambdaProcessingResult) -> None:
 def _get_cached_engine(config: PipelineConfig) -> Any:
     global _cached_engine
     if _cached_engine is None:
-        from src.pipeline.inference.engine import get_cached_engine
+        from src.letter_scoring_pipeline.inference.engine import get_cached_engine
 
         _cached_engine = get_cached_engine(w2v_config=config.w2v2)
     return _cached_engine

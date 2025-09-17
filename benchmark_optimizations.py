@@ -3,7 +3,7 @@
 
 import statistics
 import time
-from typing import Final
+from typing import Final, cast
 
 import numpy as np
 import torchaudio
@@ -50,7 +50,7 @@ class BenchmarkSuite(BaseModel):
                 f"audio/reconstituted_phrase_audio/DEFAULT/{self.activity_id}/phrase_4.wav"
             )
             speech, sr = torchaudio.load(phrase_path)
-            audio_array = speech[0].numpy()
+            audio_array = cast(np.ndarray, speech[0].numpy())
             logger.info(f"Loaded phrase audio shape: {audio_array.shape}")
             return audio_array
         except Exception as e:

@@ -248,7 +248,9 @@ class FlaggingExecutor:
             Original error array or fallback if not available.
         """
         if feature.phrase_index < len(self.activity.errors):
-            return self.activity.errors[feature.phrase_index]
+            from typing import cast
+
+            return cast(list[bool], self.activity.errors[feature.phrase_index])
         model_preds = self.activity.model_predictions[feature.phrase_index]
         return [True] * len(model_preds)
 

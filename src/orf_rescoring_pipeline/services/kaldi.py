@@ -7,8 +7,25 @@ from typing import Any, Final
 import aiohttp
 import orjson as json
 from aiohttp import ClientSession, ClientTimeout
-from amira_pyutils.shared.core.errors import AmiraError
-from amira_pyutils.shared.core.logging import get_logger
+import logging
+from typing import TYPE_CHECKING
+
+# TODO(amira_pyutils): swap to shared error and logger when available
+if TYPE_CHECKING:  # pragma: no cover - types only
+    from amira_pyutils.shared.core.errors import AmiraError as _AmiraError
+    from amira_pyutils.shared.core.logging import get_logger as _get_logger
+
+
+class AmiraError(Exception):
+    def __init__(self, msg: str | None = None, retryable: bool | None = None) -> None:
+        super().__init__(msg if msg is not None else "")
+        self.retryable = retryable
+
+
+def get_logger(name: str) -> logging.Logger:
+    return logging.getLogger(name)
+
+
 from tenacity import (
     retry,
     retry_if_exception_type,
@@ -125,7 +142,7 @@ class KaldiClient:
             await self._session.close()
             self._session = None
 
-    @retry(
+    @retry(  # type: ignore[misc]
         stop=stop_after_attempt(DEFAULT_MAX_RETRIES),
         wait=wait_exponential(multiplier=DEFAULT_BACKOFF_FACTOR),
         retry=retry_if_exception_type((aiohttp.ClientError, asyncio.TimeoutError)),
@@ -209,7 +226,10 @@ class KaldiClient:
             raise KaldiError(msg="Session not initialized", retryable=False)
         async with self._session.post(url, data=audio_data) as response:
             response.raise_for_status()
-            return await response.text()
+            text_any = await response.text()
+            from typing import cast
+
+            return cast(str, text_any)
 
     def _parse_response(self, *, response_text: str) -> dict[str, Any]:
         """Parse Kaldi response based on format.
@@ -228,10 +248,14 @@ class KaldiClient:
 
             if len(lines) > 2:
                 result = json.loads(lines[-2])
-                return result
+                from typing import cast
+
+                return cast(dict[str, Any], result)
             else:
                 result = json.loads(response_text)
-                return result
+                from typing import cast
+
+                return cast(dict[str, Any], result)
 
         except (json.JSONDecodeError, IndexError) as e:
             raise KaldiError(msg=f"Failed to parse Kaldi response: {e}", retryable=False) from e

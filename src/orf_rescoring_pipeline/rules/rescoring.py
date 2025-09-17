@@ -149,7 +149,9 @@ def rescore_phrase_errors(
 
     is_error = ~(no_error_w2v | no_error_consensus)
 
-    return is_error.tolist()
+    from typing import cast
+
+    return cast(list[bool], is_error.tolist())
 
 
 def rescore_phrase(

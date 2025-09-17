@@ -12,10 +12,9 @@ import uuid
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Final
+from typing import Any, Final, TYPE_CHECKING, cast
 
-import amira_pyutils.services.s3 as s3_utils
-import boto3
+import aioboto3
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 logger = logging.getLogger(__name__)
@@ -37,12 +36,12 @@ RETRY_MIN_WAIT: Final[float] = 1.0
 RETRY_MAX_WAIT: Final[float] = 10.0
 
 
-@retry(
+@retry(  # type: ignore[misc]
     stop=stop_after_attempt(RETRY_MAX_ATTEMPTS),
     wait=wait_exponential(multiplier=RETRY_MIN_WAIT, max=RETRY_MAX_WAIT),
     reraise=True,
 )
-def _fetch_model_metadata(*, model: str) -> dict[str, Any]:
+async def _fetch_model_metadata(*, model: str) -> dict[str, Any]:
     """Fetch model metadata from S3 with retry logic.
 
     Args:
@@ -54,15 +53,17 @@ def _fetch_model_metadata(*, model: str) -> dict[str, Any]:
     Raises:
         Exception: If S3 operation fails after all retries.
     """
-    s3_client = boto3.client("s3")
+    s3_client = aioboto3.Session().client("s3")
     key = MODEL_METADATA_KEY_TEMPLATE.format(model=model)
-
-    response = s3_client.get_object(Bucket=MODEL_METADATA_BUCKET, Key=key)
-    return json.loads(response["Body"].read().decode("utf-8"))
+    # Cast client for typed access to get_object
+    client_any = cast(Any, s3_client)
+    response = await client_any.get_object(Bucket=MODEL_METADATA_BUCKET, Key=key)
+    data = json.loads(response["Body"].read().decode("utf-8"))
+    return cast(dict[str, Any], data)
 
 
 @lru_cache(maxsize=MODEL_THRESHOLD_CACHE_SIZE)
-def get_model_threshold(model: str) -> float:
+async def get_model_threshold(model: str) -> float:
     """Get the threshold value for a specific model.
 
     Args:
@@ -75,7 +76,7 @@ def get_model_threshold(model: str) -> float:
         KeyError: If threshold not found in model metadata.
         Exception: If S3 operation fails.
     """
-    metadata = _fetch_model_metadata(model=model)
+    metadata = await _fetch_model_metadata(model=model)
     return float(metadata["properties"]["threshold"])
 
 
@@ -220,7 +221,8 @@ class Activity:
     pages: list[PageData] = field(default_factory=list)
     errors: list[list[bool]] = field(default_factory=list)
     story_tags: list[str] = field(default_factory=list)
-    complete_audio_s3_path: s3_utils.S3Addr | None = None
+    # TODO(amira_pyutils): Replace Any with S3Addr from amira_pyutils.services.s3 when available
+    complete_audio_s3_path: Any | None = None
     transcript_json: TranscriptItem | None = None
     audio_file_data: bytes | None = None
     timing_path: str | None = None
@@ -228,7 +230,7 @@ class Activity:
     errors_retouched: list[list[bool]] = field(default_factory=list)
 
     @staticmethod
-    def from_appsync_res(appsync_res: list[dict[str, Any]]) -> list["Activity"]:
+    async def from_appsync_res(appsync_res: list[dict[str, Any]]) -> list["Activity"]:
         """Create Activity objects from AppSync response data.
 
         Args:
@@ -238,12 +240,12 @@ class Activity:
             List of Activity objects with basic story data loaded.
         """
         return [
-            Activity._create_from_activity_data(activity_data=activity_data)
+            await Activity._create_from_activity_data(activity_data=activity_data)
             for activity_data in appsync_res
         ]
 
     @staticmethod
-    def _create_from_activity_data(*, activity_data: dict[str, Any]) -> "Activity":
+    async def _create_from_activity_data(*, activity_data: dict[str, Any]) -> "Activity":
         """Create single Activity from activity data.
 
         Args:
@@ -252,7 +254,7 @@ class Activity:
         Returns:
             Activity instance.
         """
-        phrases = Activity._normalize_phrases(
+        phrases = await Activity._normalize_phrases(
             phrases=activity_data["story"]["chapters"][0]["phrases"]
         )
 
@@ -265,7 +267,7 @@ class Activity:
         )
 
     @staticmethod
-    def _normalize_phrases(*, phrases: list[str]) -> list[str]:
+    async def _normalize_phrases(*, phrases: list[str]) -> list[str]:
         """Normalize phrases by removing punctuation and converting to lowercase.
 
         Args:
@@ -276,7 +278,9 @@ class Activity:
         """
         return [re.sub(PUNCTUATION_PATTERN, "", phrase.lower()) for phrase in phrases]
 
-    def model_features_from_appsync_res(self, *, appsync_model_res: list[dict[str, Any]]) -> None:
+    async def model_features_from_appsync_res(
+        self, *, appsync_model_res: list[dict[str, Any]]
+    ) -> None:
         """Load model features from AppSync response.
 
         Args:
@@ -317,7 +321,8 @@ class Activity:
         Returns:
             True if feature should be skipped.
         """
-        return feature["model"].lower().startswith("faux")
+        model_val = str(feature.get("model", ""))
+        return model_val.lower().startswith("faux")
 
     @property
     def second_pass_model_features(self) -> list[ModelFeature]:
@@ -382,8 +387,26 @@ class Activity:
         Returns:
             List of boolean predictions for each phrase.
         """
+
+        def _get_model_threshold_sync(model: str) -> float:
+            """Sync bridge to async threshold call.
+
+            TODO(network): Replace with upstream sync/cache layer when available.
+            """
+            try:
+                import asyncio
+
+                return float(asyncio.run(get_model_threshold(model)))
+            except Exception:
+                # Fallback to a safe default threshold
+                return 0.5
+
         return [
-            [conf < get_model_threshold(feature.model) for conf in feature.correct_confidences]
+            [
+                _get_model_threshold_sync(feature.model) is not None
+                and conf < _get_model_threshold_sync(feature.model)
+                for conf in feature.correct_confidences
+            ]
             for feature in self.preferred_model_features
         ]
 

@@ -88,7 +88,10 @@ def get_secret(*, secret_name: str, region_name: str | None = None) -> dict[str,
     try:
         response = client.get_secret_value(SecretId=secret_name)
         secret_string: str = response["SecretString"]
-        return json.loads(secret_string)
+        data = json.loads(secret_string)
+        if not isinstance(data, dict):
+            raise InvalidSecretDataError("SecretString must decode to a JSON object")
+        return data
     except client.exceptions.ResourceNotFoundException as e:
         logger.error(f"Secret not found: {secret_name}")
         raise SecretNotFoundError(f"Secret '{secret_name}' not found in region '{region}'") from e

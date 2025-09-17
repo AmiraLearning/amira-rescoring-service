@@ -18,12 +18,9 @@ def setup_logging(*, service: str | None = None) -> None:
 
     level_env: str = os.getenv("LOG_LEVEL", "INFO")
 
-    # Auto-detect local development: default to human-readable format unless explicitly set
-    # Check if running in Lambda or container environments
     is_lambda = os.getenv("AWS_LAMBDA_FUNCTION_NAME") is not None
     is_container = os.getenv("ECS_CONTAINER_METADATA_URI") is not None
 
-    # Default to human-readable format for local development
     default_json = "true" if (is_lambda or is_container) else "false"
     json_env: str = os.getenv("LOG_JSON", default_json)
     serialize: bool = json_env.lower() in {"1", "true", "yes", "on"}
@@ -31,7 +28,6 @@ def setup_logging(*, service: str | None = None) -> None:
     if serialize:
         logger.add(sys.stdout, level=level_env, serialize=True)
     else:
-        # Use cleaner format for local development
         fmt: Final[str] = (
             "<green>{time:HH:mm:ss.SSS}</green> | <level>{level: <8}</level> | <cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - <level>{message}</level>"
             if not service
@@ -42,7 +38,6 @@ def setup_logging(*, service: str | None = None) -> None:
     if service:
         logger.configure(extra={"service": service})
 
-    # Optional sampling filter
     try:
         sampling_rate_env: str = os.getenv("LOG_SAMPLING_RATE", "1.0")
         sampling_rate: float = max(0.0, min(1.0, float(sampling_rate_env)))

@@ -296,18 +296,21 @@ def set_activity_fields(
         correlation_id=correlation_id,
     )
 
-    @retry(
+    @retry(  # type: ignore[misc]
         stop=stop_after_attempt(max(1, max_attempts)),
         wait=wait_exponential_jitter(exp_base=2, max=10),
         reraise=True,
     )
     def _do_update() -> dict[str, Any]:
-        return client.execute(
-            UPDATE_ACTIVITY_FIELDS_MUTATION, variable_values=variables.model_dump()
+        from typing import cast
+
+        return cast(
+            dict[str, Any],
+            client.execute(UPDATE_ACTIVITY_FIELDS_MUTATION, variable_values=variables.model_dump()),
         )
 
     try:
-        response = _do_update()
+        response: dict[str, Any] = _do_update()
     except Exception as e:
         if _GRAPHQL_ALLOW_MOCK:
             logger.info(
@@ -367,8 +370,10 @@ def query_activities_with_filter(
     # Use cached client with connection pooling
     client = _get_cached_graphql_client(url=endpoint_url, api_key=api_key, timeout=timeout_s)
 
-    response: dict[str, Any] = client.execute(
-        ACTIVITIES_WITH_FILTER_QUERY, variable_values=variables
+    from typing import cast
+
+    response: dict[str, Any] = cast(
+        dict[str, Any], client.execute(ACTIVITIES_WITH_FILTER_QUERY, variable_values=variables)
     )
 
     return response
@@ -410,7 +415,9 @@ def introspect_schema(*, config: AwsConfig | None = None) -> dict[str, Any]:
     # Use cached client with connection pooling
     client = _get_cached_graphql_client(url=endpoint_url, api_key=api_key, timeout=timeout_s)
 
-    response: dict[str, Any] = client.execute(INTROSPECTION_QUERY)
+    from typing import cast
+
+    response: dict[str, Any] = cast(dict[str, Any], client.execute(INTROSPECTION_QUERY))
     return response
 
 
@@ -454,15 +461,17 @@ def get_activity(*, activity_id: str, config: AwsConfig | None = None) -> dict[s
     # Use cached client with connection pooling
     client = _get_cached_graphql_client(url=endpoint_url, api_key=api_key, timeout=timeout_s)
 
-    @retry(
+    @retry(  # type: ignore[misc]
         stop=stop_after_attempt(max(1, max_attempts)),
         wait=wait_exponential_jitter(exp_base=2, max=10),
         reraise=True,
     )
     def _do_get() -> dict[str, Any]:
-        return client.execute(GET_ACTIVITY_QUERY, variable_values=variables)
+        from typing import cast
 
-    response = _do_get()
+        return cast(dict[str, Any], client.execute(GET_ACTIVITY_QUERY, variable_values=variables))
+
+    response: dict[str, Any] = _do_get()
     return response
 
 

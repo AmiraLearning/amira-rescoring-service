@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field
 
 from infra.athena_client import AthenaClientConfig, ProductionAthenaClient
 from infra.sqs_utils import JobMessage, SQSEnqueuer
-from src.pipeline.query import build_activity_query
+from src.letter_scoring_pipeline.query import build_activity_query
 
 
 class JobEnqueuer(BaseModel):

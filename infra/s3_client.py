@@ -1012,7 +1012,12 @@ class ProductionS3Client:
             async def _do() -> dict[str, Any]:
                 client = await self._get_client()
                 try:
-                    return await client.head_object(Bucket=operation.bucket, Key=operation.key)
+                    from typing import cast
+
+                    return cast(
+                        dict[str, Any],
+                        await client.head_object(Bucket=operation.bucket, Key=operation.key),
+                    )
                 finally:
                     await self._return_client(client)
                 return {}
