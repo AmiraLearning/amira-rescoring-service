@@ -11,14 +11,70 @@ import os
 
 import numpy as np
 
-from orf_rescoring_pipeline.alignment.word_alignment import (
+from src.orf_rescoring_pipeline.alignment.word_alignment import (
     get_word_level_transcript_alignment,
     get_word_level_transcript_alignment_w2v,
 )
-from orf_rescoring_pipeline.models import Activity, ModelFeature
-from orf_rescoring_pipeline.utils.transcription import KaldiASRClient, W2VASRClient
+from src.orf_rescoring_pipeline.models import Activity, ModelFeature
+from src.orf_rescoring_pipeline.utils.transcription import KaldiASRClient, W2VASRClient
 
 logger = logging.getLogger(__name__)
+
+
+async def _transcribe_phrase_async(
+    *,
+    activity: Activity,
+    phrase_index: int,
+    kaldi: KaldiASRClient,
+    w2v: W2VASRClient,
+) -> tuple[str, str]:
+    """
+    Internal async implementation for transcribing phrases.
+    
+    Args:
+        activity: Activity containing the audio data.
+        phrase_index: Index of the phrase to transcribe.
+        kaldi: Kaldi ASR client.
+        w2v: W2V ASR client.
+
+    Returns:
+        Tuple of (kaldi_transcript, w2v_transcript).
+    """
+    from src.orf_rescoring_pipeline.alignment.audio_processing import slice_audio_file_data
+
+    phrase_audio_data, (start_ms, end_ms) = slice_audio_file_data(
+        activity=activity, phrase_index=phrase_index
+    )
+    if phrase_audio_data is None or (
+        start_ms is not None and end_ms is not None and end_ms - start_ms == 0
+    ):
+        logger.warning(f"No phrase audio data for {activity.activity_id}, phrase:{phrase_index}")
+        return "", ""
+
+    # Pure async parallelism - efficient and clean!
+    results = await asyncio.gather(
+        kaldi.transcribe(activity, phrase_index, phrase_audio_data),
+        w2v.transcribe(activity, phrase_index, phrase_audio_data),
+        return_exceptions=True
+    )
+    
+    kaldi_result, w2v_result = results
+    
+    # Extract transcripts with error handling
+    kaldi_transcript = ""
+    w2v_transcript = ""
+    
+    try:
+        kaldi_transcript = kaldi_result.transcript if kaldi_result and not isinstance(kaldi_result, Exception) else ""
+    except Exception as e:
+        logger.warning(f"Transcription failed for kaldi: {e}")
+        
+    try:
+        w2v_transcript = w2v_result.transcript if w2v_result and not isinstance(w2v_result, Exception) else ""
+    except Exception as e:
+        logger.warning(f"Transcription failed for w2v: {e}")
+
+    return kaldi_transcript, w2v_transcript
 
 
 def transcribe_phrase(
@@ -31,6 +87,9 @@ def transcribe_phrase(
     """
     Transcribe a phrase using Kaldi and W2V ASR services in parallel.
 
+    This is a sync wrapper around the async implementation to maintain
+    compatibility with existing sync code while using async ASR clients.
+
     Args:
         activity: Activity containing the audio data.
         phrase_index: Index of the phrase to transcribe.
@@ -40,56 +99,12 @@ def transcribe_phrase(
     Returns:
         Tuple of (kaldi_transcript, w2v_transcript).
     """
-    from concurrent.futures import ThreadPoolExecutor
-
-    from orf_rescoring_pipeline.alignment.audio_processing import slice_audio_file_data
-
-    phrase_audio_data, (start_ms, end_ms) = slice_audio_file_data(
-        activity=activity, phrase_index=phrase_index
-    )
-    if phrase_audio_data is None or (
-        start_ms is not None and end_ms is not None and end_ms - start_ms == 0
-    ):
-        logger.warning(f"No phrase audio data for {activity.activity_id}, phrase:{phrase_index}")
-        return "", ""
-
-    kaldi_transcript = ""
-    w2v_transcript = ""
-
-    max_workers_env = os.getenv("PIPELINE_INNER_CONCURRENCY", "2")
-    try:
-        max_workers = max(1, int(max_workers_env))
-    except Exception:
-        max_workers = 2
-
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        loop = asyncio.new_event_loop()
-        try:
-            kaldi_future = executor.submit(
-                lambda: loop.run_until_complete(
-                    kaldi.transcribe(activity, phrase_index, phrase_audio_data)
-                )
-            )
-            w2v_future = executor.submit(w2v.transcribe, activity, phrase_index, phrase_audio_data)
-
-            try:
-                kaldi_result = kaldi_future.result()
-                kaldi_transcript = kaldi_result.transcript if kaldi_result else ""
-            except Exception as e:
-                logger.warning(f"Transcription failed for kaldi: {e}")
-
-            try:
-                w2v_result = w2v_future.result()
-                w2v_transcript = w2v_result.transcript if w2v_result else ""
-            except Exception as e:
-                logger.warning(f"Transcription failed for w2v: {e}")
-        finally:
-            try:
-                loop.close()
-            except Exception:
-                pass
-
-    return kaldi_transcript, w2v_transcript
+    return asyncio.run(_transcribe_phrase_async(
+        activity=activity,
+        phrase_index=phrase_index,
+        kaldi=kaldi,
+        w2v=w2v
+    ))
 
 
 def align_phrase_transcripts(
@@ -171,7 +186,7 @@ def rescore_phrase(
     Returns:
         Tuple of (error_array, kaldi_matches, w2v_matches, kaldi_transcript, w2v_transcript).
     """
-    from orf_rescoring_pipeline.alignment.audio_processing import slice_audio_file_data
+    from src.orf_rescoring_pipeline.alignment.audio_processing import slice_audio_file_data
 
     phrase_audio_data, (start_ms, end_ms) = slice_audio_file_data(
         activity=activity, phrase_index=feature.phrase_index
