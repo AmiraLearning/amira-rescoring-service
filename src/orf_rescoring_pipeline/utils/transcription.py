@@ -327,11 +327,11 @@ class KaldiASRClient:
                 f"Activity {activity_id}: Transcribing phrase {phrase_index} with Kaldi client"
             )
 
-    def _create_transcript_item(self, kaldi_data: dict) -> TranscriptItem:
+    def _create_transcript_item(self, kaldi_result: KaldiResult) -> TranscriptItem:
         """Create TranscriptItem from Kaldi response.
 
         Args:
-            kaldi_data: Kaldi transcription response data.
+            kaldi_result: KaldiResult from new service client.
 
         Returns:
             Structured transcript item.
