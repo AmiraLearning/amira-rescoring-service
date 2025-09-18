@@ -1,9 +1,7 @@
-from typing import Final
-from collections.abc import Sequence
-from enum import StrEnum
-
 import re
 import unicodedata
+from enum import StrEnum
+from typing import Final
 
 from amira_pyutils.language import LanguageHandling
 

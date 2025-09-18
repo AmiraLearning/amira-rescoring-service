@@ -1,7 +1,7 @@
 import json
-from typing import Final
+from typing import Any, Final
 
-from amira_fe.blank_detect_pb2 import BlankDetectMessage
+from amira_fe.blank_detect_pb2 import BlankDetectMessage  # type: ignore
 from amira_fe.blank_detect_utils import get_blank_detector
 
 _DASH_PLACEHOLDER: Final[str] = "-"
@@ -37,7 +37,7 @@ def align_words(
     txt_align = get_blank_detector()
     msg = BlankDetectMessage(expected=base_txt, actual=var_txt)
     out = txt_align.blankdetect(msg)
-    diff_data: list[dict] = json.loads(out.alignment)["diff"]
+    diff_data: list[dict[str, Any]] = json.loads(out.alignment)["diff"]
 
     ref_words: list[str] = base_txt.split()
     var_words: list[str] = var_txt.split()

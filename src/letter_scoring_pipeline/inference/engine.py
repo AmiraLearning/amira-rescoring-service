@@ -1,9 +1,11 @@
+from __future__ import annotations
+
 import asyncio
 import os
 import time
 import traceback
 from threading import Lock, RLock
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
 import numpy as np
 import torch
@@ -46,16 +48,19 @@ from .models import (
 _ENGINE_CACHE_MAX: int = int(os.getenv("ENGINE_CACHE_MAX", str(ENGINE_CACHE_MAX_DEFAULT)))
 
 
-class ThreadSafeLRUCache:
+TCache = TypeVar("TCache")
+
+
+class ThreadSafeLRUCache(Generic[TCache]):
     """Thread-safe LRU cache for inference engines."""
 
     def __init__(self, *, maxsize: int = 2):
         self.maxsize = maxsize
-        self.cache: dict[str, Any] = {}
+        self.cache: dict[str, TCache] = {}
         self.access_order: list[str] = []
         self.lock = RLock()
 
-    def get(self, key: str) -> Any | None:
+    def get(self, key: str) -> TCache | None:
         with self.lock:
             if key in self.cache:
                 # Move to end (most recently used)
@@ -64,7 +69,7 @@ class ThreadSafeLRUCache:
                 return self.cache[key]
             return None
 
-    def put(self, key: str, value: Any) -> None:
+    def put(self, key: str, value: TCache) -> None:
         with self.lock:
             if key in self.cache:
                 # Update existing entry
@@ -95,7 +100,9 @@ class ThreadSafeLRUCache:
             return len(self.cache)
 
 
-_engine_cache = ThreadSafeLRUCache(maxsize=_ENGINE_CACHE_MAX)
+_engine_cache: ThreadSafeLRUCache["Wav2Vec2InferenceEngine | TritonInferenceEngine"] = (
+    ThreadSafeLRUCache(maxsize=_ENGINE_CACHE_MAX)
+)
 _engine_creation_lock: Lock = Lock()
 
 
@@ -128,7 +135,7 @@ async def preload_inference_engine_async(
     """
 
     def _build() -> "Wav2Vec2InferenceEngine | TritonInferenceEngine":
-        engine: Any
+        engine: "Wav2Vec2InferenceEngine | TritonInferenceEngine"
         if w2v_config.use_triton:
             from .triton_engine import TritonInferenceEngine
 
@@ -141,7 +148,7 @@ async def preload_inference_engine_async(
             engine.infer(input_data=InferenceInput(audio_array=dummy, inference_id="warmup"))
         return engine
 
-    return cast("Wav2Vec2InferenceEngine | TritonInferenceEngine", await asyncio.to_thread(_build))
+    return await asyncio.to_thread(_build)
 
 
 class Wav2Vec2InferenceEngine:
@@ -727,14 +734,14 @@ def get_cached_engine(
     # Try to get from cache first
     engine = _engine_cache.get(cache_key)
     if engine is not None:
-        return cast("Wav2Vec2InferenceEngine | TritonInferenceEngine", engine)
+        return engine
 
     # Create new engine with lock to prevent duplicate creation
     with _engine_creation_lock:
         # Double-check pattern: another thread might have created it while we waited
         engine = _engine_cache.get(cache_key)
         if engine is not None:
-            return cast("Wav2Vec2InferenceEngine | TritonInferenceEngine", engine)
+            return engine
 
         logger.info(f"Creating new inference engine with key: {cache_key}")
 
@@ -748,7 +755,7 @@ def get_cached_engine(
 
             # Cache the newly created engine
             _engine_cache.put(cache_key, engine)
-            return cast("Wav2Vec2InferenceEngine | TritonInferenceEngine", engine)
+            return engine
 
         except Exception as e:
             logger.error(f"Failed to create inference engine: {type(e).__name__}: {e}")

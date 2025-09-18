@@ -1,0 +1,86 @@
+# Template for the environments.yaml file
+# Make a copy of this file and name it ".environments.yaml"
+# Replace the dummy keys with the real keys (get these from the AWS console)
+# DO NOT commit real keys to the repo
+
+staging:
+  SRS_url: 'https://5nei3uab5ndrneo3qmpq23vndq.appsync-api.us-east-1.amazonaws.com/graphql'
+  SRS_key: '<SRS_key>'
+  WordDB_SRS_url: 'https://lclighxwfvahzjtwd4gic2n7li.appsync-api.us-east-1.amazonaws.com/graphql'
+  WordDB_SRS_key: '<WordDB_SRS_key>'
+  audio_bucket: 'amira-speech-stream-stage'
+  timing_bucket: 'amira-activity-meta-stage'
+  transcribe_bucket: 'amira-transcribe-stage'
+  pretranscribe_bucket: 'amira-pre-transcribe-stage'
+  feature_store_url: 'https://ybktfedjdzfndp324kddtbsruy.appsync-api.us-east-1.amazonaws.com/graphql'
+  feature_store_key: '<feature_store_key>'
+  feature_store_api_id: 'q6n6fnjgkvep3jtpfsl5ocebce'
+  feature_store_direct_url: 'https://s5xxr3iwhf.execute-api.us-east-1.amazonaws.com/AmiraFeatureStoreRestApi-stage'
+  feature_store_direct_key: '<feature_store_direct_key>'
+  ml_serving_uri: "https://ml-serving-stage.amira.services"
+  ml_serving_batch_uri: "https://ml-serving-batch-stage.amira.services"
+  assignment_service_SRS_url: 'https://njpjesuryvccljsbmce7kh4cvu.appsync-api.us-east-1.amazonaws.com/graphql'
+  assignment_service_SRS_key: '<assignment_service_SRS_key>'
+  EPS_uri: 'https://bjz664z3n5hd3elldd5s3vohby.appsync-api.us-east-1.amazonaws.com/graphql'
+  EPS_key: '<EPS_key>'
+  SIS_uri: 'https://nwgptw65pjavrbulbth7jk6k6u.appsync-api.us-east-1.amazonaws.com/graphql'
+  SIS_key: '<SIS_key>'
+
+production:
+  SRS_url: 'https://4tsmcay4pnbhtmpxq7o24wktgy.appsync-api.us-east-1.amazonaws.com/graphql'
+  SRS_key: '<SRS_key>'
+  WordDB_SRS_url: 'https://lclighxwfvahzjtwd4gic2n7li.appsync-api.us-east-1.amazonaws.com/graphql'
+  WordDB_SRS_key: '<WordDB_SRS_key>'
+  audio_bucket: 'amira-speech-stream'
+  timing_bucket: 'amira-activity-meta'
+  transcribe_bucket: 'amira-transcribe'
+  pretranscribe_bucket: 'amira-pre-transcribe'
+  feature_store_url: 'https://5eufzlkiprbyfh5bl72ktq55mu.appsync-api.us-east-1.amazonaws.com/graphql'
+  feature_store_key: '<feature_store_key>'
+  feature_store_api_id: 'fr3fzaw4krahrbfep5nikttxza'
+  feature_store_direct_url: 'https://tcnkj6bd3k.execute-api.us-east-1.amazonaws.com/AmiraFeatureStoreRestApi-production'
+  feature_store_direct_key: '<feature_store_direct_key>'
+  ml_serving_uri: "https://ml-serving.amira.services"
+  ml_serving_batch_uri: "https://ml-serving-batch.amira.services"
+  assignment_service_SRS_url: 'https://hunst5g36zf5vhlum27ajfxsci.appsync-api.us-east-1.amazonaws.com/graphql'
+  assignment_service_SRS_key: '<assignment_service_SRS_key>'
+  EPS_uri: 'https://aj2t2mwsjjdjbe555rhqstqyni.appsync-api.us-east-1.amazonaws.com/graphql'
+  EPS_key: '<EPS_key>'
+  SIS_uri: 'https://pppyb3eocrfvzhi3mssdkhn3zq.appsync-api.us-east-1.amazonaws.com/graphql'
+  SIS_key: '<SIS_key>'
+
+dev2:
+  SRS_url: 'https://z4pdat6wafa5tcys34xs6ocm2i.appsync-api.us-east-2.amazonaws.com/graphql'
+  SRS_key: 'da2-7relplorpreinfmcrgbyfwniiy'
+  WordDB_SRS_url: 'https://thwzb3dpdvdazjlcohpboe7ofy.appsync-api.us-east-2.amazonaws.com/graphql'
+  WordDB_SRS_key: '<WordDB_SRS_key>'
+  audio_bucket: 'stage-amira-speech-stream'
+  timing_bucket: 'stage-amira-activity-meta'
+  transcribe_bucket: 'stage-amira-transcribe'
+  pretranscribe_bucket: 'stage-amira-pre-transcribe'
+  feature_store_url: 'https://ncelcn3yqnbz3kbsfwbqxdmgqm.appsync-api.us-east-2.amazonaws.com/graphql'
+  feature_store_key: '<feature_store_key>'
+  feature_store_api_id: 'anit3gejdneydchc6ekdxufkze'
+  feature_store_direct_url: 'https://gm78lhlp48.execute-api.us-east-2.amazonaws.com/AmiraFeatureStoreRestApi-stage'
+  feature_store_direct_key: '<feature_store_direct_key>'
+  ml_serving_uri: "https://ml-serving.stage.amira.cloud"
+  ml_serving_batch_uri: "https://ml-serving-batch-stage.amira.services"
+  assignment_service_SRS_url: 'https://ihryman3wre7lhie7pzwqmuasi.appsync-api.us-east-2.amazonaws.com/graphql'
+  assignment_service_SRS_key: '<assignment_service_SRS_key>'
+  EPS_uri: 'https://zblp425nufcnhcdasu2imkboiq.appsync-api.us-east-2.amazonaws.com/graphql'
+  EPS_key: '<EPS_key>'
+  SIS_uri: 'https://up5decjd2zgrnfaqf5oxg3scs4.appsync-api.us-east-2.amazonaws.com/graphql'
+  SIS_key: '<SIS_key>'
+
+prod2:
+  SRS_url: 'https://l55tkeemhbbzboyp67avzpptrm.appsync-api.us-east-2.amazonaws.com/graphql'
+  SRS_key: '<SRS_key>'
+  WordDB_SRS_url: 'https://xbynt4utxbbu3hl7ep4gbx23wi.appsync-api.us-east-2.amazonaws.com/graphql'
+  WordDB_SRS_key: '<WordDB_SRS_key>'
+  audio_bucket: 'production-amira-speech-stream'
+  timing_bucket: 'production-amira-activity-meta'
+  transcribe_bucket: 'prod-amira-transcribe'
+  pretranscribe_bucket: 'prod-amira-pre-transcribe'
+  feature_store_url: 'https://6643bajeg5d7zigieqek7eny5m.appsync-api.us-east-2.amazonaws.com/graphql'
+  feature_store_key: '<feature_store_key>'
+  feature_store_api_id: '2jkljpaobzgrbbwa2vdthuygum'

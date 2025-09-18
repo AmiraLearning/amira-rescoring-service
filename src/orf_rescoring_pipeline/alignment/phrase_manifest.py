@@ -19,6 +19,10 @@ from typing import Any, Final
 
 from tenacity import retry, stop_after_attempt, wait_exponential
 
+from amira_pyutils.logging import get_logger
+
+logger = get_logger(__name__)
+
 # Audio processing constants
 RIFF_HEADER_SIZE: Final[int] = 44
 MAGIC_NUMBER_AUDIO_SIZE_TO_MS: Final[int] = 32
@@ -78,6 +82,16 @@ class Phrase:
     end: int = 0
     segments: list[Segment] = field(default_factory=list)
 
+    def to_dict(self) -> dict[str, Any]:
+        """Convert the Phrase to a dictionary."""
+        return {
+            "phrase": self.phrase,
+            "duration": self.duration,
+            "start": self.start,
+            "end": self.end,
+            "segments": [segment.__dict__ for segment in self.segments],
+        }
+
 
 @dataclass
 class S3SegmentMetadata:
@@ -115,16 +129,19 @@ class S3SegmentMetadata:
         return S3SegmentMetadata(**converted_vals)
 
 
+from amira_pyutils.s3 import S3Service
+
+
 class PhraseBuilder:
     """Builds phrases from individual audio segments stored in S3."""
 
-    def __init__(self, *, s3_client: Any) -> None:
+    def __init__(self, *, s3_client: S3Service) -> None:
         """Initialize the PhraseBuilder.
 
         Args:
             s3_client: Boto3 S3 client for accessing segment data.
         """
-        self._s3_client = s3_client
+        self._s3_client = s3_client._get_client()
 
     def build(self, *, bucket: str, activity_id: str) -> list[Segment]:
         """Build a list of segments with metadata for the given activity.
@@ -139,8 +156,11 @@ class PhraseBuilder:
         Raises:
             InvalidV2Segment: If too many invalid segments are encountered.
         """
+        logger.debug(f"Fetching segments for activity: {activity_id}")
         segments = self._fetch_segments(bucket=bucket, activity_id=activity_id)
+        logger.debug(f"Segments fetched for activity: {activity_id}")
         segments_with_metadata = self._populate_segment_metadata(bucket=bucket, segments=segments)
+        logger.debug(f"Segments with metadata fetched for activity: {activity_id}")
         return segments_with_metadata
 
     def _populate_segment_metadata(self, *, bucket: str, segments: list[Segment]) -> list[Segment]:
@@ -274,6 +294,7 @@ class PhraseBuilder:
         start_after = None
 
         while not done:
+            logger.debug(f"Fetching segments for activity: {activity_id}")
             kwargs = {
                 "Bucket": bucket,
                 "MaxKeys": max_keys,
@@ -285,19 +306,22 @@ class PhraseBuilder:
 
             if start_after:
                 kwargs["StartAfter"] = start_after
-
-            objs = self._s3_client.list_objects_v2(**kwargs)
+            logger.debug(f"About to call list_objects_v2 for activity: {activity_id}")
+            objs = self._s3_client.list_objects(**kwargs)
+            logger.debug(f"list_objects_v2 called for activity: {activity_id}")
+            logger.debug(f"Segments fetched for activity: {activity_id}")
             if objs["KeyCount"] == 0:
                 return []
 
             done = not objs["IsTruncated"]
+            logger.debug(f"Segments fetched for activity: {activity_id}")
             for row in objs["Contents"]:
                 filename = row["Key"]
                 size = row["Size"]
                 if filename.endswith(COMPLETE_WAV_SUFFIX):
                     continue
                 segments.append(Segment(filename=filename, size=size))
-
+            logger.debug(f"Segments fetched for activity: {activity_id}")
             next_token = objs.get("NextContinuationToken")
             start_after = objs.get("StartAfter")
 
@@ -325,8 +349,11 @@ class PhraseManifest:
         Returns:
             Ordered list of phrases with timing information.
         """
+        logger.debug(f"Generating phrase manifest for activityYYYY: {activity_id}")
         segments = self._builder.build(bucket=bucket, activity_id=activity_id)
+        logger.debug(f"Segments fetched for activity: {activity_id}")
         manifest = self._group_segments(segments=segments)
+        logger.debug(f"Segments grouped for activity: {activity_id}")
         return self._create_ordered_phrases(manifest=manifest)
 
     def _create_ordered_phrases(self, *, manifest: dict[int, Phrase]) -> list[Phrase]:

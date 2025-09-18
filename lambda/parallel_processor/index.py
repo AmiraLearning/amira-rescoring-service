@@ -2,7 +2,7 @@ import asyncio
 import json
 import os
 import time
-from typing import Any, Final
+from typing import Any, Callable, Final, cast
 
 import boto3
 import torch
@@ -12,7 +12,7 @@ from pydantic import BaseModel
 
 from src.letter_scoring_pipeline.inference.models import W2VConfig
 from src.letter_scoring_pipeline.pipeline import run_activity_pipeline
-from utils.config import PipelineConfig, AwsConfig
+from utils.config import AwsConfig, PipelineConfig
 from utils.logging import setup_logging
 
 SCHEMA_VERSION_RESULT: Final[str] = "activity-results-v1"
@@ -53,12 +53,9 @@ def apply_lambda_optimizations() -> None:
         torch.set_num_interop_threads(2)
         torch.backends.cudnn.benchmark = False
 
-        if (
-            hasattr(torch.backends, "openmp")
-            and hasattr(torch.backends.openmp, "is_available")
-            and torch.backends.openmp.is_available()
-        ):
-            pass
+        if hasattr(torch.backends, "openmp") and hasattr(torch.backends.openmp, "is_available"):
+            is_available = cast(Callable[[], bool], torch.backends.openmp.is_available)
+            _ = is_available()
 
         _optimizations_applied = True
 
@@ -69,7 +66,7 @@ def apply_lambda_optimizations() -> None:
 
 
 def create_lambda_config() -> PipelineConfig:
-    from utils.config import AwsConfig, PipelineConfig
+    from utils.config import PipelineConfig
 
     aws_config = AwsConfig(
         aws_profile=os.environ.get("AWS_PROFILE", "default"),

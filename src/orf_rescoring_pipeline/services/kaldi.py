@@ -1,19 +1,17 @@
 import asyncio
+import logging
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
-from typing import Any, Final
+from typing import TYPE_CHECKING, Any, Final
 
 import aiohttp
 import orjson as json
 from aiohttp import ClientSession, ClientTimeout
-import logging
-from typing import TYPE_CHECKING
 
 # TODO(amira_pyutils): swap to shared error and logger when available
 if TYPE_CHECKING:  # pragma: no cover - types only
-    from amira_pyutils.shared.core.errors import AmiraError as _AmiraError
-    from amira_pyutils.shared.core.logging import get_logger as _get_logger
+    pass
 
 
 class AmiraError(Exception):

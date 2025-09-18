@@ -7,11 +7,13 @@ from typing import Final, cast
 
 import numpy as np
 import torchaudio
-from loguru import logger
+from amira_pyutils.logging import get_logger
 from pydantic import BaseModel
 
-from src.pipeline.inference.engine import perform_single_audio_inference
-from src.pipeline.inference.models import W2VConfig
+from src.letter_scoring_pipeline.inference.engine import perform_single_audio_inference
+from src.letter_scoring_pipeline.inference.models import W2VConfig
+
+logger = get_logger(__name__)
 
 BENCHMARK_RUNS: Final[int] = 5
 WARMUP_RUNS: Final[int] = 2

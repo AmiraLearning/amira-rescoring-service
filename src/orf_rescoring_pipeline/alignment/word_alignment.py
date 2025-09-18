@@ -3,17 +3,10 @@ import threading
 from pathlib import Path
 from typing import Final
 
-from enum import StrEnum
-from typing import Sequence, TypeVar
-from abc import ABC, abstractmethod
-from typing import Generic
-from types import MappingProxyType
-
-from infra.s3_client import HighPerformanceS3Config, preload_s3_client_async
-import amira_pyutils.services.s3 as s3_utils
+import amira_pyutils.s3 as s3_utils
 from amira_fe.phon_level_alignment import phoneme_align_dash
 from amira_fe.word_level_alignment import align_texts_dash
-from amira_pyutils.abstract_alignment import AlignmentConfig, WordSelection
+from amira_pyutils.abstract_alignment import AlignmentConfig, WordSelectionStrategy
 from amira_pyutils.language import LanguageHandling
 from amira_pyutils.phone_alphabets import english2amirabet
 
@@ -51,9 +44,11 @@ async def _download_phoneme_dict_from_s3(*, file_path: Path) -> None:
         FileNotFoundError: If download fails.
     """
     logger.info("Downloading phoneme dictionary from S3...")
-    address = s3_utils.s3_addr_from_uri(S3_PHONEME_DICT_URI)
-    success = await s3_utils.s3_try_download_file(address.bucket, address.key, file_path)
-    if not success:
+    address = s3_utils.S3Address.from_uri(uri=S3_PHONEME_DICT_URI)
+    await s3_utils.S3Service().download_file(
+        bucket=address.bucket, key=address.key, filename=file_path
+    )
+    if not file_path.exists():
         raise FileNotFoundError(
             f"Failed to download {address.bucket}/{address.key} to {file_path}."
         )
@@ -111,7 +106,9 @@ def _create_standard_alignment_config() -> AlignmentConfig:
     Returns:
         Configured AlignmentConfig instance.
     """
-    return AlignmentConfig(use_prod=False, preprocess_next_exp=False, postprocess_infer=False)
+    return AlignmentConfig(
+        use_production_algorithm=False, preprocess_next_expected=False, postprocess_inference=False
+    )
 
 
 def _create_w2v_alignment_config() -> AlignmentConfig:
@@ -120,7 +117,7 @@ def _create_w2v_alignment_config() -> AlignmentConfig:
     Returns:
         Configured AlignmentConfig instance for W2V alignment.
     """
-    return AlignmentConfig(False, False, False, True, False, WordSelection.MATCH_ENSEMBLE, False)
+    return AlignmentConfig(False, False, False, True, False, WordSelectionStrategy.ENSEMBLE, False)
 
 
 def _convert_alignment_to_matches(
@@ -164,7 +161,7 @@ def _apply_phoneme_matching_corrections(
     matches: list[int],
     story_aligned: list[str],
     transcript_aligned: list[str],
-    word_phoneme_distance: list[int],
+    word_phoneme_distance: list[float],
 ) -> list[int]:
     """Apply phoneme-based matching corrections to improve alignment accuracy.
 
@@ -216,7 +213,7 @@ def get_word_level_transcript_alignment(*, story_phrase: str, transcript_text: s
     try:
         config = _create_standard_alignment_config()
 
-        aligned_story, aligned_transcript, _, _, _, _, _ = align_texts_dash(
+        alignment_result = align_texts_dash(
             config=config,
             lang=LanguageHandling.ENGLISH,
             next_exp=None,
@@ -225,7 +222,8 @@ def get_word_level_transcript_alignment(*, story_phrase: str, transcript_text: s
         )
 
         return _convert_alignment_to_matches(
-            aligned_story=aligned_story, aligned_transcript=aligned_transcript
+            aligned_story=alignment_result.aligned_reference,
+            aligned_transcript=alignment_result.aligned_transcription_features,
         )
 
     except Exception as e:

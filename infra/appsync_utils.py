@@ -14,11 +14,8 @@ from utils.config import AwsConfig
 
 _GRAPHQL_ALLOW_MOCK: Final[bool] = os.environ.get("APPSYNC_ALLOW_MOCK", "false").lower() == "true"
 
-# Cache for AppSync credentials - will be loaded lazily
 _cached_appsync_url: str | None = None
 _cached_appsync_key: str | None = None
-
-# Global cache for GraphQL client and session to optimize Lambda warm starts
 _cached_session: requests.Session | None = None
 _cached_graphql_client: Client | None = None
 _cached_client_config_hash: int | None = None
@@ -26,6 +23,10 @@ _cached_client_config_hash: int | None = None
 
 def _get_appsync_credentials(config: AwsConfig) -> tuple[str, str]:
     """Get AppSync credentials from Secrets Manager or environment variables.
+
+    Attempts to load credentials from Secrets Manager first based on the environment
+    configuration. Falls back to environment variables if Secrets Manager fails.
+    Credentials are cached globally to optimize Lambda warm starts.
 
     Args:
         config: AWS configuration containing environment info
@@ -39,12 +40,10 @@ def _get_appsync_credentials(config: AwsConfig) -> tuple[str, str]:
         return _cached_appsync_url, _cached_appsync_key
 
     try:
-        # Try to get from Secrets Manager based on environment
         env = config.appsync_env if hasattr(config, "appsync_env") else "legacy"
         _cached_appsync_url, _cached_appsync_key = get_appsync_credentials(env=env)
         logger.info(f"Loaded AppSync credentials from Secrets Manager for env: {env}")
     except Exception as e:
-        # Fallback to environment variables
         _cached_appsync_url = os.environ.get("APPSYNC_URL", "")
         _cached_appsync_key = os.environ.get("APPSYNC_API_KEY", "")
 
@@ -164,6 +163,15 @@ GET_ACTIVITY_QUERY = gql(
 
 
 class ActivityFieldValues(BaseModel):
+    """Model for activity field values that can be updated.
+
+    Attributes:
+        alignment_errors: List of boolean lists indicating alignment errors
+        error_count: Total number of errors in the activity
+        total_alignments: Total number of alignments processed
+        alignment_accuracy: Accuracy percentage of alignments (0.0 to 1.0)
+    """
+
     alignment_errors: list[list[bool]] | None = None
     error_count: int | None = None
     total_alignments: int | None = None
@@ -174,8 +182,8 @@ class UpdateActivityFieldsInput(BaseModel):
     """Input for updating activity fields in AppSync.
 
     Attributes:
-        activityId: Unique identifier for the activity.
-        fieldValues: Dictionary of field names and values to update.
+        activityId: Unique identifier for the activity
+        fieldValues: Dictionary of field names and values to update
     """
 
     activityId: str
@@ -183,33 +191,57 @@ class UpdateActivityFieldsInput(BaseModel):
 
 
 class UpdateActivityPayload(BaseModel):
+    """Payload returned from updateActivity mutation.
+
+    Attributes:
+        activityId: The ID of the updated activity
+    """
+
     activityId: str
 
 
 class UpdateActivityData(BaseModel):
+    """Data wrapper for updateActivity response.
+
+    Attributes:
+        updateActivity: The update activity payload
+    """
+
     updateActivity: UpdateActivityPayload
 
 
 class UpdateActivityResponse(BaseModel):
+    """Complete response from updateActivity mutation.
+
+    Attributes:
+        data: The response data containing the update result
+    """
+
     data: UpdateActivityData
 
 
 def _get_cached_session() -> requests.Session:
-    """Get or create a cached HTTP session with connection pooling."""
+    """Get or create a cached HTTP session with connection pooling.
+
+    Creates a session with optimized connection pooling settings for better
+    performance in Lambda environments. The session is cached globally to
+    reuse connections across invocations.
+
+    Returns:
+        A configured requests.Session with connection pooling
+    """
     global _cached_session
     if _cached_session is None:
         _cached_session = requests.Session()
 
-        # Configure connection pooling for better performance
         adapter = adapters.HTTPAdapter(
-            pool_connections=2,  # Number of connection pools
-            pool_maxsize=5,  # Maximum number of connections in pool
-            max_retries=0,  # Let tenacity handle retries
+            pool_connections=2,
+            pool_maxsize=5,
+            max_retries=0,
         )
         _cached_session.mount("https://", adapter)
         _cached_session.mount("http://", adapter)
 
-        # Set keep-alive and timeout defaults
         _cached_session.headers.update(
             {"Connection": "keep-alive", "Keep-Alive": "timeout=30, max=100"}
         )
@@ -220,10 +252,23 @@ def _get_cached_session() -> requests.Session:
 def _get_cached_graphql_client(
     *, url: str, api_key: str, timeout: int, correlation_id: str | None = None
 ) -> Client:
-    """Get or create a cached GraphQL client with connection pooling."""
+    """Get or create a cached GraphQL client with connection pooling.
+
+    Creates a GraphQL client with optimized transport settings. The client is
+    cached globally and reused when configuration hasn't changed. This optimizes
+    Lambda warm starts by avoiding client recreation.
+
+    Args:
+        url: The AppSync GraphQL endpoint URL
+        api_key: The API key for authentication
+        timeout: Request timeout in seconds
+        correlation_id: Optional correlation ID for request tracing
+
+    Returns:
+        A configured GraphQL Client instance
+    """
     global _cached_graphql_client, _cached_client_config_hash
 
-    # Create config hash to detect changes that require new client
     config_items = [url, api_key, str(timeout)]
     config_hash = hash(tuple(config_items))
 
@@ -238,13 +283,12 @@ def _get_cached_graphql_client(
             url=url,
             headers=headers,
             timeout=timeout,
-            session=session,  # Use cached session with connection pooling
+            session=session,
         )
 
         _cached_graphql_client = Client(transport=transport)
         _cached_client_config_hash = config_hash
 
-    # Update correlation ID in headers if provided (client is cached, but headers can change)
     if correlation_id and hasattr(_cached_graphql_client.transport, "headers"):
         _cached_graphql_client.transport.headers["x-correlation-id"] = correlation_id
 
@@ -260,19 +304,25 @@ def set_activity_fields(
 ) -> dict[str, Any]:
     """Set fields for an activity using a GraphQL client.
 
+    Updates specific fields of an activity through the AppSync GraphQL API.
+    Supports retry logic and mock responses for testing environments.
+
     Args:
-        activity_id: Unique identifier for the activity.
-        field_values: Dictionary of field names and values to update.
-        config: The configuration object.
+        activity_id: Unique identifier for the activity
+        field_values: Dictionary of field names and values to update
+        config: The AWS configuration object
+        correlation_id: Optional correlation ID for request tracing
 
     Returns:
-        The response data from the AppSync API.
+        The response data from the AppSync API
+
+    Raises:
+        RuntimeError: If AppSync credentials are not available and mocking is disabled
     """
     variables: UpdateActivityFieldsInput = UpdateActivityFieldsInput(
         activityId=activity_id, fieldValues=field_values
     )
 
-    # Get credentials from Secrets Manager or environment variables
     endpoint_url, api_key = _get_appsync_credentials(config)
 
     if not endpoint_url or not api_key:
@@ -288,7 +338,6 @@ def set_activity_fields(
     timeout_s: int = int(os.getenv("APPSYNC_TIMEOUT", "60"))
     max_attempts: int = int(os.getenv("APPSYNC_MAX_ATTEMPTS", "3"))
 
-    # Use cached client with connection pooling
     client = _get_cached_graphql_client(
         url=endpoint_url,
         api_key=api_key,
@@ -302,6 +351,7 @@ def set_activity_fields(
         reraise=True,
     )
     def _do_update() -> dict[str, Any]:
+        """Execute the update mutation with retry logic."""
         from typing import cast
 
         return cast(
@@ -333,17 +383,22 @@ def query_activities_with_filter(
 ) -> dict[str, Any]:
     """Query activities using ActivityFilter.
 
+    Retrieves activities from AppSync based on the provided filter criteria.
+    Supports mock responses for testing environments.
+
     Args:
-        activity_filter: Dictionary containing activity filter parameters.
-        limit: Maximum number of activities to return.
-        config: AWS configuration object (uses default if not provided).
+        activity_filter: Dictionary containing activity filter parameters
+        limit: Maximum number of activities to return (default: 10)
+        config: AWS configuration object (uses default if not provided)
 
     Returns:
-        The response data from the AppSync API.
+        The response data from the AppSync API containing matching activities
+
+    Raises:
+        RuntimeError: If AppSync credentials are not available and mocking is disabled
     """
     variables = {"filter": activity_filter, "limit": limit}
 
-    # Use default config if not provided
     if config is None:
         from utils.config import load_config
 
@@ -352,7 +407,6 @@ def query_activities_with_filter(
     else:
         aws_config = config
 
-    # Get credentials from Secrets Manager or environment variables
     endpoint_url, api_key = _get_appsync_credentials(aws_config)
 
     if not endpoint_url or not api_key:
@@ -367,7 +421,6 @@ def query_activities_with_filter(
 
     timeout_s: int = int(os.getenv("APPSYNC_TIMEOUT", "60"))
 
-    # Use cached client with connection pooling
     client = _get_cached_graphql_client(url=endpoint_url, api_key=api_key, timeout=timeout_s)
 
     from typing import cast
@@ -382,13 +435,18 @@ def query_activities_with_filter(
 def introspect_schema(*, config: AwsConfig | None = None) -> dict[str, Any]:
     """Perform GraphQL introspection to understand the schema.
 
+    Executes a GraphQL introspection query to retrieve schema information
+    from the AppSync API. Useful for understanding available types and fields.
+
     Args:
-        config: AWS configuration object (uses default if not provided).
+        config: AWS configuration object (uses default if not provided)
 
     Returns:
-        The schema introspection data from the AppSync API.
+        The schema introspection data from the AppSync API
+
+    Raises:
+        RuntimeError: If AppSync credentials are not available and mocking is disabled
     """
-    # Use default config if not provided
     if config is None:
         from utils.config import load_config
 
@@ -397,7 +455,6 @@ def introspect_schema(*, config: AwsConfig | None = None) -> dict[str, Any]:
     else:
         aws_config = config
 
-    # Get credentials from Secrets Manager or environment variables
     endpoint_url, api_key = _get_appsync_credentials(aws_config)
 
     if not endpoint_url or not api_key:
@@ -412,7 +469,6 @@ def introspect_schema(*, config: AwsConfig | None = None) -> dict[str, Any]:
 
     timeout_s: int = int(os.getenv("APPSYNC_TIMEOUT", "60"))
 
-    # Use cached client with connection pooling
     client = _get_cached_graphql_client(url=endpoint_url, api_key=api_key, timeout=timeout_s)
 
     from typing import cast
@@ -424,16 +480,21 @@ def introspect_schema(*, config: AwsConfig | None = None) -> dict[str, Any]:
 def get_activity(*, activity_id: str, config: AwsConfig | None = None) -> dict[str, Any]:
     """Get a specific activity by ID.
 
+    Retrieves a single activity from AppSync using its unique identifier.
+    Includes retry logic for improved reliability.
+
     Args:
-        activity_id: The activity ID to retrieve.
-        config: AWS configuration object (uses default if not provided).
+        activity_id: The activity ID to retrieve
+        config: AWS configuration object (uses default if not provided)
 
     Returns:
-        The response data from the AppSync API.
+        The response data from the AppSync API containing the activity
+
+    Raises:
+        RuntimeError: If AppSync credentials are not available and mocking is disabled
     """
     variables = {"activityId": [activity_id]}
 
-    # Use default config if not provided
     if config is None:
         from utils.config import load_config
 
@@ -442,7 +503,6 @@ def get_activity(*, activity_id: str, config: AwsConfig | None = None) -> dict[s
     else:
         aws_config = config
 
-    # Get credentials from Secrets Manager or environment variables
     endpoint_url, api_key = _get_appsync_credentials(aws_config)
 
     if not endpoint_url or not api_key:
@@ -458,7 +518,6 @@ def get_activity(*, activity_id: str, config: AwsConfig | None = None) -> dict[s
     timeout_s: int = int(os.getenv("APPSYNC_TIMEOUT", "60"))
     max_attempts: int = int(os.getenv("APPSYNC_MAX_ATTEMPTS", "3"))
 
-    # Use cached client with connection pooling
     client = _get_cached_graphql_client(url=endpoint_url, api_key=api_key, timeout=timeout_s)
 
     @retry(  # type: ignore[misc]
@@ -467,6 +526,7 @@ def get_activity(*, activity_id: str, config: AwsConfig | None = None) -> dict[s
         reraise=True,
     )
     def _do_get() -> dict[str, Any]:
+        """Execute the get activity query with retry logic."""
         from typing import cast
 
         return cast(dict[str, Any], client.execute(GET_ACTIVITY_QUERY, variable_values=variables))
@@ -480,14 +540,23 @@ def load_activity_from_graphql(
 ) -> dict[str, Any]:
     """Load a single activity from GraphQL and convert to the expected format.
 
+    Retrieves an activity from GraphQL and transforms it to match the format
+    expected by the pipeline (similar to Athena query results).
+
     Args:
-        activity_id: The activity ID to retrieve.
-        config: AWS configuration object (uses default if not provided).
+        activity_id: The activity ID to retrieve
+        config: AWS configuration object (uses default if not provided)
 
     Returns:
-        Dictionary containing activity data in the same format as Athena queries.
-    """
+        Dictionary containing activity data in the same format as Athena queries
 
+    Raises:
+        ValueError: If the activity is not found
+
+    Note:
+        The format conversion is needed to maintain compatibility with existing
+        pipeline code that expects Athena-style results.
+    """
     response = get_activity(activity_id=activity_id, config=config)
 
     if not response.get("getActivity") or not response["getActivity"]:
@@ -495,15 +564,13 @@ def load_activity_from_graphql(
 
     activity_data: dict[str, Any] = response["getActivity"][0]
 
-    # Convert to the format expected by the pipeline (matching Athena query format)
-    # TODO this is weird. We should figure out why this is happening.
     activity_row = {
         "activityId": activity_data["activityId"],
         "storyId": activity_data["storyId"],
         "studentId": activity_data["studentId"],
         "createdAt": activity_data["createdAt"],
-        "status": "completed",  # Default status since GraphQL doesn't return this
-        "displayStatus": "completed",  # Default display status
+        "status": "completed",
+        "displayStatus": "completed",
     }
 
     return activity_row

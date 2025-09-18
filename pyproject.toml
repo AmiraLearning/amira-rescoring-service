@@ -37,6 +37,10 @@ dependencies = [
   "jellyfish>=1.2.0",
   "metaphone>=0.6",
   "bio>=1.8.0",
+  "fire>=0.7.1",
+  "dotenv>=0.9.9",
+  "python-levenshtein>=0.27.1",
+  "grpcio-tools>=1.75.0",
 ]
 
 [project.optional-dependencies]

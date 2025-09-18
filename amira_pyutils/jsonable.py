@@ -1,6 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import Generic, TypeVar, Self, cast, Any
-
+from typing import Any, Generic, Self, TypeVar, cast
 
 # JSON-compatible types (primitives and recursive containers)
 JsonSerializable = (

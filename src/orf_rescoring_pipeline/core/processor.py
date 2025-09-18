@@ -9,8 +9,7 @@ independently without batch operations.
 import logging
 from typing import TYPE_CHECKING, Any, Final
 
-import amira_pyutils.services.s3 as s3_utils
-
+import amira_pyutils.s3 as s3_utils
 from orf_rescoring_pipeline.alignment.audio_processing import (
     load_activity_audio_data_from_s3,
 )
@@ -29,16 +28,18 @@ from orf_rescoring_pipeline.utils.file_operations import trim_predictions
 from utils.standardized_metrics import emit_standardized_metric
 
 if TYPE_CHECKING:
-    from amira_pyutils.general.environment import Environment
-    from amira_pyutils.services.appsync import AppSync
-
+    # TODO CRTITICAL
+    from amira_pyutils.environment import Environment
+    from amira_pyutils.appsync import AppSync
     from orf_rescoring_pipeline.utils.transcription import (
         DeepgramASRClient,
         KaldiASRClient,
         W2VASRClient,
     )
 
-logger = logging.getLogger(__name__)
+from amira_pyutils.logging import get_logger
+
+logger = get_logger(__name__)
 
 REQUIRED_FEATURE_FIELDS: Final[list[str]] = [
     "model",
@@ -55,7 +56,7 @@ APPSYNC_UPDATE_FIELDS: Final[dict[str, str]] = {
 }
 
 
-def process_single_activity(
+async def process_single_activity(
     activity: Activity,
     appsync: "AppSync",
     env: "Environment",
@@ -87,6 +88,8 @@ def process_single_activity(
     try:
         import time
 
+        logger.debug(f"Loading model features into activity")
+
         t0 = time.time()
         _load_model_features_into_activity(
             activity=activity,
@@ -95,7 +98,9 @@ def process_single_activity(
         )
         t1 = time.time()
 
-        _execute_audio_transcription_phase(
+        logger.debug(f"Executing audio transcription phase")
+
+        await _execute_audio_transcription_phase(
             activity=activity,
             env=env,
             deepgram=deepgram,
@@ -176,22 +181,32 @@ def _fetch_model_features_from_appsync(
     return cast(list[dict[str, Any]], features_query(activity_id=activity_id))
 
 
-def _execute_audio_transcription_phase(
+async def _execute_audio_transcription_phase(
     *,
     activity: Activity,
     env: "Environment",
     deepgram: "DeepgramASRClient",
     save_files: bool,
 ) -> None:
-    """Execute Phase 1: Audio loading and transcription processing."""
-    load_activity_audio_data_from_s3(activity=activity, audio_bucket=env.audio_bucket)
+    """Execute Phase 1: Audio loading and transcription processing.
+
+    Args:
+        activity: Activity object to process
+        env: Environment configuration
+        deepgram: Deepgram ASR client
+        save_files: If True, saves transcript files to disk
+    """
+    logger.debug(f"Executing audio transcription phase for activity: {activity.activity_id}")
+    await load_activity_audio_data_from_s3(activity=activity, audio_bucket=env.audio_bucket)
 
     phrase_manifest = _create_phrase_manifest()
+    logger.debug(f"Creating phrase manifest for activity: {activity.activity_id}")
     pages = phrase_manifest.generate(bucket=env.audio_bucket, activity_id=activity.activity_id)
 
     import asyncio
 
     try:
+        logger.debug(f"Starting async transcription for activity: {activity.activity_id}")
         loop = asyncio.get_event_loop()
         activity.transcript_json = loop.run_until_complete(
             deepgram.transcribe_async(activity, save_transcript=save_files)
@@ -205,13 +220,29 @@ def _execute_audio_transcription_phase(
 
 
 def _create_phrase_manifest() -> PhraseManifest:
-    """Create a phrase manifest with S3 client."""
-    builder = PhraseBuilder(s3_client=s3_utils.get_client())
+    """Create a phrase manifest with S3 client.
+
+    Args:
+        None
+
+    Returns:
+        PhraseManifest object
+    """
+    logger.debug(f"Creating phrase manifest")
+    builder = PhraseBuilder(s3_client=s3_utils.S3Service())
     return PhraseManifest(builder=builder)
 
 
 def _execute_word_alignment_phase(*, activity: Activity) -> None:
-    """Execute Phase 2: Word-level alignment with Deepgram."""
+    """Execute Phase 2: Word-level alignment with Deepgram.
+
+    Args:
+        activity: Activity object to process
+
+    Returns:
+        None
+    """
+    logger.debug(f"Executing word alignment phase for activity: {activity.activity_id}")
     features = activity.preferred_model_features
 
     for page in activity.pages:
@@ -236,7 +267,16 @@ def _execute_word_alignment_phase(*, activity: Activity) -> None:
 
 
 def _validate_feature_availability(*, activity: Activity, absolute_phrase_idx: int) -> None:
-    """Validate that feature data is available for the given phrase index."""
+    """Validate that feature data is available for the given phrase index.
+
+    Args:
+        activity: Activity object to process
+        absolute_phrase_idx: Absolute phrase index to validate
+
+    Returns:
+        None
+    """
+    logger.debug(f"Validating feature availability for activity: {activity.activity_id}")
     feature_indices = [feature.phrase_index for feature in activity.preferred_model_features]
 
     if absolute_phrase_idx not in feature_indices:
@@ -260,7 +300,15 @@ def _update_feature_with_deepgram_matches(
     absolute_phrase_idx: int,
     deepgram_matches: list[Any],
 ) -> None:
-    """Update feature with Deepgram matches and validate alignment."""
+    """Update feature with Deepgram matches and validate alignment.
+
+    Args:
+        activity: Activity object to process
+        features: List of features to update
+        absolute_phrase_idx: Absolute phrase index to update
+        deepgram_matches: List of deepgram matches
+    """
+    logger.debug(f"Updating feature with Deepgram matches for activity: {activity.activity_id}")
     features[absolute_phrase_idx].deepgram_match = deepgram_matches
 
     expected_length = len(activity.model_predictions[absolute_phrase_idx])
@@ -297,6 +345,7 @@ def _execute_flagging_rescoring_phase(
         For debug mode: (success, activity_id, accuracy_stats_tuple)
         For normal mode: (success, activity_id)
     """
+    logger.debug(f"Executing flagging and rescoring phase for activity: {activity.activity_id}")
     _truncate_errors_to_available_pages(activity=activity)
 
     debugger = ActivityDebugger(activity=activity) if debug else None
@@ -322,6 +371,7 @@ def _truncate_errors_to_available_pages(*, activity: Activity) -> None:
     Args:
         activity: Activity object to process
     """
+    logger.debug(f"Truncating errors to available pages for activity: {activity.activity_id}")
     max_phrase_idx = max([max(page.phrase_indices) for page in activity.pages])
 
     if len(activity.errors) > max_phrase_idx + 1:
@@ -342,6 +392,7 @@ def _process_features_with_flagging(
         activity: Activity object to process
         flagging_executor: FlaggingExecutor object to process features
     """
+    logger.debug(f"Processing features with flagging logic for activity: {activity.activity_id}")
     for feature in activity.preferred_model_features:
         errors = activity.errors[feature.phrase_index]
         errors = activity.pad_to_phrase_length(errors=errors, phrase_index=feature.phrase_index)
@@ -361,6 +412,7 @@ def _update_activity_in_appsync(*, activity: Activity, appsync: "AppSync") -> No
         appsync: AppSync client for GraphQL operations
     """
     try:
+        logger.debug(f"Updating activity in AppSync for activity: {activity.activity_id}")
         field_values = {
             "errors": activity.errors_retouched,
             **APPSYNC_UPDATE_FIELDS,
@@ -384,6 +436,7 @@ def _save_debug_output(*, activity: Activity, debugger: ActivityDebugger) -> Non
         debugger: ActivityDebugger object to save debug output
     """
     try:
+        logger.debug(f"Saving debug output for activity: {activity.activity_id}")
         debug_file = debugger.save_debug_file()
         logger.info(f"Debug analysis saved for activity {activity.activity_id}: {debug_file}")
     except Exception as e:
@@ -400,6 +453,7 @@ def _create_debug_response(
         debugger: ActivityDebugger object to save debug output
     """
     try:
+        logger.debug(f"Getting accuracy stats for activity: {activity.activity_id}")
         accuracy_stats = debugger.get_activity_accuracy_stats()
         return True, activity.activity_id, accuracy_stats
     except Exception as e:

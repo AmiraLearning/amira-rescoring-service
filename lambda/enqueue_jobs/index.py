@@ -103,7 +103,8 @@ async def enqueue_activities_from_athena(enqueuer: JobEnqueuer) -> int:
                 )
             ]
 
-            return await sqs_enqueuer.enqueue_batch(messages=messages)
+            result = await sqs_enqueuer.enqueue_batch(messages=messages)
+            return int(result)
     finally:
         await athena.close()
     return 0

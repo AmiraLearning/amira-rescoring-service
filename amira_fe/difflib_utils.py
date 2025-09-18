@@ -4,10 +4,10 @@ Based on Python 3.7.10 difflib source, updated to provide lower level access.
 Originally created June 2021.
 """
 
-from typing import Final
-from types import MappingProxyType
 from collections.abc import Iterator
 from enum import StrEnum
+from types import MappingProxyType
+from typing import Final, TypeAlias
 
 
 class _DiffMarkers(StrEnum):
@@ -40,9 +40,12 @@ _DIFF_MARKERS_MAPPING: Final[MappingProxyType[_DiffMarkers, _DiffMarkersSymbols]
 
 _PLACEHOLDER_LINE: Final[str] = "-"
 
+_DiffLine: TypeAlias = tuple[int | str, str]
+_DiffEntry: TypeAlias = tuple[_DiffLine, _DiffLine, str]
+
 
 def collect_lines(
-    *, diffs: Iterator[tuple[tuple, tuple, str]]
+    *, diffs: Iterator[_DiffEntry]
 ) -> tuple[
     list[str | None],
     list[str | None],

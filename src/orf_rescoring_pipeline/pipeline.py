@@ -6,6 +6,7 @@ that work with Lambda-based serverless architecture. Each function processes
 individual activities without batch operations.
 """
 
+import asyncio
 import logging
 from typing import Any, cast
 
@@ -33,7 +34,7 @@ def process_single_activity_entry(
     """
     event = {"activity_id": activity_id, "env_name": env_name, "debug": debug}
 
-    result = cast(dict[str, Any], handler(event, None))
+    result = cast(dict[str, Any], asyncio.run(handler(event, None)))
 
     if result["statusCode"] == 200:
         logger.info(f"Successfully processed activity {activity_id}")

@@ -1,23 +1,27 @@
-from typing import Final
-from types import MappingProxyType
 import re
-import epitran
-import edit_distance
-from toolz import curry
-from fuzzywuzzy import fuzz
 from functools import reduce
+from types import MappingProxyType
+from typing import Final
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from typing import Any
+
+import edit_distance
+import epitran
+from fuzzywuzzy import fuzz
+from toolz import curry
 
 from amira_pyutils.abstract_alignment import (
+    AlignmentResult,
     AlignmentConfig,
-    AlignerResult,
-    WordSelection,
+    WordSelectionStrategy,
 )
 from amira_pyutils.language import LanguageHandling
-from amira_pyutils.text import normalize
-from amira_pyutils.word_distance import word_distance, l_dist
 from amira_pyutils.logging import get_logger
 from amira_pyutils.phone_alphabets import arpa2amirabet_ex
-
+from amira_pyutils.text import normalize
+from amira_pyutils.word_distance import l_dist
 
 logger = get_logger(__name__)
 
@@ -84,8 +88,9 @@ def _phonemize_to_ipa(*, lang: LanguageHandling, text: str) -> str:
     Returns:
         IPA phonetic representation of the text.
     """
-    normalized_words = normalize(text)
-    return _EPITRAN_SPANISH.transliterate(_SPACE_SEPARATOR.join(normalized_words))
+    normalized_words = normalize(text=text, lang=lang)
+    result = _EPITRAN_SPANISH.transliterate(_SPACE_SEPARATOR.join(normalized_words))
+    return str(result)
 
 
 def _phonemize_to_arpa(
@@ -101,8 +106,8 @@ def _phonemize_to_arpa(
     Returns:
         ARPA phonetic representation with silence markers.
     """
-    normalized_words = normalize(text)
-    arpa_phonemes = [arpa_dict.get(word.upper(), "") for word in normalized_words]
+    normalized_words = normalize(text=text, lang=lang)
+    arpa_phonemes = [" ".join(arpa_dict.get(word.upper(), [""])) for word in normalized_words]
     intercalated = _intercalate_with_separator(items=arpa_phonemes, separator=_SILENCE_MARKER)
     return _SPACE_SEPARATOR.join(intercalated)
 
@@ -123,13 +128,13 @@ def _phonemize_to_amirabet(
     Side Effects:
         Logs warnings for words not found in the ARPA dictionary.
     """
-    normalized_words = normalize(text)
+    normalized_words = normalize(text=text, lang=lang)
     result = []
 
     for word in normalized_words:
         arpa_phonemes = arpa_dict.get(word.upper())
         if arpa_phonemes is None:
-            arpa_phonemes = _UNKNOWN_WORD_MARKER
+            arpa_phonemes = [_UNKNOWN_WORD_MARKER]
             logger.warning(
                 f"Expected word '{word}' not present in ARPA dict - will be treated as a skip"
             )
@@ -176,7 +181,7 @@ def _phonemize_text(
 
 
 def _calculate_wordwise_match(
-    *, story_word: str, word1: str, word2: str, method: WordSelection
+    *, story_word: str, word1: str, word2: str, method: WordSelectionStrategy
 ) -> str:
     """Selects the preferred word based on the specified selection method.
 
@@ -189,11 +194,11 @@ def _calculate_wordwise_match(
     Returns:
         The preferred word based on the selection method.
     """
-    if method == WordSelection.MATCH_FIRST:
+    if method == WordSelectionStrategy.FIRST:
         return word1
-    elif method == WordSelection.MATCH_LEV_DIST:
-        distance1 = l_dist(story_word, word1)
-        distance2 = l_dist(story_word, word2)
+    elif method == WordSelectionStrategy.LEVENSHTEIN_DISTANCE:
+        distance1 = l_dist(story_word, s2=word1)
+        distance2 = l_dist(story_word, s2=word2)
         return word1 if distance1 <= distance2 else word2
     else:
         raise ValueError(f"Unsupported wordwise selection method: {method}")
@@ -226,7 +231,7 @@ def _calculate_groupwise_match(
 
     for group_size in range(1, max_group_size):
         combined_words = "".join(transcript_words[:group_size])
-        levenshtein_distance = l_dist(story_word, combined_words)
+        levenshtein_distance = l_dist(story_word, s2=combined_words)
         length_difference = abs(len(story_word) - len(combined_words))
 
         is_better_distance = levenshtein_distance < min_levenshtein_distance
@@ -270,7 +275,7 @@ def _calculate_ensemble_match(
             story_word=story_word,
             word1=w1,
             word2=w2,
-            method=WordSelection.MATCH_LEV_DIST,
+            method=WordSelectionStrategy.LEVENSHTEIN_DISTANCE,
         ),
         transcript_words,
     )
@@ -279,8 +284,8 @@ def _calculate_ensemble_match(
     fuzz_score_word = fuzz.ratio(story_word, wordwise_match)
 
     if fuzz_score_group == fuzz_score_word:
-        groupwise_distance = l_dist(story_word, groupwise_match)
-        wordwise_distance = l_dist(story_word, wordwise_match)
+        groupwise_distance = l_dist(story_word, s2=groupwise_match)
+        wordwise_distance = l_dist(story_word, s2=wordwise_match)
         return groupwise_match if groupwise_distance < wordwise_distance else wordwise_match
 
     return groupwise_match if fuzz_score_group > fuzz_score_word else wordwise_match
@@ -308,23 +313,26 @@ def story_word_match(
         ValueError: If an unknown word selection method is specified.
     """
     if config is None:
-        config = AlignmentConfig.default()
+        config = AlignmentConfig.create_default()
 
-    selection_method = config.matched_word_selection
+    selection_method = config.word_selection_strategy
 
-    if selection_method == WordSelection.MATCH_ENSEMBLE:
+    if selection_method == WordSelectionStrategy.ENSEMBLE:
         return _calculate_ensemble_match(
             story_word=story_word,
             transcript_words=transcript_words,
             grouping_limit=grouping_limit,
         )
-    elif selection_method == WordSelection.MATCH_GROUPWISE:
+    elif selection_method == WordSelectionStrategy.GROUPWISE:
         return _calculate_groupwise_match(
             story_word=story_word,
             transcript_words=transcript_words,
             grouping_limit=grouping_limit,
         )
-    elif selection_method in {WordSelection.MATCH_FIRST, WordSelection.MATCH_LEV_DIST}:
+    elif selection_method in {
+        WordSelectionStrategy.FIRST,
+        WordSelectionStrategy.LEVENSHTEIN_DISTANCE,
+    }:
         return reduce(
             lambda w1, w2: _calculate_wordwise_match(
                 story_word=story_word, word1=w1, word2=w2, method=selection_method
@@ -336,7 +344,7 @@ def story_word_match(
 
 
 def _optimize_alignment_contiguity(
-    *, codes: list[tuple], story_phone: str, transcript_phone: str
+    *, codes: list[tuple[str, int, int, int, int]], story_phone: str, transcript_phone: str
 ) -> None:
     """Optimizes alignment to reduce discontiguities in transcription mapping.
 
@@ -392,7 +400,7 @@ def _optimize_alignment_contiguity(
 
 
 def _build_word_mapping(
-    *, codes: list[tuple], story_phone: str
+    *, codes: list[tuple[str, int, int, int, int]], story_phone: str
 ) -> tuple[dict[int, int], dict[int, int]]:
     """Builds mapping dictionaries for word start and end positions.
 
@@ -476,7 +484,7 @@ def _process_word_match(
         transcript_word = _SKIP_MARKER
 
     transcript_word = transcript_word.strip()
-    distance = word_distance(story_word, transcript_word)
+    distance = float(l_dist(story_word, s2=transcript_word))
 
     return story_word, transcript_word, distance
 
@@ -506,14 +514,14 @@ def phoneme_align_dash(
         - prefixes: Prefix segments from transcript
     """
     if config is None:
-        config = AlignmentConfig.default()
+        config = AlignmentConfig.create_default()
 
     story_phone = story_phone.strip()
     transcript_phone = transcript_phone.strip()
 
     action_function = (
         edit_distance.highest_match_action
-        if config.seq_match_maximal
+        if config.sequence_match_maximal
         else edit_distance.lowest_cost_action
     )
 
@@ -595,7 +603,7 @@ def phoneme_align_dash(
     )
 
 
-@curry
+@curry  # type: ignore[misc]
 def align_texts_phonetic(
     *,
     phon_encoding: str | None,
@@ -605,7 +613,7 @@ def align_texts_phonetic(
     next_exp: str | None,
     ref: str,
     trans: str,
-) -> AlignerResult:
+) -> AlignmentResult:
     """Aligns reference and transcript texts using phonetic comparison.
 
     This function performs phonetic alignment between reference and transcript texts
@@ -622,7 +630,7 @@ def align_texts_phonetic(
         trans: Transcript text to align.
 
     Returns:
-        AlignerResult tuple containing alignment results.
+        AlignmentResult tuple containing alignment results.
 
     Raises:
         ValueError: If the language/encoding combination is not supported.
@@ -636,13 +644,13 @@ def align_texts_phonetic(
         skip_markers = [_SKIP_MARKER] * ref_length
         word_indices = list(range(ref_length))
 
-        return (
-            normalized_ref,
-            skip_markers,
-            word_indices,
-            word_indices,
-            normalized_ref,
-            skip_markers,
+        return AlignmentResult(
+            aligned_reference=normalized_ref,
+            aligned_transcription_features=skip_markers,
+            reference_word_indices=word_indices,
+            transcription_word_indices=word_indices,
+            raw_aligned_reference=normalized_ref,
+            raw_aligned_transcription_features=skip_markers,
         )
 
     target_encoding = "IPA" if phon_encoding is None else phon_encoding
@@ -667,16 +675,15 @@ def align_texts_phonetic(
         story_phone=phonetic_ref, transcript_phone=phonetic_trans, config=config
     )
 
-    aligned_ref = normalize(ref)
+    aligned_ref = normalize(text=ref, lang=lang)
     num_words = len(aligned_ref)
     word_indices = list(range(num_words))
 
-    return (
-        aligned_ref,
-        trans_phons,
-        word_indices,
-        word_indices,
-        aligned_ref,
-        trans_phons,
-        prefixes,
+    return AlignmentResult(
+        aligned_reference=aligned_ref,
+        aligned_transcription_features=trans_phons,
+        reference_word_indices=word_indices,
+        transcription_word_indices=word_indices,
+        raw_aligned_reference=aligned_ref,
+        raw_aligned_transcription_features=trans_phons,
     )

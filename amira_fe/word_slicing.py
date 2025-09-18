@@ -1,7 +1,6 @@
-from typing import Final
+from typing import Any, Final
 
 import pandas as pd
-
 
 TimingSlice = tuple[float, float]
 
@@ -97,7 +96,7 @@ def _should_prefer_kaldi_over_kaldina(
 
 
 def preferred_word_slice(
-    *, row: pd.Series | dict[str, any], ignore_asrs: list[str]
+    *, row: pd.Series | dict[str, Any], ignore_asrs: list[str]
 ) -> TimingSlice | None:
     """
     Select optimal word timing slice from available ASR systems.

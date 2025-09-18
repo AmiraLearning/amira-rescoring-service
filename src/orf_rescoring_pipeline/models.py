@@ -5,19 +5,22 @@ including Activity, ModelFeature, and supporting classes for handling
 story content, audio data, and processing results.
 """
 
+import asyncio
+import inspect
 import json
 import logging
 import re
 import uuid
 from dataclasses import dataclass, field
-from functools import lru_cache
 from pathlib import Path
-from typing import Any, Final, TYPE_CHECKING, cast
+from typing import Any, Final, cast
 
 import aioboto3
 from tenacity import retry, stop_after_attempt, wait_exponential
 
-logger = logging.getLogger(__name__)
+from amira_pyutils.logging import get_logger
+
+logger = get_logger(__name__)
 
 # Constants
 MODEL_METADATA_BUCKET: Final[str] = "amira-ml-models"
@@ -53,16 +56,13 @@ async def _fetch_model_metadata(*, model: str) -> dict[str, Any]:
     Raises:
         Exception: If S3 operation fails after all retries.
     """
-    s3_client = aioboto3.Session().client("s3")
-    key = MODEL_METADATA_KEY_TEMPLATE.format(model=model)
-    # Cast client for typed access to get_object
-    client_any = cast(Any, s3_client)
-    response = await client_any.get_object(Bucket=MODEL_METADATA_BUCKET, Key=key)
-    data = json.loads(response["Body"].read().decode("utf-8"))
-    return cast(dict[str, Any], data)
+    async with aioboto3.Session().client("s3") as s3_client:
+        key = MODEL_METADATA_KEY_TEMPLATE.format(model=model)
+        response = await s3_client.get_object(Bucket=MODEL_METADATA_BUCKET, Key=key)
+        data = json.loads(response["Body"].read().decode("utf-8"))
+        return cast(dict[str, Any], data)
 
 
-@lru_cache(maxsize=MODEL_THRESHOLD_CACHE_SIZE)
 async def get_model_threshold(model: str) -> float:
     """Get the threshold value for a specific model.
 
@@ -78,6 +78,41 @@ async def get_model_threshold(model: str) -> float:
     """
     metadata = await _fetch_model_metadata(model=model)
     return float(metadata["properties"]["threshold"])
+
+
+_MODEL_THRESHOLD_SYNC_CACHE: dict[str, float] = {}
+
+
+def resolve_model_threshold(model: str) -> float:
+    """Resolve a model threshold value with sync caching.
+
+    Supports both async and sync implementations of ``get_model_threshold`` so that
+    tests can monkeypatch the function without needing to return a coroutine.
+    """
+
+    if model in _MODEL_THRESHOLD_SYNC_CACHE:
+        return _MODEL_THRESHOLD_SYNC_CACHE[model]
+
+    threshold_result = get_model_threshold(model)
+    if inspect.isawaitable(threshold_result):
+        try:
+            # Check if we're in an async context
+            asyncio.get_running_loop()
+            # We're in an async context but called from sync code
+            # Fall back to default threshold to avoid blocking the event loop
+            threshold_value = 0.5
+            logger.warning(
+                f"Using default threshold 0.5 for model {model} to avoid async call from sync context"
+            )
+        except RuntimeError:
+            # No running loop, safe to use asyncio.run()
+            threshold_value = asyncio.run(threshold_result)
+    else:
+        threshold_value = float(threshold_result)
+
+    threshold_value = float(threshold_value)
+    _MODEL_THRESHOLD_SYNC_CACHE[model] = threshold_value
+    return threshold_value
 
 
 @dataclass
@@ -228,24 +263,32 @@ class Activity:
     timing_path: str | None = None
     model_features: list[ModelFeature] = field(default_factory=list)
     errors_retouched: list[list[bool]] = field(default_factory=list)
+    _first_pass_model_features_cache: list[ModelFeature] | None = field(
+        default=None, init=False, repr=False
+    )
+    _second_pass_model_features_cache: list[ModelFeature] | None = field(
+        default=None, init=False, repr=False
+    )
+    _preferred_model_features_cache: list[ModelFeature] | None = field(
+        default=None, init=False, repr=False
+    )
+    _model_predictions_cache: list[list[bool]] | None = field(default=None, init=False, repr=False)
 
     @staticmethod
-    async def from_appsync_res(appsync_res: list[dict[str, Any]]) -> list["Activity"]:
+    def from_appsync_res(appsync_res: list[list[dict[str, Any]]]) -> "Activity":
         """Create Activity objects from AppSync response data.
 
         Args:
             appsync_res: Response data from AppSync query.
 
         Returns:
-            List of Activity objects with basic story data loaded.
+            Activity object with basic story data loaded.
         """
-        return [
-            await Activity._create_from_activity_data(activity_data=activity_data)
-            for activity_data in appsync_res
-        ]
+        logger.debug(f"Appsync res: {appsync_res}")
+        return Activity._create_from_activity_data(activity_data=appsync_res[0][0])
 
     @staticmethod
-    async def _create_from_activity_data(*, activity_data: dict[str, Any]) -> "Activity":
+    def _create_from_activity_data(*, activity_data: dict[str, Any]) -> "Activity":
         """Create single Activity from activity data.
 
         Args:
@@ -254,7 +297,8 @@ class Activity:
         Returns:
             Activity instance.
         """
-        phrases = await Activity._normalize_phrases(
+        logger.info(f"Activity data: {activity_data}")
+        phrases = Activity._normalize_phrases(
             phrases=activity_data["story"]["chapters"][0]["phrases"]
         )
 
@@ -267,7 +311,7 @@ class Activity:
         )
 
     @staticmethod
-    async def _normalize_phrases(*, phrases: list[str]) -> list[str]:
+    def _normalize_phrases(*, phrases: list[str]) -> list[str]:
         """Normalize phrases by removing punctuation and converting to lowercase.
 
         Args:
@@ -278,9 +322,7 @@ class Activity:
         """
         return [re.sub(PUNCTUATION_PATTERN, "", phrase.lower()) for phrase in phrases]
 
-    async def model_features_from_appsync_res(
-        self, *, appsync_model_res: list[dict[str, Any]]
-    ) -> None:
+    def model_features_from_appsync_res(self, *, appsync_model_res: list[dict[str, Any]]) -> None:
         """Load model features from AppSync response.
 
         Args:
@@ -288,6 +330,7 @@ class Activity:
         """
         deduped_features = self._deduplicate_model_features(features=appsync_model_res)
         self.model_features = sorted(deduped_features, key=lambda x: x.phrase_index)
+        self._invalidate_model_feature_caches()
 
     def _deduplicate_model_features(self, *, features: list[dict[str, Any]]) -> list[ModelFeature]:
         """Deduplicate model features based on phrase index and model.
@@ -312,6 +355,14 @@ class Activity:
 
         return deduped_features
 
+    def _invalidate_model_feature_caches(self) -> None:
+        """Clear cached views that depend on the model features list."""
+
+        self._first_pass_model_features_cache = None
+        self._second_pass_model_features_cache = None
+        self._preferred_model_features_cache = None
+        self._model_predictions_cache = None
+
     def _should_skip_feature(self, *, feature: dict[str, Any]) -> bool:
         """Check if a feature should be skipped during processing.
 
@@ -331,10 +382,12 @@ class Activity:
         Returns:
             Sorted list of second pass model features.
         """
-        return sorted(
-            [feature for feature in self.model_features if "second" in feature.model.lower()],
-            key=lambda x: x.phrase_index,
-        )
+        if self._second_pass_model_features_cache is None:
+            self._second_pass_model_features_cache = sorted(
+                [feature for feature in self.model_features if "second" in feature.model.lower()],
+                key=lambda x: x.phrase_index,
+            )
+        return self._second_pass_model_features_cache
 
     @property
     def first_pass_model_features(self) -> list[ModelFeature]:
@@ -343,10 +396,16 @@ class Activity:
         Returns:
             Sorted list of first pass model features.
         """
-        return sorted(
-            [feature for feature in self.model_features if "second" not in feature.model.lower()],
-            key=lambda x: x.phrase_index,
-        )
+        if self._first_pass_model_features_cache is None:
+            self._first_pass_model_features_cache = sorted(
+                [
+                    feature
+                    for feature in self.model_features
+                    if "second" not in feature.model.lower()
+                ],
+                key=lambda x: x.phrase_index,
+            )
+        return self._first_pass_model_features_cache
 
     @property
     def preferred_model_features(self) -> list[ModelFeature]:
@@ -357,10 +416,13 @@ class Activity:
         Returns:
             List of preferred model features.
         """
-        second_pass = self.second_pass_model_features
-        if len(second_pass) > 0 and len(second_pass) == self.max_feature_index + 1:
-            return second_pass
-        return self.first_pass_model_features
+        if self._preferred_model_features_cache is None:
+            second_pass = self.second_pass_model_features
+            if len(second_pass) > 0 and len(second_pass) == self.max_feature_index + 1:
+                self._preferred_model_features_cache = second_pass
+            else:
+                self._preferred_model_features_cache = self.first_pass_model_features
+        return self._preferred_model_features_cache
 
     @property
     def max_feature_index(self) -> int:
@@ -388,27 +450,25 @@ class Activity:
             List of boolean predictions for each phrase.
         """
 
-        def _get_model_threshold_sync(model: str) -> float:
-            """Sync bridge to async threshold call.
+        if self._model_predictions_cache is not None:
+            return self._model_predictions_cache
 
-            TODO(network): Replace with upstream sync/cache layer when available.
-            """
-            try:
-                import asyncio
+        predictions: list[list[bool]] = []
+        threshold_cache: dict[str, float] = {}
 
-                return float(asyncio.run(get_model_threshold(model)))
-            except Exception:
-                # Fallback to a safe default threshold
-                return 0.5
+        for feature in self.preferred_model_features:
+            model_name = feature.model
+            if model_name not in threshold_cache:
+                try:
+                    threshold_cache[model_name] = resolve_model_threshold(model_name)
+                except Exception:
+                    threshold_cache[model_name] = 0.5  # Fall back to safe default
 
-        return [
-            [
-                _get_model_threshold_sync(feature.model) is not None
-                and conf < _get_model_threshold_sync(feature.model)
-                for conf in feature.correct_confidences
-            ]
-            for feature in self.preferred_model_features
-        ]
+            threshold = threshold_cache[model_name]
+            predictions.append([conf < threshold for conf in feature.correct_confidences])
+
+        self._model_predictions_cache = predictions
+        return predictions
 
     @property
     def is_kaldi_general(self) -> bool:

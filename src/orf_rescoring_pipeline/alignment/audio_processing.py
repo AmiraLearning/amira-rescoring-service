@@ -9,11 +9,11 @@ import tempfile
 from io import BytesIO
 from typing import Final
 
-import amira_pyutils.services.s3 as s3_utils
 from loguru import logger
 from pydub import AudioSegment
 from tenacity import retry, stop_after_attempt, wait_exponential
 
+import amira_pyutils.s3 as s3_utils
 from orf_rescoring_pipeline.models import Activity
 
 AUDIO_FILE_SUFFIX: Final[str] = ".wav"
@@ -29,7 +29,7 @@ RETRY_MAX_WAIT: Final[float] = 10.0
     wait=wait_exponential(multiplier=RETRY_MIN_WAIT, max=RETRY_MAX_WAIT),
     reraise=True,
 )
-def _download_audio_from_s3(*, bucket: str, key: str, temp_file_path: str) -> None:
+async def _download_audio_from_s3(*, bucket: str, key: str, temp_file_path: str) -> None:
     """Download audio file from S3 to temporary file with retry logic.
 
     Args:
@@ -40,8 +40,8 @@ def _download_audio_from_s3(*, bucket: str, key: str, temp_file_path: str) -> No
     Raises:
         Exception: If S3 download fails after all retries.
     """
-    s3_client = s3_utils.get_client()
-    s3_client.download_file(bucket, key, temp_file_path)
+    s3_service = s3_utils.S3Service()
+    await s3_service.download_file(bucket=bucket, key=key, filename=temp_file_path)
 
 
 def _read_audio_file_to_bytes(*, file_path: str) -> bytes:
@@ -141,7 +141,7 @@ def _extract_phrase_audio(*, audio: AudioSegment, start_ms: int, end_ms: int) ->
     return buf.getvalue()
 
 
-def load_activity_audio_data_from_s3(*, activity: Activity, audio_bucket: str) -> None:
+async def load_activity_audio_data_from_s3(*, activity: Activity, audio_bucket: str) -> None:
     """Load audio data from S3 using temporary file to avoid permanent disk storage.
 
     Args:
@@ -152,11 +152,11 @@ def load_activity_audio_data_from_s3(*, activity: Activity, audio_bucket: str) -
         Exception: If audio loading fails after retries.
     """
     s3_uri = _build_s3_audio_uri(activity_id=activity.activity_id, audio_bucket=audio_bucket)
-    s3_path = s3_utils.s3_addr_from_uri(s3_uri)
+    s3_path = s3_utils.S3Address.from_uri(uri=s3_uri)
 
     with tempfile.NamedTemporaryFile(suffix=AUDIO_FILE_SUFFIX, delete=True) as temp_file:
         try:
-            _download_audio_from_s3(
+            await _download_audio_from_s3(
                 bucket=s3_path.bucket, key=s3_path.key, temp_file_path=temp_file.name
             )
 

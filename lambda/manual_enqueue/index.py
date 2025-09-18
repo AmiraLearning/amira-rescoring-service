@@ -49,7 +49,8 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
                 enqueuer: SQSEnqueuer = SQSEnqueuer(
                     client=sqs_client, queue_url=os.environ["JOBS_QUEUE_URL"]
                 )
-                return await enqueuer.enqueue_batch(messages)
+                result = await enqueuer.enqueue_batch(messages)
+                return int(result)
 
         count: int = asyncio.run(enqueue_messages())
 

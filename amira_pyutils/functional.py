@@ -1,6 +1,7 @@
-from typing import Any, Callable, TypeVar, Generic, Generator, Iterable, Final
-from abc import ABC
+from collections.abc import Callable, Generator, Iterable
 from functools import reduce
+from typing import Any, Final, Generic, TypeVar
+
 from toolz import curry
 
 T = TypeVar("T")

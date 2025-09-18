@@ -1,10 +1,10 @@
-from jellyfish import levenshtein_distance
 from typing import Any
+
 import numpy as np
 import pandas as pd
+from jellyfish import levenshtein_distance
 
 from amira_pyutils.logging import get_logger
-
 
 logger = get_logger(name=__name__)
 

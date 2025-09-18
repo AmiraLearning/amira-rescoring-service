@@ -1,13 +1,12 @@
-from typing import Final
-from types import MappingProxyType
-from enum import StrEnum
 from collections.abc import Sequence
+from enum import StrEnum
+from types import MappingProxyType
+from typing import Final
 
 from amira_pyutils.jsonable import (
-    JsonSerializer,
     JsonSerializable,
+    JsonSerializer,
 )
-
 
 LANGUAGE_CODES: Final[MappingProxyType[str, str]] = MappingProxyType(
     {

@@ -1,19 +1,20 @@
-from typing import Final, Callable, Any, TYPE_CHECKING
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any, Final
 
 if TYPE_CHECKING:
     from loguru import Record
+import os
+import sys
+import threading
+import uuid
 from collections.abc import Generator
 from contextlib import contextmanager
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from enum import StrEnum
-import os
-import threading
-import uuid
-import sys
-from datetime import datetime, timezone
 
-from loguru import logger as _loguru_logger
 import orjson as json
+from loguru import logger as _loguru_logger
 
 
 class LogFormat(StrEnum):
@@ -154,7 +155,7 @@ class EMFFormatter:
         """
         emf_record = {
             "_aws": {
-                "Timestamp": int(datetime.now(tz=timezone.utc).timestamp() * 1000),
+                "Timestamp": int(datetime.now(tz=UTC).timestamp() * 1000),
                 "CloudWatchMetrics": [
                     {
                         "Namespace": self._namespace,

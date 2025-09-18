@@ -1,44 +1,43 @@
-from typing import Final, TypeVar, Callable, Iterable, cast, Any
-from collections.abc import Sequence
+from collections import defaultdict
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from functools import reduce
-from collections import defaultdict
 from types import MappingProxyType
+from typing import Any, Final, cast
 
 from toolz import curry
 
-from amira_pyutils.mappings import (
-    ARPA_TO_AMIRABET,
-    ARPA_TO_AMIRABET_ES_MX_ONLY,
-    IPA_MAP_INCORRECT_SINGLE,
-    IPA_MAP_INCORRECT_DOUBLE,
-    IPA_LIST_CONFLICTING_SYMBOLS,
-    IPA_LIST_CONFLICTING_SYMBOLS_ES_MX,
-    ARPA_TO_IPA_OVERRIDES_ES_MX,
-    IpaStr,
-    ArpaStr,
-    AmirabetStr,
-    IPA_EMPHASIS_MARKER,
-    IPA_EMPHASIS_MARKERS,
-    A,
-    IPA_MAP_EN_US_SINGLE,
-    IPA_MAP_EN_US_DOUBLE,
-    ARPA_TO_IPA_OVERRIDES,
-    ARPA_REPLACEMENTS,
-    IPA_MAP_INCORRECT_SINGLE_ES_MX,
-    IPA_MAP_INCORRECT_DOUBLE_ES_MX,
-    IPA_MAP_ES_SINGLE,
-    IPA_MAP_ES_DOUBLE,
-    IPA_EQUIV,
-)
-from amira_pyutils.functional import fmap_opt
 from amira_pyutils.errors import (
     BadAmirabetError,
     UnsupportedLanguageConversionError,
 )
-from amira_pyutils.logging import get_logger
+from amira_pyutils.functional import fmap_opt
 from amira_pyutils.language import LanguageHandling
-
+from amira_pyutils.logging import get_logger
+from amira_pyutils.mappings import (
+    ARPA_REPLACEMENTS,
+    ARPA_TO_AMIRABET,
+    ARPA_TO_AMIRABET_ES_MX_ONLY,
+    ARPA_TO_IPA_OVERRIDES,
+    ARPA_TO_IPA_OVERRIDES_ES_MX,
+    IPA_EMPHASIS_MARKER,
+    IPA_EMPHASIS_MARKERS,
+    IPA_EQUIV,
+    IPA_LIST_CONFLICTING_SYMBOLS,
+    IPA_LIST_CONFLICTING_SYMBOLS_ES_MX,
+    IPA_MAP_EN_US_DOUBLE,
+    IPA_MAP_EN_US_SINGLE,
+    IPA_MAP_ES_DOUBLE,
+    IPA_MAP_ES_SINGLE,
+    IPA_MAP_INCORRECT_DOUBLE,
+    IPA_MAP_INCORRECT_DOUBLE_ES_MX,
+    IPA_MAP_INCORRECT_SINGLE,
+    IPA_MAP_INCORRECT_SINGLE_ES_MX,
+    A,
+    AmirabetStr,
+    ArpaStr,
+    IpaStr,
+)
 
 logger = get_logger(__name__)
 

@@ -1,7 +1,7 @@
-from typing import Final, Any, Protocol
+from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import StrEnum
-from abc import ABC, abstractmethod
+from typing import Any, Final, Protocol
 
 from amira_pyutils.language import LanguageHandling
 

@@ -1,5 +1,5 @@
-from typing import TYPE_CHECKING, Final
 from collections.abc import Sequence
+from typing import TYPE_CHECKING, Final
 
 if TYPE_CHECKING:
     from amira_pyutils.language import LanguageHandling
@@ -140,8 +140,6 @@ class LambdaError(AmiraError):
 class DatabaseError(AmiraError):
     """Base class for database-related errors."""
 
-    pass
-
 
 class DynamoDBError(DatabaseError):
     """Error from DynamoDB operations.
@@ -198,8 +196,6 @@ class S3Error(AmiraError):
 # Service Communication Errors
 class ServiceError(AmiraError):
     """Base class for external service errors."""
-
-    pass
 
 
 class HTTPError(ServiceError):
@@ -282,8 +278,6 @@ class RateLimitError(ServiceError):
 class DataProcessingError(AmiraError):
     """Base class for data processing errors."""
 
-    pass
-
 
 class ValidationError(DataProcessingError):
     """Error from data validation.
@@ -330,8 +324,6 @@ class SerializationError(DataProcessingError):
 # ASR and Audio Processing Errors
 class ASRError(AmiraError):
     """Base class for Automatic Speech Recognition errors."""
-
-    pass
 
 
 class AudioReplayError(ASRError):
@@ -380,8 +372,6 @@ class TranscriptionError(ASRError):
 # Resource and Infrastructure Errors
 class ResourceError(AmiraError):
     """Base class for resource-related errors."""
-
-    pass
 
 
 class ConnectionPoolError(ResourceError):

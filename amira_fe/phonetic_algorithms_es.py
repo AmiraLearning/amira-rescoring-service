@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 
 """
 The Spanish Metaphone Algorithm (Algoritmo del Metáfono para el Español)
@@ -38,9 +37,8 @@ ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 """
 
-from typing import Final
 from types import MappingProxyType
-
+from typing import Final
 
 _VOWELS: Final[frozenset[str]] = frozenset(["A", "E", "I", "O", "U"])
 _SINGLE_SOUND_CONSONANTS: Final[frozenset[str]] = frozenset(

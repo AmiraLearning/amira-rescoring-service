@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import time
 from collections.abc import AsyncGenerator, Callable
 from dataclasses import dataclass
@@ -16,9 +17,6 @@ from tenacity import (
     stop_after_attempt,
     wait_exponential,
 )
-
-
-import logging
 
 
 class AmiraError(Exception):

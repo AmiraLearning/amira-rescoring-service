@@ -10,9 +10,9 @@ The extracted audio files are organized in separate directories for easy managem
 
 import logging
 from pathlib import Path
+from typing import Any
 
 from pydub import AudioSegment
-from typing import Any
 
 from orf_rescoring_pipeline.models import Activity
 

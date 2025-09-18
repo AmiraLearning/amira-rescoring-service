@@ -27,9 +27,8 @@ NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 """
 
-from typing import Final
 from types import MappingProxyType
-
+from typing import Final
 
 _DOUBLE_LETTER_REPLACEMENTS: Final[MappingProxyType[str, str]] = MappingProxyType(
     {

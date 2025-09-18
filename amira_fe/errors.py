@@ -11,7 +11,7 @@ class FEError(AmiraError):
             msg: Error message describing the issue
             retryable: Whether the operation can be retried
         """
-        super().__init__(msg, retryable=retryable)
+        super().__init__(msg=msg, retryable=retryable)
 
 
 class UnknownFeatureError(FEError):

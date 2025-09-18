@@ -1,5 +1,5 @@
-from typing import Final, TypeVar
 from types import MappingProxyType
+from typing import Final, TypeVar
 
 A = TypeVar("A")
 

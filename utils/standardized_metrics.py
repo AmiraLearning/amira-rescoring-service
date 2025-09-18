@@ -9,7 +9,7 @@ import platform
 
 from loguru import logger
 
-from src.pipeline.inference.metrics_constants import (
+from src.letter_scoring_pipeline.inference.metrics_constants import (
     DIM_ACTIVITY_ID,
     DIM_CORRELATION_ID,
     DIM_DEVICE,

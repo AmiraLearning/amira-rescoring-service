@@ -8,15 +8,13 @@ import csv
 import logging
 import os
 import re
-import shutil
 import tempfile
-import zipfile
 from datetime import datetime
 from pathlib import Path
 from types import MappingProxyType
 from typing import Final
 
-import amira_pyutils.services.s3 as s3_utils
+import amira_pyutils.s3 as s3_utils
 
 logger = logging.getLogger(__name__)
 
@@ -129,7 +127,7 @@ def trim_predictions(*, predictions: list[list[bool]]) -> list[list[bool]]:
         return predictions
 
 
-def upload_file_to_s3(
+async def upload_file_to_s3(
     *,
     file_path: str,
     bucket_name: str,
@@ -152,11 +150,13 @@ def upload_file_to_s3(
     try:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = Path(file_path).name
-        upload_dest = s3_utils.s3_addr_from_uri(
-            f"s3://{bucket_name}/{s3_key_prefix}/{timestamp}_{filename}"
+        upload_dest = s3_utils.S3Address.from_uri(
+            uri=f"s3://{bucket_name}/{s3_key_prefix}/{timestamp}_{filename}"
         )
 
-        s3_utils.upload_file(bucket=upload_dest.bucket, key=upload_dest.key, filename=file_path)
+        await s3_utils.S3Service().upload_file(
+            bucket=upload_dest.bucket, key=upload_dest.key, filename=file_path
+        )
 
         s3_url = f"s3://{upload_dest.bucket}/{upload_dest.key}"
         logger.info(f"Uploaded {file_type} to S3: {s3_url}")
@@ -175,7 +175,7 @@ def upload_file_to_s3(
         return None
 
 
-def upload_logs_to_s3(
+async def upload_logs_to_s3(
     *,
     log_file_path: str,
     bucket_name: str,
@@ -193,7 +193,7 @@ def upload_logs_to_s3(
     Returns:
         S3 URL of the uploaded file or None if upload failed.
     """
-    return upload_file_to_s3(
+    return await upload_file_to_s3(
         file_path=log_file_path,
         bucket_name=bucket_name,
         s3_key_prefix=s3_key_prefix,
@@ -202,7 +202,7 @@ def upload_logs_to_s3(
     )
 
 
-def upload_csv_to_s3(
+async def upload_csv_to_s3(
     *,
     activity_ids: set[str],
     env_name: str,
@@ -241,11 +241,11 @@ def upload_csv_to_s3(
         try:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             timestamped_filename = f"{timestamp}_{csv_filename}"
-            upload_dest = s3_utils.s3_addr_from_uri(
-                f"s3://{bucket_name}/{s3_key_prefix}/{timestamped_filename}"
+            upload_dest = s3_utils.S3Address.from_uri(
+                uri=f"s3://{bucket_name}/{s3_key_prefix}/{timestamped_filename}"
             )
 
-            s3_utils.upload_file(
+            await s3_utils.S3Service().upload_file(
                 bucket=upload_dest.bucket, key=upload_dest.key, filename=temp_file_path
             )
 
