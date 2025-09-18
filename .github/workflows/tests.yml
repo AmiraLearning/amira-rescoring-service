@@ -23,4 +23,4 @@ jobs:
           uv run --no-project --with pytest --with pytest-cov --with numpy --with pydantic --with loguru \
             -q pytest -q \
             --cov=src/pipeline/inference --cov=infra --cov-fail-under=60 \
-            tests/test_decoder.py tests/test_phonetics.py tests/test_engine_imports.py tests/test_appsync_contract.py | cat
+            tests/test_letter_naming/test_decoder.py tests/test_letter_naming/test_phonetics.py tests/test_letter_naming/test_engine_imports.py tests/test_letter_naming/test_appsync_contract.py | cat

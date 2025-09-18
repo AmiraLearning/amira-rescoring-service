@@ -19,11 +19,11 @@ import aiohttp
 import numpy as np
 import requests
 import soundfile as sf
-from amira_pyutils.services.kaldi import KaldiClient
-from amira_pyutils.services.w2v_client import W2VStackClient
+from src.orf_rescoring_pipeline.services.kaldi import KaldiClient, KaldiConfig
+from src.orf_rescoring_pipeline.services.w2v import W2VClient, W2VConfig
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_fixed
 
-from orf_rescoring_pipeline.models import Activity, TranscriptItem, WordItem
+from src.orf_rescoring_pipeline.models import Activity, TranscriptItem, WordItem
 
 logger = logging.getLogger(__name__)
 
@@ -281,8 +281,8 @@ class KaldiASRClient:
 
     def __init__(self) -> None:
         """Initialize Kaldi ASR client with hardcoded URLs and graph ID."""
-        self.general_client = KaldiClient(url=GENERAL_KALDI_URL)
-        self.partner_client = KaldiClient(url=PARTNER_KALDI_URL)
+        self.general_client = KaldiClient(config=KaldiConfig(url=GENERAL_KALDI_URL))
+        self.partner_client = KaldiClient(config=KaldiConfig(url=PARTNER_KALDI_URL))
 
     def _get_asr_client(self, activity: Activity) -> KaldiClient:
         """Get the appropriate ASR client based on activity story type.
@@ -327,25 +327,25 @@ class KaldiASRClient:
                 f"Activity {activity_id}: Transcribing phrase {phrase_index} with Kaldi client"
             )
 
-    def _create_transcript_item(self, kaldi_data: dict) -> TranscriptItem:
+    def _create_transcript_item(self, kaldi_result: KaldiResult) -> TranscriptItem:
         """Create TranscriptItem from Kaldi response.
 
         Args:
-            kaldi_data: Kaldi transcription response data.
+            kaldi_result: KaldiResult from new service client.
 
         Returns:
             Structured transcript item.
         """
         words = [
             WordItem(
-                word=word_data["word"],
-                start=word_data["start_time"],
-                end=word_data["end_time"],
-                confidence=word_data["confidence"],
+                word=word_transcription.word,
+                start=word_transcription.start_time,
+                end=word_transcription.end_time,
+                confidence=word_transcription.confidence,
             )
-            for word_data in kaldi_data["transcription"]
+            for word_transcription in kaldi_result.data.transcription
         ]
-        return TranscriptItem(transcript=kaldi_data["text"], words=words)
+        return TranscriptItem(transcript=kaldi_result.data.text, words=words)
 
     @retry(
         stop=stop_after_attempt(RETRY_MAX_ATTEMPTS),
@@ -379,22 +379,17 @@ class KaldiASRClient:
             tmp_file.write(audio_data)
 
         try:
-            metadata: dict[str, dict[str, Any]] = {"asr": {}}
-            loop = asyncio.get_event_loop()
-            from functools import partial
-
-            fetch_fn = partial(
-                client.fetch_kaldi_data,
-                kaldi_type="kaldi",
+            from pathlib import Path
+            
+            kaldi_result = await client.transcribe_audio(
+                audio_path=Path(tmp_file.name),
                 graph_id=KALDI_GRAPH_ID,
                 lm_phrase_id=lm_phrase_id,
-                metadata=metadata,
-                audio_path=tmp_file.name,
+                kaldi_type="kaldi",
             )
             result = await loop.run_in_executor(None, fetch_fn)
 
-            kaldi_data = result["asr"]["kaldi"]["data"]
-            transcript_item = self._create_transcript_item(kaldi_data)
+            transcript_item = self._create_transcript_item(kaldi_result)
 
             logger.info(
                 f"Activity {activity.activity_id}: Kaldi transcription completed for phrase {phrase_index} - "
@@ -411,8 +406,13 @@ class KaldiASRClient:
 
     def close(self) -> None:
         """Clean up both Kaldi client resources."""
-        self.general_client.close()
-        self.partner_client.close()
+        import asyncio
+        
+        async def close_clients():
+            await self.general_client.close()
+            await self.partner_client.close()
+        
+        asyncio.run(close_clients())
 
 
 class W2VASRClient:
@@ -424,7 +424,7 @@ class W2VASRClient:
 
     def __init__(self) -> None:
         """Initialize W2V ASR client with hardcoded endpoint."""
-        self.w2v_client = W2VStackClient(W2V_ENDPOINT)
+        self.w2v_client = W2VClient(config=W2VConfig(url=W2V_ENDPOINT))
         logger.info(f"W2VASRClient initialized with endpoint={W2V_ENDPOINT}")
 
     def _resample_audio(self, audio: np.ndarray, original_sr: int) -> np.ndarray:
@@ -498,7 +498,7 @@ class W2VASRClient:
         retry=retry_if_exception_type(Exception),
         reraise=True,
     )
-    def transcribe(
+    async def transcribe(
         self, activity: Activity, phrase_index: int, audio_data: bytes
     ) -> TranscriptItem | None:
         """Transcribe phrase audio data using W2V API.
@@ -515,17 +515,18 @@ class W2VASRClient:
 
         audio = self._load_audio_data(audio_data, activity.activity_id, phrase_index)
 
-        w2v_response = self.w2v_client.transcribe(
-            audio, incremental=True, streaming=False, as_pm=False
+        # Use batch transcription with the new async client
+        w2v_result = await self.w2v_client.transcribe_batch(
+            audio=audio, incremental=True
         )
 
-        if "transcription" not in w2v_response:
+        if w2v_result.status != "success" or "transcription" not in w2v_result.data:
             logger.warning(
-                f"Activity {activity.activity_id}: W2V response missing 'transcription' field"
+                f"Activity {activity.activity_id}: W2V response missing 'transcription' field or failed status: {w2v_result.status}"
             )
             return None
 
-        transcription_data = w2v_response["transcription"]
+        transcription_data = w2v_result.data["transcription"]
 
         logger.info(
             f"Activity {activity.activity_id}: W2V transcription completed for phrase {phrase_index} - {len(transcription_data)} characters"
@@ -535,9 +536,12 @@ class W2VASRClient:
 
     def close(self) -> None:
         """Close underlying client if supported."""
+        import asyncio
+        
+        async def close_client():
+            await self.w2v_client.close()
+        
         try:
-            close_fn = getattr(self.w2v_client, "close", None)
-            if callable(close_fn):
-                close_fn()
+            asyncio.run(close_client())
         except Exception:
             pass
