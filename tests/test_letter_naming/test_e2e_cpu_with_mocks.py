@@ -4,9 +4,9 @@ import numpy as np
 import polars as pl
 import pytest
 
-from src.pipeline.inference.constants import DeviceType
-from src.pipeline.inference.models import GPUInferenceResult, PhoneticTranscript
-from src.pipeline.pipeline import run_activity_pipeline
+from src.letter_scoring_pipeline.inference.constants import DeviceType
+from src.letter_scoring_pipeline.inference.models import GPUInferenceResult, PhoneticTranscript
+from src.letter_scoring_pipeline.pipeline import run_activity_pipeline
 from utils.config import PipelineConfig
 
 

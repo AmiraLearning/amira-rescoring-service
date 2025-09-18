@@ -1,7 +1,7 @@
 import pytest
 
 try:
-    from src.pipeline.inference.triton_engine import TRITON_AVAILABLE
+    from src.letter_scoring_pipeline.inference.triton_engine import TRITON_AVAILABLE
 except Exception:
     TRITON_AVAILABLE = False
 

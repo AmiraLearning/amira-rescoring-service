@@ -100,7 +100,7 @@ class ThreadSafeLRUCache(Generic[TCache]):
             return len(self.cache)
 
 
-_engine_cache: ThreadSafeLRUCache["Wav2Vec2InferenceEngine | TritonInferenceEngine"] = (
+_engine_cache: ThreadSafeLRUCache[Wav2Vec2InferenceEngine | TritonInferenceEngine] = (
     ThreadSafeLRUCache(maxsize=_ENGINE_CACHE_MAX)
 )
 _engine_creation_lock: Lock = Lock()
@@ -123,7 +123,7 @@ def _make_cache_key(*, w2v_config: W2VConfig) -> str:
 
 async def preload_inference_engine_async(
     *, w2v_config: W2VConfig, warmup: bool = False
-) -> "Wav2Vec2InferenceEngine | TritonInferenceEngine":
+) -> Wav2Vec2InferenceEngine | TritonInferenceEngine:
     """Asynchronously preload the inference engine.
 
     Args:
@@ -134,8 +134,8 @@ async def preload_inference_engine_async(
         Inference engine instance (either Wav2Vec2InferenceEngine or TritonInferenceEngine).
     """
 
-    def _build() -> "Wav2Vec2InferenceEngine | TritonInferenceEngine":
-        engine: "Wav2Vec2InferenceEngine | TritonInferenceEngine"
+    def _build() -> Wav2Vec2InferenceEngine | TritonInferenceEngine:
+        engine: Wav2Vec2InferenceEngine | TritonInferenceEngine
         if w2v_config.use_triton:
             from .triton_engine import TritonInferenceEngine
 
@@ -152,7 +152,7 @@ async def preload_inference_engine_async(
 
 
 class Wav2Vec2InferenceEngine:
-    _device: "torch.device"
+    _device: torch.device
 
     def __init__(
         self,
@@ -718,9 +718,7 @@ class Wav2Vec2InferenceEngine:
         return result
 
 
-def get_cached_engine(
-    *, w2v_config: W2VConfig
-) -> "Wav2Vec2InferenceEngine | TritonInferenceEngine":
+def get_cached_engine(*, w2v_config: W2VConfig) -> Wav2Vec2InferenceEngine | TritonInferenceEngine:
     """Get or create a cached inference engine with thread-safe LRU caching.
 
     Args:
@@ -769,7 +767,7 @@ def perform_single_audio_inference(
     model_instance: Wav2Vec2ForCTC | None = None,
     processor_instance: Wav2Vec2Processor | None = None,
     inference_id: str | None = None,
-    engine: "Wav2Vec2InferenceEngine | TritonInferenceEngine | None" = None,
+    engine: Wav2Vec2InferenceEngine | TritonInferenceEngine | None = None,
     use_cache: bool = False,
     correlation_id: str | None = None,
 ) -> GPUInferenceResult:

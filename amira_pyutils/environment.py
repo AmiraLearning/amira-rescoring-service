@@ -1,7 +1,9 @@
-from typing import Any, Callable
-from enum import Enum
-from dataclasses import dataclass, field, replace
 import os
+from collections.abc import Callable
+from dataclasses import dataclass, field, replace
+from enum import Enum
+from typing import Any
+
 import yaml
 
 from amira_pyutils.errors import MissingConfigError
@@ -228,7 +230,7 @@ class Environment:
             is_prod = True
             aliases = [name]
 
-        setting_dict = {
+        setting_dict: dict[str, Any] = {
             "_name": name,
             "_aliases": aliases,
             "_is_staging": is_stage,
@@ -240,7 +242,7 @@ class Environment:
             aliases = Environment.attr_env_aliases().get(key, [])
             for idx, alias in enumerate([key] + aliases):
                 if alias in d:
-                    return d[alias]
+                    return str(d[alias])
                 # Only the valid aliases should be seached for in ENV VARs
                 if idx > 0:
                     from_env = os.getenv(alias)
@@ -268,7 +270,9 @@ class Environment:
             _WordDB_SRS_key=key or self.WordDB_SRS_key,
         )
 
-    def with_feature_store_config(self, url: str | None = None, key: str | None = None) -> "Environment":
+    def with_feature_store_config(
+        self, url: str | None = None, key: str | None = None
+    ) -> "Environment":
         return replace(
             self,
             _feature_store_direct_url=url or self.feature_store_direct_url,
@@ -311,8 +315,10 @@ def create_envs_enum(name: str, members: dict[str, Environment]) -> type[Enum]:
 
             def find_by_property(f: Callable[[Environment], bool]) -> Environment | None:
                 for env in cls:
-                    if f(env.value):
-                        return env.value
+                    env_value = env.value
+                    assert isinstance(env_value, Environment)
+                    if f(env_value):
+                        return env_value
                 return None
 
             # Search first by name and aliases
@@ -345,7 +351,9 @@ def create_envs_enum(name: str, members: dict[str, Environment]) -> type[Enum]:
             else:
                 return None
 
-    return WrappedEnvironments(name, members)
+    # Create the enum with the members
+    enum_dict = {env_name: env for env_name, env in members.items()}
+    return Enum(name, enum_dict, type=WrappedEnvironments)  # type: ignore[return-value]
 
 
 # Attempt to load the configs from a static file if present
@@ -360,7 +368,7 @@ def construct_envs() -> dict[str, Environment]:
     config_filename = os.environ.get(_CONFIG_FILE_OVERRIDE_ENV_VAR, _DEFAULT_ENV_CONFIG_FILE)
     logger.info(f"Loading environment configs from {config_filename}")
     try:
-        with open(config_filename, "r") as f:
+        with open(config_filename) as f:
             env_configs = yaml.safe_load(f)
             envs = {
                 "DEFAULT": Environment.from_dict("DEFAULT", {}),

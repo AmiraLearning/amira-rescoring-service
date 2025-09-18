@@ -6,7 +6,7 @@ from typing import Any
 
 from loguru import logger
 
-from src.pipeline.exceptions import ConfigurationError
+from src.letter_scoring_pipeline.exceptions import ConfigurationError
 
 
 class ConfigurationValidator:

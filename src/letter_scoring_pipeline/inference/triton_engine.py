@@ -5,7 +5,7 @@ import traceback
 import numpy as np
 from loguru import logger
 
-from src.pipeline.exceptions import (
+from src.letter_scoring_pipeline.exceptions import (
     DecodingError,
     ModelNotReadyError,
     TritonConnectionError,

@@ -8,9 +8,9 @@ from dateutil import parser
 from loguru import logger
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from src.pipeline.config_validator import ConfigurationValidator
-from src.pipeline.exceptions import ConfigurationError
-from src.pipeline.inference.models import W2VConfig
+from src.letter_scoring_pipeline.config_validator import ConfigurationValidator
+from src.letter_scoring_pipeline.exceptions import ConfigurationError
+from src.letter_scoring_pipeline.inference.models import W2VConfig
 
 DEFAULT_CONFIG_PATH: Final[str] = "config_parallel.yaml"
 DEFAULT_RESULT_DIR: Final[str] = "2025_letter_sound_scoring"

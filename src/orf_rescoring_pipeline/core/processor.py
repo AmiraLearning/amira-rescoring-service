@@ -6,7 +6,6 @@ in a Lambda-based serverless environment. Each function processes one activity
 independently without batch operations.
 """
 
-import logging
 from typing import TYPE_CHECKING, Any, Final
 
 import amira_pyutils.s3 as s3_utils
@@ -29,8 +28,8 @@ from utils.standardized_metrics import emit_standardized_metric
 
 if TYPE_CHECKING:
     # TODO CRTITICAL
-    from amira_pyutils.environment import Environment
     from amira_pyutils.appsync import AppSync
+    from amira_pyutils.environment import Environment
     from orf_rescoring_pipeline.utils.transcription import (
         DeepgramASRClient,
         KaldiASRClient,
@@ -88,7 +87,7 @@ async def process_single_activity(
     try:
         import time
 
-        logger.debug(f"Loading model features into activity")
+        logger.debug("Loading model features into activity")
 
         t0 = time.time()
         _load_model_features_into_activity(
@@ -98,7 +97,7 @@ async def process_single_activity(
         )
         t1 = time.time()
 
-        logger.debug(f"Executing audio transcription phase")
+        logger.debug("Executing audio transcription phase")
 
         await _execute_audio_transcription_phase(
             activity=activity,
@@ -228,7 +227,7 @@ def _create_phrase_manifest() -> PhraseManifest:
     Returns:
         PhraseManifest object
     """
-    logger.debug(f"Creating phrase manifest")
+    logger.debug("Creating phrase manifest")
     builder = PhraseBuilder(s3_client=s3_utils.S3Service())
     return PhraseManifest(builder=builder)
 

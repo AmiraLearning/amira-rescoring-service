@@ -8,11 +8,11 @@ import math
 import random
 import re
 import uuid
+from collections.abc import Callable, Iterable
 from copy import copy
 from datetime import datetime
-from functools import reduce
 from time import sleep, time
-from typing import Any, Callable, Final, Iterable
+from typing import Any, Final, cast
 
 import boto3
 import botocore.exceptions
@@ -692,7 +692,7 @@ class AppSync:
     @property
     def _feature_store_api_id(self) -> str:
         """Get feature store API ID lazily."""
-        return self._env.feature_store_api_id
+        return cast(str, self._env.feature_store_api_id)
 
     @property
     def client(self) -> BotoClient:
@@ -942,20 +942,27 @@ class AppSync:
         }}
         """
 
-        results = []
-        for i in (
-            pbar := tqdm(range(0, len(activity_ids), batch_size))
-            if show_progress
-            else range(0, len(activity_ids), batch_size)
-        ):
-            res = self.query(
-                query=query,
-                query_name="getActivity",
-                variables={"activityIds": activity_ids[i : i + batch_size]},
+        results: list[dict[str, Any]] = []
+        iterator: Iterable[int]
+        progress: Any | None = None
+        if show_progress:
+            progress = tqdm(range(0, len(activity_ids), batch_size))
+            iterator = progress
+        else:
+            iterator = range(0, len(activity_ids), batch_size)
+
+        for i in iterator:
+            batch = cast(
+                list[dict[str, Any]],
+                self.query(
+                    query=query,
+                    query_name="getActivity",
+                    variables={"activityIds": activity_ids[i : i + batch_size]},
+                ),
             )
-            results.extend(res)
-            if show_progress:
-                pbar.set_postfix({"processed": len(results), "total": len(activity_ids)})
+            results.extend(batch)
+            if progress is not None:
+                progress.set_postfix({"processed": len(results), "total": len(activity_ids)})
 
         return results
 
@@ -998,16 +1005,25 @@ class AppSync:
         Returns:
             List of expected text records.
         """
-        res = []
-        for i in (
-            pbar := tqdm(range(0, len(activity_ids), batch_size))
-            if show_progress
-            else range(0, len(activity_ids), batch_size)
-        ):
+        res: list[dict[str, Any]] = []
+        iterator: Iterable[int]
+        progress: Any | None = None
+        if show_progress:
+            progress = tqdm(range(0, len(activity_ids), batch_size))
+            iterator = progress
+        else:
+            iterator = range(0, len(activity_ids), batch_size)
+
+        for i in iterator:
             variables = {"activityId": activity_ids[i : i + batch_size]}
 
-            this_res = self.query(
-                query=GET_EXPECTED_TEXT_QUERY, query_name="getActivity", variables=variables
+            this_res = cast(
+                list[dict[str, Any]],
+                self.query(
+                    query=GET_EXPECTED_TEXT_QUERY,
+                    query_name="getActivity",
+                    variables=variables,
+                ),
             )
             res += [
                 {
@@ -1018,8 +1034,8 @@ class AppSync:
                 }
                 for r in this_res
             ]
-            if show_progress:
-                pbar.set_postfix({"processed": len(res), "total": len(activity_ids)})
+            if progress is not None:
+                progress.set_postfix({"processed": len(res), "total": len(activity_ids)})
 
         return res
 
@@ -1036,17 +1052,24 @@ class AppSync:
         Returns:
             List of student IDs corresponding to activity IDs.
         """
-        res = {}
-        for i in (
-            pbar := tqdm(range(0, len(activity_ids), batch_size))
-            if show_progress
-            else range(0, len(activity_ids), batch_size)
-        ):
+        res: dict[str, str] = {}
+        iterator: Iterable[int]
+        progress: Any | None = None
+        if show_progress:
+            progress = tqdm(range(0, len(activity_ids), batch_size))
+            iterator = progress
+        else:
+            iterator = range(0, len(activity_ids), batch_size)
+
+        for i in iterator:
             variables = {"activityId": activity_ids[i : i + batch_size]}
-            batch = self.query(
-                query=GET_ACTIVITIES_STUDENT_IDS_QUERY,
-                query_name="getActivity",
-                variables=variables,
+            batch = cast(
+                list[dict[str, Any]],
+                self.query(
+                    query=GET_ACTIVITIES_STUDENT_IDS_QUERY,
+                    query_name="getActivity",
+                    variables=variables,
+                ),
             )
             found = {
                 record["activityId"]: record["studentId"]
@@ -1054,8 +1077,8 @@ class AppSync:
                 if record["studentId"] is not None
             }
             res.update(found)
-            if show_progress:
-                pbar.set_postfix({"processed": len(res), "total": len(activity_ids)})
+            if progress is not None:
+                progress.set_postfix({"processed": len(res), "total": len(activity_ids)})
         return [res.get(act_id) for act_id in activity_ids]
 
     def get_story_custom_fields(self, *, story_id: str, fields: list[str]) -> dict[str, Any]:
@@ -1072,12 +1095,13 @@ class AppSync:
 
         def parse_field_specifier(*, specifier: str) -> str:
             """Parse field specifier into GraphQL format."""
-
-            def add_parent(*, child: str, parent: str) -> str:
-                return f"{parent} {{\n{child}\n}}"
-
-            components = reversed(specifier.split("."))
-            return reduce(add_parent, components)
+            result = ""
+            for component in reversed(specifier.split(".")):
+                if not result:
+                    result = component
+                else:
+                    result = f"{component} {{\n{result}\n}}"
+            return result
 
         query = f'''
             query GetStory{{
@@ -1087,7 +1111,9 @@ class AppSync:
             }}
             '''
 
-        return self.query(query=query, query_name="getAmiraStoryById", variables={})
+        return cast(
+            dict[str, Any], self.query(query=query, query_name="getAmiraStoryById", variables={})
+        )
 
     def get_story_info(self, *, story_id: str, extra_fields: list[str] | None = None) -> list[Any]:
         """Retrieve basic story information.
@@ -1106,8 +1132,9 @@ class AppSync:
 
         def clean_items(*, items: list[dict[str, Any]] | None, phrases: list[str]) -> list[str]:
             """Clean and validate item types."""
-            valid = (items is not None) and (len(items) == len(phrases))
-            return [e["type"] for e in items] if valid else ["phrase"] * len(phrases)
+            if items is None or len(items) != len(phrases):
+                return ["phrase"] * len(phrases)
+            return [entry["type"] for entry in items]
 
         phrases = res["chapters"][0]["phrases"]
         items = res["chapters"][0]["items"]
@@ -1145,7 +1172,7 @@ class AppSync:
             Story grade level.
         """
         res = self.get_story_custom_fields(story_id=story_id, fields=["grade"])
-        return res["grade"]
+        return cast(str, res["grade"])
 
     def get_word_data(
         self, *, word: str, query_list: list[str], locale: str = "en_US"
@@ -1173,7 +1200,10 @@ class AppSync:
           }}
         }}
         '''
-        res = self.query(query=query, query_name="getPsycholinguisticsStore", variables={})
+        res = cast(
+            dict[str, Any] | None,
+            self.query(query=query, query_name="getPsycholinguisticsStore", variables={}),
+        )
 
         if res is not None:
             temp = {k: _norm_field(name=k, value=v) for k, v in res.items()}
@@ -1206,11 +1236,15 @@ class AppSync:
         """
 
         next_token = ""
-        result = []
+        result: list[dict[str, Any]] = []
         while len(result) < (limit if limit is not None else 1e6):
             variables = {"nextToken": next_token}
-            res = self.query(query=query, query_name="listWordsWithPagination", variables=variables)
-            result.extend(res["items"])
+            res = cast(
+                dict[str, Any],
+                self.query(query=query, query_name="listWordsWithPagination", variables=variables),
+            )
+            items = cast(list[dict[str, Any]], res["items"])
+            result.extend(items)
             next_token = res["nextToken"]
             if (next_token is None) or (len(next_token) == 0):
                 break
@@ -1238,11 +1272,11 @@ class AppSync:
           }}
         }}
         '''
-        res = self.query(query=query, query_name="word", variables={})
-        if len(res) == 1:
-            return res["items"][0]
-        else:
-            return {"PHON": "", "GRAPHEMIC_BREAKDOWN": ""}
+        res = cast(dict[str, Any], self.query(query=query, query_name="word", variables={}))
+        items = cast(list[dict[str, str]], res.get("items", []))
+        if len(items) == 1:
+            return items[0]
+        return {"PHON": "", "GRAPHEMIC_BREAKDOWN": ""}
 
     def get_word_is_metadata(self, *, word: str, locale: str = "en_US") -> dict[str, Any] | None:
         """Get all metadata relevant for firing interventions.
@@ -1292,7 +1326,10 @@ class AppSync:
           }}
         }}
         '''
-        res = self.query(query=query, query_name="getPsycholinguisticsStore", variables={})
+        res = cast(
+            dict[str, Any] | None,
+            self.query(query=query, query_name="getPsycholinguisticsStore", variables={}),
+        )
 
         if res is not None:
             temp = {k: _norm_field(name=k, value=v) for k, v in res.items()}
@@ -1314,19 +1351,28 @@ class AppSync:
             List of yellow flag fraction records.
         """
         logger.info(
-            "getting yellow flag phrase fractions from SRS for %d activities", len(activity_ids)
+            f"getting yellow flag phrase fractions from SRS for {len(activity_ids)} activities"
         )
 
-        res = []
-        for i in (
-            pbar := tqdm(range(0, len(activity_ids), batch_size))
-            if show_progress
-            else range(0, len(activity_ids), batch_size)
-        ):
+        res: list[dict[str, Any]] = []
+        iterator: Iterable[int]
+        progress: Any | None = None
+        if show_progress:
+            progress = tqdm(range(0, len(activity_ids), batch_size))
+            iterator = progress
+        else:
+            iterator = range(0, len(activity_ids), batch_size)
+
+        for i in iterator:
             variables = {"activityId": activity_ids[i : i + batch_size]}
 
-            this_res = self.query(
-                query=GET_YELLOW_FLAG_FRACTION_QUERY, query_name="getActivity", variables=variables
+            this_res = cast(
+                list[dict[str, Any]],
+                self.query(
+                    query=GET_YELLOW_FLAG_FRACTION_QUERY,
+                    query_name="getActivity",
+                    variables=variables,
+                ),
             )
             res.extend(
                 [
@@ -1345,8 +1391,8 @@ class AppSync:
                     for r in this_res
                 ]
             )
-            if show_progress:
-                pbar.set_postfix({"processed": len(res), "total": len(activity_ids)})
+            if progress is not None:
+                progress.set_postfix({"processed": len(res), "total": len(activity_ids)})
         return res
 
     def get_activities(
@@ -1408,14 +1454,17 @@ class AppSync:
             return query
 
         batch_end_time = end_date
-        result = []
-        activities = set()
+        result: list[list[Any]] = []
+        activities: set[str] = set()
         while limit > 0:
             logger.info(f"Activities so far {len(activities)}")
             batch_size = min(MAX_ACTIVITIES_BATCH_SIZE, limit + 1)
             query = make_query(end_date_override=batch_end_time, batch_size=batch_size)
-            res = self.query(query=query, query_name="activities", variables={})
-            last_create_time = None
+            res = cast(
+                list[dict[str, Any]],
+                self.query(query=query, query_name="activities", variables={}),
+            )
+            last_create_time: datetime | None = None
             unique_count = 0
             for item in res:
                 activity_id = item["activityId"]
@@ -1459,8 +1508,11 @@ class AppSync:
             List of activity status records.
         """
         variables = {"activityId": activity_ids}
-        res = self.query(
-            query=GET_ACTIVITIES_STATUS_QUERY, query_name="getActivity", variables=variables
+        res = cast(
+            list[dict[str, Any]],
+            self.query(
+                query=GET_ACTIVITIES_STATUS_QUERY, query_name="getActivity", variables=variables
+            ),
         )
         return res
 
@@ -1485,7 +1537,9 @@ class AppSync:
                 }}
             }}
         '''
-        data = self.query(query=query, query_name="updateActivity", variables={})
+        data = cast(
+            dict[str, Any], self.query(query=query, query_name="updateActivity", variables={})
+        )
         return data
 
     def set_stage_spanish_activity(self, *, activity_id: str) -> dict[str, Any]:
@@ -1512,12 +1566,16 @@ class AppSync:
             List of activity records.
         """
         query = GET_ASSIGNMENT_ACTIVITIES_QUERY.format(fields=" ".join(fields))
-        data = self.query(
-            query=query,
-            query_name="assignmentActivities",
-            variables={"assignmentId": assignment_id},
+        data = cast(
+            list[dict[str, Any]],
+            self.query(
+                query=query,
+                query_name="assignmentActivities",
+                variables={"assignmentId": assignment_id},
+            ),
         )
-        return data[0]["activities"]
+        activities = cast(list[dict[str, Any]], data[0]["activities"])
+        return activities
 
     def get_assignment_activities(self, *, assignment_id: str) -> list[str]:
         """Get assignment activity IDs.
@@ -1566,8 +1624,10 @@ class AppSync:
                 }}
             }}
         '''
-        data = self.query(query=query, query_name="addAssignment", variables={})
-        return data["assignmentId"]
+        data = cast(
+            dict[str, Any], self.query(query=query, query_name="addAssignment", variables={})
+        )
+        return cast(str, data["assignmentId"])
 
     @staticmethod
     def _cast_nan(*, val: Any, default: Any = None) -> Any:
@@ -1616,17 +1676,29 @@ class AppSync:
                     v = [str(_v) for _v in v]
 
                 if len(v) > 0 and isinstance(v[0], np.ndarray):
-                    val = [np.where(np.isnan(_v), None, _v).tolist() for _v in v]
+
+                    def replace_nan(value: Any) -> Any:
+                        if isinstance(value, list):
+                            return [replace_nan(item) for item in value]
+                        if isinstance(value, float) and math.isnan(value):
+                            return None
+                        return value
+
+                    converted: list[Any] = []
+                    for _v in v:
+                        arr_list = cast(np.ndarray, _v).tolist()
+                        converted.append(replace_nan(arr_list))
+                    val = converted
                 else:
                     val = []
                     for _v in v:
-                        _v = AppSync._cast_nan(val=_v)
-                        if _v is None:
+                        normalized = AppSync._cast_nan(val=_v)
+                        if normalized is None:
                             val.append(None)
-                        elif float_pattern.match(str(_v)):
-                            val.append(float(_v))
+                        elif float_pattern.match(str(normalized)):
+                            val.append(float(normalized))
                         else:
-                            val.append(_v)
+                            val.append(normalized)
             elif isinstance(v, np.ndarray):
                 val = v.tolist()
                 for i, sub in enumerate(val):
@@ -1713,17 +1785,24 @@ class AppSync:
         Returns:
             Dictionary mapping activity IDs to noise detector results.
         """
-        res = {}
-        for i in (
-            pbar := tqdm(range(0, len(activity_ids), batch_size))
-            if show_progress
-            else range(0, len(activity_ids), batch_size)
-        ):
+        res: dict[str, dict[str, list[Any]]] = {}
+        iterator: Iterable[int]
+        progress: Any | None = None
+        if show_progress:
+            progress = tqdm(range(0, len(activity_ids), batch_size))
+            iterator = progress
+        else:
+            iterator = range(0, len(activity_ids), batch_size)
+
+        for i in iterator:
             variables = {"activityId": activity_ids[i : i + batch_size]}
-            batch = self.query(
-                query=GET_ACTIVITIES_NOISE_DETECTOR_QUERY,
-                query_name="getActivity",
-                variables=variables,
+            batch = cast(
+                list[dict[str, Any]],
+                self.query(
+                    query=GET_ACTIVITIES_NOISE_DETECTOR_QUERY,
+                    query_name="getActivity",
+                    variables=variables,
+                ),
             )
             for record in batch:
                 new_choppy_per_phrase = []
@@ -1747,8 +1826,8 @@ class AppSync:
                         }
                     }
                     res.update(found)
-            if show_progress:
-                pbar.set_postfix({"processed": len(res), "total": len(activity_ids)})
+            if progress is not None:
+                progress.set_postfix({"processed": len(res), "total": len(activity_ids)})
         return res
 
     def set_aos_scores(
@@ -1838,7 +1917,7 @@ class AppSync:
                 }}
             }}
         '''
-        data = self.query(query=query, query_name="setScores", variables={})
+        data = cast(dict[str, Any], self.query(query=query, query_name="setScores", variables={}))
         return data
 
     def get_aos_priors(self) -> dict[int, dict[str, Any]]:
@@ -1853,5 +1932,8 @@ class AppSync:
         if self.variant != StoreVariant.AOS:
             raise ValueError("Query only for AOS variant")
 
-        data = self.query(query=GET_AOS_PRIORS_QUERY, query_name="getDefaultThetas", variables={})
+        data = cast(
+            list[dict[str, Any]],
+            self.query(query=GET_AOS_PRIORS_QUERY, query_name="getDefaultThetas", variables={}),
+        )
         return {e["grade"]: e for e in data}

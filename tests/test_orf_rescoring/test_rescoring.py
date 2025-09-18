@@ -26,7 +26,7 @@ class TestTranscribePhrase:
 
     @patch("src.orf_rescoring_pipeline.alignment.audio_processing.slice_audio_file_data")
     def test_successful_transcription(
-        self: "TestTranscribePhrase",
+        self: TestTranscribePhrase,
         mock_slice_audio: Mock,
         sample_activity: Activity,
         mock_kaldi_client: Mock,
@@ -61,7 +61,7 @@ class TestTranscribePhrase:
 
     @patch("src.orf_rescoring_pipeline.alignment.audio_processing.slice_audio_file_data")
     def test_no_audio_data(
-        self: "TestTranscribePhrase",
+        self: TestTranscribePhrase,
         mock_slice_audio: Mock,
         sample_activity: Activity,
         mock_kaldi_client: Mock,
@@ -84,7 +84,7 @@ class TestTranscribePhrase:
 
     @patch("src.orf_rescoring_pipeline.alignment.audio_processing.slice_audio_file_data")
     def test_zero_duration_audio(
-        self: "TestTranscribePhrase",
+        self: TestTranscribePhrase,
         mock_slice_audio: Mock,
         sample_activity: Activity,
         mock_kaldi_client: Mock,
@@ -111,7 +111,7 @@ class TestTranscribePhrase:
 
     @patch("src.orf_rescoring_pipeline.alignment.audio_processing.slice_audio_file_data")
     def test_parallel_execution(
-        self: "TestTranscribePhrase",
+        self: TestTranscribePhrase,
         mock_slice_audio: Mock,
         sample_activity: Activity,
         mock_kaldi_client: Mock,
@@ -145,7 +145,7 @@ class TestTranscribePhrase:
 
     @patch("src.orf_rescoring_pipeline.alignment.audio_processing.slice_audio_file_data")
     def test_asr_client_exceptions(
-        self: "TestTranscribePhrase",
+        self: TestTranscribePhrase,
         mock_slice_audio: Mock,
         sample_activity: Activity,
         mock_kaldi_client: Mock,
@@ -180,7 +180,7 @@ class TestAlignPhraseTranscripts:
     @patch("src.orf_rescoring_pipeline.rules.rescoring.get_word_level_transcript_alignment")
     @patch("src.orf_rescoring_pipeline.rules.rescoring.get_word_level_transcript_alignment_w2v")
     def test_successful_alignment(
-        self: "TestAlignPhraseTranscripts", mock_w2v_align: Mock, mock_kaldi_align: Mock
+        self: TestAlignPhraseTranscripts, mock_w2v_align: Mock, mock_kaldi_align: Mock
     ) -> None:
         """Test successful alignment of both transcripts."""
         # Setup mock alignment results
@@ -211,7 +211,7 @@ class TestAlignPhraseTranscripts:
     @patch("src.orf_rescoring_pipeline.rules.rescoring.get_word_level_transcript_alignment")
     @patch("src.orf_rescoring_pipeline.rules.rescoring.get_word_level_transcript_alignment_w2v")
     def test_empty_transcripts(
-        self: "TestAlignPhraseTranscripts", mock_w2v_align: Mock, mock_kaldi_align: Mock
+        self: TestAlignPhraseTranscripts, mock_w2v_align: Mock, mock_kaldi_align: Mock
     ) -> None:
         """Test alignment with empty transcripts."""
         mock_kaldi_align.return_value = [0, 0, 0]
@@ -233,7 +233,7 @@ class TestAlignPhraseTranscripts:
     @patch("src.orf_rescoring_pipeline.rules.rescoring.get_word_level_transcript_alignment")
     @patch("src.orf_rescoring_pipeline.rules.rescoring.get_word_level_transcript_alignment_w2v")
     def test_alignment_exceptions(
-        self: "TestAlignPhraseTranscripts", mock_w2v_align: Mock, mock_kaldi_align: Mock
+        self: TestAlignPhraseTranscripts, mock_w2v_align: Mock, mock_kaldi_align: Mock
     ) -> None:
         """Test handling of alignment exceptions."""
         # Setup one alignment to fail
@@ -257,7 +257,7 @@ class TestAlignPhraseTranscripts:
 class TestRescorePhraseErrors:
     """Test cases for rescore_phrase_errors function."""
 
-    def test_basic_rescoring_logic(self: "TestRescorePhraseErrors") -> None:
+    def test_basic_rescoring_logic(self: TestRescorePhraseErrors) -> None:
         """Test basic error rescoring logic."""
         deepgram_matches = [1, 0, 1, 0, 1]
         kaldi_matches = [0, 1, 1, 0, 0]
@@ -290,7 +290,7 @@ class TestRescorePhraseErrors:
         expected = [False, True, False, False, False]
         assert error_array == expected
 
-    def test_w2v_priority(self: "TestRescorePhraseErrors") -> None:
+    def test_w2v_priority(self: TestRescorePhraseErrors) -> None:
         """Test that W2V matches take priority (always not an error)."""
         deepgram_matches = [0, 0, 0]
         kaldi_matches = [0, 0, 0]
@@ -303,7 +303,7 @@ class TestRescorePhraseErrors:
         # All should be False (not errors) because W2V matched
         assert error_array == [False, False, False]
 
-    def test_consensus_voting(self: "TestRescorePhraseErrors") -> None:
+    def test_consensus_voting(self: TestRescorePhraseErrors) -> None:
         """Test consensus voting when W2V doesn't match."""
         deepgram_matches = [1, 1, 0, 0]
         kaldi_matches = [1, 0, 1, 0]
@@ -322,7 +322,7 @@ class TestRescorePhraseErrors:
         expected = [False, True, True, True]
         assert error_array == expected
 
-    def test_all_systems_agree_correct(self: "TestRescorePhraseErrors") -> None:
+    def test_all_systems_agree_correct(self: TestRescorePhraseErrors) -> None:
         """Test when all systems agree word is correct."""
         deepgram_matches = [1, 1, 1]
         kaldi_matches = [1, 1, 1]
@@ -335,7 +335,7 @@ class TestRescorePhraseErrors:
         # All should be False (not errors)
         assert error_array == [False, False, False]
 
-    def test_all_systems_agree_incorrect(self: "TestRescorePhraseErrors") -> None:
+    def test_all_systems_agree_incorrect(self: TestRescorePhraseErrors) -> None:
         """Test when all systems agree word is incorrect."""
         deepgram_matches = [0, 0, 0]
         kaldi_matches = [0, 0, 0]
@@ -348,13 +348,13 @@ class TestRescorePhraseErrors:
         # All should be True (errors)
         assert error_array == [True, True, True]
 
-    def test_empty_matches(self: "TestRescorePhraseErrors") -> None:
+    def test_empty_matches(self: TestRescorePhraseErrors) -> None:
         """Test rescoring with empty match arrays."""
         error_array = rescore_phrase_errors(deepgram_matches=[], kaldi_matches=[], w2v_matches=[])
 
         assert error_array == []
 
-    def test_single_word(self: "TestRescorePhraseErrors") -> None:
+    def test_single_word(self: TestRescorePhraseErrors) -> None:
         """Test rescoring with single word."""
         deepgram_matches = [1]
         kaldi_matches = [0]
@@ -377,7 +377,7 @@ class TestRescorePhrase:
     @patch("src.orf_rescoring_pipeline.rules.rescoring.align_phrase_transcripts")
     @patch("src.orf_rescoring_pipeline.rules.rescoring.rescore_phrase_errors")
     def test_successful_rescoring(
-        self: "TestRescorePhrase",
+        self: TestRescorePhrase,
         mock_rescore_errors: Mock,
         mock_align: Mock,
         mock_transcribe: Mock,
@@ -439,7 +439,7 @@ class TestRescorePhrase:
 
     @patch("src.orf_rescoring_pipeline.alignment.audio_processing.slice_audio_file_data")
     def test_no_audio_data_fallback(
-        self: "TestRescorePhrase",
+        self: TestRescorePhrase,
         mock_slice_audio: Mock,
         sample_activity: Activity,
         mock_kaldi_client: Mock,
@@ -477,7 +477,7 @@ class TestRescorePhrase:
 
     @patch("src.orf_rescoring_pipeline.alignment.audio_processing.slice_audio_file_data")
     def test_zero_duration_audio_fallback(
-        self: "TestRescorePhrase",
+        self: TestRescorePhrase,
         mock_slice_audio: Mock,
         sample_activity: Activity,
         mock_kaldi_client: Mock,
@@ -516,7 +516,7 @@ class TestRescorePhrase:
     @patch("src.orf_rescoring_pipeline.alignment.audio_processing.slice_audio_file_data")
     @patch("src.orf_rescoring_pipeline.rules.rescoring.transcribe_phrase")
     def test_transcription_failure_propagation(
-        self: "TestRescorePhrase",
+        self: TestRescorePhrase,
         mock_transcribe: Mock,
         mock_slice_audio: Mock,
         sample_activity: Activity,
@@ -546,7 +546,7 @@ class TestRescorePhrase:
     @patch("src.orf_rescoring_pipeline.rules.rescoring.transcribe_phrase")
     @patch("src.orf_rescoring_pipeline.rules.rescoring.align_phrase_transcripts")
     def test_alignment_failure_propagation(
-        self: "TestRescorePhrase",
+        self: TestRescorePhrase,
         mock_align: Mock,
         mock_transcribe: Mock,
         mock_slice_audio: Mock,

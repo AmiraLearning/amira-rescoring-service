@@ -1,5 +1,5 @@
-import re
 import difflib
+import re
 from enum import Enum
 from itertools import product
 from typing import Any, Final, cast
@@ -9,13 +9,12 @@ import metaphone
 from Bio import pairwise2
 
 import amira_fe.phonetic_algorithms_es as metaphoneES
-from amira_fe.difflib_utils import collect_lines
 from amira_fe.es_soundex import spanish_soundex
 from amira_fe.prod_word_slicing import align_words
 from amira_pyutils.abstract_alignment import (
     UNK_TOKEN,
-    AlignmentResult,
     AlignmentConfig,
+    AlignmentResult,
 )
 from amira_pyutils.functional import fmap_opt, or_else
 from amira_pyutils.language import LanguageHandling

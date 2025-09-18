@@ -5,7 +5,7 @@ This module tests the flagging system that analyzes features and decides on
 flagging strategies for phrase rescoring based on ASR match data and model predictions.
 """
 
-from typing import Any, TypedDict
+from typing import TypedDict, cast
 from unittest.mock import Mock, patch
 
 import pytest
@@ -388,7 +388,7 @@ class TestFlaggingExecutor:
         feature = ModelFeature(model="test_model", phrase_index=0, deepgram_match=[1, 0, 1])
 
         # Create decision with invalid strategy - bypassing type checking for test
-        decision = FlaggingDecision("INVALID_STRATEGY", "Invalid strategy")  # type: ignore[arg-type]
+        decision = FlaggingDecision(cast(FlaggingStrategy, "INVALID_STRATEGY"), "Invalid strategy")
 
         with pytest.raises(ValueError, match="Unknown flagging strategy"):
             executor.execute_flagging_decision(feature=feature, decision=decision)

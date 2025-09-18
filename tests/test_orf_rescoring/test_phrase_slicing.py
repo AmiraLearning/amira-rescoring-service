@@ -16,8 +16,7 @@ from src.orf_rescoring_pipeline.alignment.audio_processing import (
     load_activity_audio_data_from_s3,
     slice_audio_file_data,
 )
-from src.orf_rescoring_pipeline.models import Activity
-from src.orf_rescoring_pipeline.models import PageData
+from src.orf_rescoring_pipeline.models import Activity, PageData
 
 
 @pytest.mark.unit
@@ -26,8 +25,8 @@ class TestLoadActivityAudioDataFromS3:
 
     @patch("src.orf_rescoring_pipeline.alignment.audio_processing.s3_utils.get_client")
     @patch("src.orf_rescoring_pipeline.alignment.audio_processing.s3_utils.s3_addr_from_uri")
-    def test_successful_audio_loading(
-        self: "TestLoadActivityAudioDataFromS3",
+    async def test_successful_audio_loading(
+        self: TestLoadActivityAudioDataFromS3,
         mock_s3_addr: Mock,
         mock_get_client: Mock,
         sample_activity: Activity,
@@ -59,8 +58,8 @@ class TestLoadActivityAudioDataFromS3:
 
     @patch("src.orf_rescoring_pipeline.alignment.audio_processing.s3_utils.get_client")
     @patch("src.orf_rescoring_pipeline.alignment.audio_processing.s3_utils.s3_addr_from_uri")
-    def test_s3_download_failure(
-        self: "TestLoadActivityAudioDataFromS3",
+    async def test_s3_download_failure(
+        self: TestLoadActivityAudioDataFromS3,
         mock_s3_addr: Mock,
         mock_get_client: Mock,
         sample_activity: Activity,
@@ -76,7 +75,9 @@ class TestLoadActivityAudioDataFromS3:
 
         # Test the function - should raise exception
         with pytest.raises(Exception, match="S3 download failed"):
-            await load_activity_audio_data_from_s3(activity=sample_activity, audio_bucket="test-bucket")
+            await load_activity_audio_data_from_s3(
+                activity=sample_activity, audio_bucket="test-bucket"
+            )
 
         # Verify audio_file_data is set to None
         assert sample_activity.audio_file_data is None
@@ -84,8 +85,8 @@ class TestLoadActivityAudioDataFromS3:
     @patch("src.orf_rescoring_pipeline.alignment.audio_processing.s3_utils.get_client")
     @patch("src.orf_rescoring_pipeline.alignment.audio_processing.s3_utils.s3_addr_from_uri")
     @patch("builtins.open")
-    def test_file_read_failure(
-        self: "TestLoadActivityAudioDataFromS3",
+    async def test_file_read_failure(
+        self: TestLoadActivityAudioDataFromS3,
         mock_open: Mock,
         mock_s3_addr: Mock,
         mock_get_client: Mock,
@@ -105,10 +106,12 @@ class TestLoadActivityAudioDataFromS3:
 
         # Test the function - should raise exception due to file read failure
         with pytest.raises(OSError, match="File read failed"):
-            await load_activity_audio_data_from_s3(activity=sample_activity, audio_bucket="test-bucket")
+            await load_activity_audio_data_from_s3(
+                activity=sample_activity, audio_bucket="test-bucket"
+            )
 
-    def test_correct_s3_uri_construction(
-        self: "TestLoadActivityAudioDataFromS3", sample_activity: Activity
+    async def test_correct_s3_uri_construction(
+        self: TestLoadActivityAudioDataFromS3, sample_activity: Activity
     ) -> None:
         """Test that S3 URI is constructed correctly."""
         with patch(
@@ -139,7 +142,7 @@ class TestSliceAudioFileData:
 
     @patch("src.orf_rescoring_pipeline.alignment.audio_processing.AudioSegment.from_file")
     def test_successful_audio_slicing(
-        self: "TestSliceAudioFileData",
+        self: TestSliceAudioFileData,
         mock_from_file: Mock,
         sample_activity: Activity,
         mock_audio_data: bytes,
@@ -179,7 +182,7 @@ class TestSliceAudioFileData:
         # Verify export was called
         mock_sliced_audio.export.assert_called_once()
 
-    def test_no_audio_file_data(self: "TestSliceAudioFileData", sample_activity: Activity) -> None:
+    def test_no_audio_file_data(self: TestSliceAudioFileData, sample_activity: Activity) -> None:
         """Test slicing when activity has no audio file data."""
         sample_activity.audio_file_data = None
 
@@ -192,7 +195,7 @@ class TestSliceAudioFileData:
         assert end_ms is None
 
     def test_phrase_not_in_any_page(
-        self: "TestSliceAudioFileData", sample_activity: Activity, mock_audio_data: bytes
+        self: TestSliceAudioFileData, sample_activity: Activity, mock_audio_data: bytes
     ) -> None:
         """Test slicing when phrase index is not found in any page."""
         sample_activity.audio_file_data = mock_audio_data
@@ -210,7 +213,7 @@ class TestSliceAudioFileData:
 
     @patch("src.orf_rescoring_pipeline.alignment.audio_processing.AudioSegment.from_file")
     def test_phrase_not_aligned(
-        self: "TestSliceAudioFileData",
+        self: TestSliceAudioFileData,
         mock_from_file: Mock,
         sample_activity: Activity,
         mock_audio_data: bytes,
@@ -236,7 +239,7 @@ class TestSliceAudioFileData:
 
     @patch("src.orf_rescoring_pipeline.alignment.audio_processing.AudioSegment.from_file")
     def test_aligned_phrases_index_error(
-        self: "TestSliceAudioFileData",
+        self: TestSliceAudioFileData,
         mock_from_file: Mock,
         sample_activity: Activity,
         mock_audio_data: bytes,
@@ -263,7 +266,7 @@ class TestSliceAudioFileData:
 
     @patch("src.orf_rescoring_pipeline.alignment.audio_processing.AudioSegment.from_file")
     def test_audio_export_returns_bytes(
-        self: "TestSliceAudioFileData",
+        self: TestSliceAudioFileData,
         mock_from_file: Mock,
         sample_activity: Activity,
         mock_audio_data: bytes,
@@ -297,7 +300,7 @@ class TestSliceAudioFileData:
         assert end_ms == 2000
 
     def test_multiple_pages_phrase_lookup(
-        self: "TestSliceAudioFileData", sample_activity: Activity, mock_audio_data: bytes
+        self: TestSliceAudioFileData, sample_activity: Activity, mock_audio_data: bytes
     ) -> None:
         """Test phrase lookup across multiple pages."""
         sample_activity.audio_file_data = mock_audio_data
@@ -344,7 +347,7 @@ class TestAudioProcessingEdgeCases:
 
     @patch("src.orf_rescoring_pipeline.alignment.audio_processing.AudioSegment.from_file")
     def test_zero_duration_slice(
-        self: "TestAudioProcessingEdgeCases",
+        self: TestAudioProcessingEdgeCases,
         mock_from_file: Mock,
         sample_activity: Activity,
         mock_audio_data: bytes,
@@ -373,7 +376,7 @@ class TestAudioProcessingEdgeCases:
 
     @patch("src.orf_rescoring_pipeline.alignment.audio_processing.AudioSegment.from_file")
     def test_negative_timing(
-        self: "TestAudioProcessingEdgeCases",
+        self: TestAudioProcessingEdgeCases,
         mock_from_file: Mock,
         sample_activity: Activity,
         mock_audio_data: bytes,
@@ -402,7 +405,7 @@ class TestAudioProcessingEdgeCases:
 
     @patch("src.orf_rescoring_pipeline.alignment.audio_processing.AudioSegment.from_file")
     def test_audio_segment_creation_failure(
-        self: "TestAudioProcessingEdgeCases",
+        self: TestAudioProcessingEdgeCases,
         mock_from_file: Mock,
         sample_activity: Activity,
         mock_audio_data: bytes,
@@ -423,7 +426,7 @@ class TestAudioProcessingEdgeCases:
         assert end_ms is None
 
     def test_empty_pages_list(
-        self: "TestAudioProcessingEdgeCases", sample_activity: Activity, mock_audio_data: bytes
+        self: TestAudioProcessingEdgeCases, sample_activity: Activity, mock_audio_data: bytes
     ) -> None:
         """Test slicing when activity has no pages."""
         sample_activity.audio_file_data = mock_audio_data

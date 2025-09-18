@@ -1,31 +1,31 @@
-from typing import Any, Final, AsyncGenerator, Generator, cast, Callable, TypeVar, ParamSpec
+from collections.abc import AsyncGenerator, Callable
 from dataclasses import dataclass
-from enum import StrEnum
-from pathlib import Path
-from urllib.parse import urlparse, ParseResult
 from datetime import datetime
+from enum import StrEnum
 from io import StringIO
-import orjson as json
+from pathlib import Path
+from typing import Any, Final, ParamSpec, TypeVar, cast
+from urllib.parse import urlparse
 
 import aioboto3
+import orjson as json
 import pandas as pd
 from botocore.exceptions import ClientError
 from tenacity import (
     retry,
+    retry_if_exception,
     stop_after_attempt,
     wait_exponential,
-    retry_if_exception_type,
-    retry_if_exception,
 )
 
 P = ParamSpec("P")
 T = TypeVar("T")
-import aiohttp as _aiohttp
 import asyncio as _asyncio
 
-from amira_pyutils.logging import get_logger
-from amira_pyutils.jsonable import JsonSerializable
+import aiohttp as _aiohttp
 
+from amira_pyutils.jsonable import JsonSerializable
+from amira_pyutils.logging import get_logger
 
 logger = get_logger(name=__name__)
 

@@ -8,7 +8,6 @@ story content, audio data, and processing results.
 import asyncio
 import inspect
 import json
-import logging
 import re
 import uuid
 from dataclasses import dataclass, field
@@ -263,6 +262,10 @@ class Activity:
     timing_path: str | None = None
     model_features: list[ModelFeature] = field(default_factory=list)
     errors_retouched: list[list[bool]] = field(default_factory=list)
+    ground_truth_deepgram_matches: list[list[int]] | None = None
+    ground_truth_resliced_kaldi_matches: list[list[int]] | None = None
+    ground_truth_resliced_w2v_matches: list[list[int]] | None = None
+    ground_truth_retouched_errors: list[list[bool]] | None = None
     _first_pass_model_features_cache: list[ModelFeature] | None = field(
         default=None, init=False, repr=False
     )

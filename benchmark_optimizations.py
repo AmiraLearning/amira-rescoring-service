@@ -7,9 +7,9 @@ from typing import Final, cast
 
 import numpy as np
 import torchaudio
-from amira_pyutils.logging import get_logger
 from pydantic import BaseModel
 
+from amira_pyutils.logging import get_logger
 from src.letter_scoring_pipeline.inference.engine import perform_single_audio_inference
 from src.letter_scoring_pipeline.inference.models import W2VConfig
 

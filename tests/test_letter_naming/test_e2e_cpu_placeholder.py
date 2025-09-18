@@ -1,7 +1,7 @@
 import numpy as np
 
-from src.pipeline.inference.engine import perform_single_audio_inference
-from src.pipeline.inference.models import W2VConfig
+from src.letter_scoring_pipeline.inference.engine import perform_single_audio_inference
+from src.letter_scoring_pipeline.inference.models import W2VConfig
 
 
 def test_e2e_cpu_placeholder() -> None:

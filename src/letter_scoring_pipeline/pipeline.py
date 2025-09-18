@@ -22,19 +22,19 @@ import polars as pl
 from loguru import logger
 
 from infra.s3_client import HighPerformanceS3Config, preload_s3_client_async
-from src.pipeline.audio_prep import ActivityOutput, PhraseInput, cpu_download_worker
-from src.pipeline.exceptions import (
+from src.letter_scoring_pipeline.audio_prep import ActivityOutput, PhraseInput, cpu_download_worker
+from src.letter_scoring_pipeline.exceptions import (
     AlignmentError,
     AudioProcessingError,
     InferenceError,
 )
-from src.pipeline.inference import (
+from src.letter_scoring_pipeline.inference import (
     GPUInferenceResult,
     PhoneticTranscript,
     perform_single_audio_inference,
 )
-from src.pipeline.inference.engine import preload_inference_engine_async
-from src.pipeline.query import (
+from src.letter_scoring_pipeline.inference.engine import preload_inference_engine_async
+from src.letter_scoring_pipeline.query import (
     load_activity_data,
     load_story_phrase_data,
     merge_activities_with_phrases,
@@ -307,11 +307,11 @@ async def process_activity(
     if engine_local is None:
         try:
             if config.w2v2.use_triton:
-                from src.pipeline.inference.triton_engine import TritonInferenceEngine
+                from src.letter_scoring_pipeline.inference.triton_engine import TritonInferenceEngine
 
                 engine_local = TritonInferenceEngine(w2v_config=config.w2v2)
             else:
-                from src.pipeline.inference.engine import Wav2Vec2InferenceEngine
+                from src.letter_scoring_pipeline.inference.engine import Wav2Vec2InferenceEngine
 
                 engine_local = Wav2Vec2InferenceEngine(w2v_config=config.w2v2)
         except Exception as e:
@@ -380,7 +380,7 @@ async def process_activity(
                 except Exception as e:
                     logger.debug(f"Metrics emission failed (non-fatal): {type(e).__name__}: {e}")
 
-    from src.pipeline.inference.models import PhoneticTranscript
+    from src.letter_scoring_pipeline.inference.models import PhoneticTranscript
 
     combined_transcript = PhoneticTranscript(elements=all_elements, confidences=all_confidences)
 

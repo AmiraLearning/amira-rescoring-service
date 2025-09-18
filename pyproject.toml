@@ -41,6 +41,7 @@ dependencies = [
   "dotenv>=0.9.9",
   "python-levenshtein>=0.27.1",
   "grpcio-tools>=1.75.0",
+  "pytest-mock>=3.15.1",
 ]
 
 [project.optional-dependencies]
@@ -51,6 +52,9 @@ gpu = [
 [build-system]
 requires = ["setuptools>=61"]
 build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
 
 [dependency-groups]
 dev = [
@@ -169,6 +173,14 @@ module = [
     "utils.audio",
 ]
 disable_error_code = ["import-untyped"]
+
+[[tool.mypy.overrides]]
+# Generated protobuf modules are dynamically defined and intentionally untyped.
+module = [
+    "amira_fe.blank_detect_pb2",
+    "amira_fe.blank_detect_pb2_grpc",
+]
+ignore_errors = true
 
 [tool.pyrefly]
 project-excludes = [

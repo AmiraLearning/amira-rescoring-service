@@ -1,4 +1,4 @@
-from src.pipeline.inference.phonetics import PhoneticTrie
+from src.letter_scoring_pipeline.inference.phonetics import PhoneticTrie
 
 
 def test_trie_longest_match_simple() -> None:

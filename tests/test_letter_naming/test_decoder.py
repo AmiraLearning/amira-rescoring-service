@@ -3,7 +3,7 @@ from typing import Final
 import numpy as np
 import pytest
 
-from src.pipeline.inference.decoder import PhonemeDecoder
+from src.letter_scoring_pipeline.inference.decoder import PhonemeDecoder
 
 _EXPECTED_GROUPED_ELEMENTS: Final[list[str]] = ["t", "æ"]
 _EXPECTED_CONFIDENCE_COUNT: Final[int] = 2

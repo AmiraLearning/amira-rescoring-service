@@ -1,11 +1,10 @@
 import re
 from functools import reduce
 from types import MappingProxyType
-from typing import Final
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Final
 
 if TYPE_CHECKING:
-    from typing import Any
+    pass
 
 import edit_distance
 import epitran
@@ -13,8 +12,8 @@ from fuzzywuzzy import fuzz
 from toolz import curry
 
 from amira_pyutils.abstract_alignment import (
-    AlignmentResult,
     AlignmentConfig,
+    AlignmentResult,
     WordSelectionStrategy,
 )
 from amira_pyutils.language import LanguageHandling

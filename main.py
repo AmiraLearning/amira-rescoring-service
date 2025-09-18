@@ -8,8 +8,8 @@ import typer
 import yaml
 from loguru import logger
 
-from src.pipeline.exceptions import ConfigurationError
-from src.pipeline.pipeline import run_activity_pipeline
+from src.letter_scoring_pipeline.exceptions import ConfigurationError
+from src.letter_scoring_pipeline.pipeline import run_activity_pipeline
 from utils.cleanup import cleanup_pipeline_data
 from utils.config import PipelineConfig, load_config
 from utils.logging import setup_logging

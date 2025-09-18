@@ -1,8 +1,17 @@
 import json
-from typing import Any, Final
+from typing import Any, Final, Protocol, cast
 
-from amira_fe.blank_detect_pb2 import BlankDetectMessage  # type: ignore
+import amira_fe.blank_detect_pb2 as blank_detect_pb2
 from amira_fe.blank_detect_utils import get_blank_detector
+
+
+class BlankDetectMessageType(Protocol):
+    def __init__(self, *, expected: str, actual: str) -> None: ...
+
+
+BlankDetectMessage = cast(
+    type[BlankDetectMessageType], getattr(blank_detect_pb2, "BlankDetectMessage")
+)
 
 _DASH_PLACEHOLDER: Final[str] = "-"
 

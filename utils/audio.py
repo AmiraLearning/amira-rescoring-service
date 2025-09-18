@@ -13,7 +13,7 @@ from loguru import logger
 from pydantic import BaseModel, ConfigDict, Field
 
 from infra.s3_client import ProductionS3Client, S3DownloadRequest, S3OperationResult
-from src.pipeline.exceptions import AudioProcessingError
+from src.letter_scoring_pipeline.exceptions import AudioProcessingError
 from utils.extract_phrases import extract_phrase_slices_tutor_style
 from utils.s3_audio_operations import bucket_for as _bucket_for
 

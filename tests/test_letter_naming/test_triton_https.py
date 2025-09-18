@@ -1,7 +1,7 @@
 import pytest
 
-from src.pipeline.inference.models import W2VConfig
-from src.pipeline.inference.triton_engine import TRITON_AVAILABLE, TritonInferenceEngine
+from src.letter_scoring_pipeline.inference.models import W2VConfig
+from src.letter_scoring_pipeline.inference.triton_engine import TRITON_AVAILABLE, TritonInferenceEngine
 
 
 @pytest.mark.parametrize(

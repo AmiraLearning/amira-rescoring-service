@@ -6,7 +6,8 @@ activities in AWS Lambda. Each invocation processes exactly one activity
 independently with proper resource management and error handling.
 """
 
-from typing import TYPE_CHECKING, Any, Final
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any, Final, cast
 
 from amira_pyutils.logging import get_logger
 
@@ -23,8 +24,8 @@ from orf_rescoring_pipeline.utils.transcription import (
 )
 
 if TYPE_CHECKING:  # pragma: no cover - types only
-    from amira_pyutils.environment import Environment
     from amira_pyutils.appsync import AppSync
+    from amira_pyutils.environment import Environment
 
 from amira_pyutils.appsync import AppSync
 from amira_pyutils.environment import Environment, Environments
@@ -169,9 +170,11 @@ def _initialize_environment(*, env_name: str) -> Environment:
     """
     try:
         logger.debug(f"Finding environment: {env_name}")
-        env = Environments.find(name=env_name)
+        finder = cast(Callable[[str], Environment | None], getattr(Environments, "find"))
+        env = finder(env_name)
         if env is None:
             raise ValueError(f"Environment '{env_name}' not found")
+        assert env is not None
         return env
     except Exception as env_error:
         logger.error(f"Invalid environment '{env_name}': {env_error}")
@@ -203,7 +206,7 @@ def _get_activity_story_data(*, appsync: AppSync, activity_id: str) -> list[dict
     Get activity story data from AppSync.
     """
     logger.debug(f"Getting activity story data for {activity_id}")
-    results = appsync.get_activity_details(
+    results: list[dict[str, Any]] = appsync.get_activity_details(
         activity_ids=[activity_id],
         fields=[
             "activityId",
@@ -240,7 +243,7 @@ def _get_model_features(*, appsync: AppSync, activity_id: str) -> list[dict[str,
     )
     logger.debug(f"Getting model features for {activity_id}")
     logger.debug(f"Features query: {features_query}")
-    results = features_query(activity_id=activity_id)
+    results: list[dict[str, Any]] = features_query(activity_id=activity_id)
     logger.debug(f"Results: {results}")
     return results
 
@@ -265,7 +268,7 @@ def _load_activity_data(*, appsync: AppSync, activity_id: str) -> Activity:
     model_features = _get_model_features(appsync=appsync, activity_id=activity_id)
     logger.debug(f"Model features: {model_features}")
     activity.model_features_from_appsync_res(appsync_model_res=model_features)
-    logger.debug(f"leaving _load_activity_data")
+    logger.debug("leaving _load_activity_data")
     return activity
 
 

@@ -2,7 +2,8 @@ import asyncio
 import json
 import os
 import time
-from typing import Any, Callable, Final, cast
+from collections.abc import Callable
+from typing import Any, Final, cast
 
 import boto3
 import torch

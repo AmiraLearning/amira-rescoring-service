@@ -277,25 +277,21 @@ def _create_real_activity(activity_id: str) -> Activity:
         for f in model_features_data
         if f["model"].find("second") != -1
     ]
-    activity.ground_truth_deepgram_matches = deepgram_matches  # type: ignore[attr-defined]
-
+    activity.ground_truth_deepgram_matches = deepgram_matches
     retouched_errors = cast(list[list[bool]], activity_data["errors_retouched"])
-    activity.ground_truth_retouched_errors = retouched_errors  # type: ignore[attr-defined]
-
+    activity.ground_truth_retouched_errors = retouched_errors
     resliced_kaldi_matches: list[list[int]] = [
         cast(list[int], f["kaldi_matches_new"])
         for f in model_features_data
         if f["model"].find("second") != -1
     ]
-    activity.ground_truth_resliced_kaldi_matches = resliced_kaldi_matches  # type: ignore[attr-defined]
-
+    activity.ground_truth_resliced_kaldi_matches = resliced_kaldi_matches
     resliced_w2v_matches: list[list[int]] = [
         cast(list[int], f["w2v_matches_new"])
         for f in model_features_data
         if f["model"].find("second") != -1
     ]
-    activity.ground_truth_resliced_w2v_matches = resliced_w2v_matches  # type: ignore[attr-defined]
-
+    activity.ground_truth_resliced_w2v_matches = resliced_w2v_matches
     return activity
 
 

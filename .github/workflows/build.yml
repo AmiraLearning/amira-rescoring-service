@@ -40,7 +40,7 @@ jobs:
         # Test Python imports work
         docker run --rm amira-letter-scoring:${{ github.sha }} python -c "
           import my_asr_aligner
-          from src.pipeline.pipeline import run_activity_pipeline
+          from src.letter_scoring_pipeline.pipeline import run_activity_pipeline
           print('Docker build successful - all imports working')
         "
 

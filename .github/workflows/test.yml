@@ -88,7 +88,7 @@ jobs:
           # Test basic functionality
           uv run python main.py --help
           uv run python -c "
-            from src.pipeline.pipeline import run_activity_pipeline
+            from src.letter_scoring_pipeline.pipeline import run_activity_pipeline
             print('Pipeline import successful')
           "
         fi

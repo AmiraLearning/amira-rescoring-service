@@ -8,7 +8,7 @@ BYTES_PER_GB: Final[int] = 1_024**3
 MS_PER_SECOND: Final[int] = 1_000
 
 try:
-    _resource = ilr.files("src.pipeline").joinpath("valid_phonetic_elements.json")
+    _resource = ilr.files("src.letter_scoring_pipeline.").joinpath("valid_phonetic_elements.json")
     _phonetic_elements_path: Path = Path(str(_resource))
     _valid_phonetics_raw = _resource.read_text()
 except Exception:

@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-from typing import Any, List, Tuple, Dict
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
+from pytest_mock import MockerFixture
 
 import src.orf_rescoring_pipeline.core.processor as processor_module
 import src.orf_rescoring_pipeline.rules.rescoring as rescoring_module
@@ -14,17 +15,15 @@ from src.orf_rescoring_pipeline.models import Activity, TranscriptItem, WordItem
 from src.orf_rescoring_pipeline.rules.flagging import FlaggingAnalyzer
 from src.orf_rescoring_pipeline.utils.debug import FlaggingStrategy
 
-from pytest_mock import MockerFixture
-
 
 # Generic helper function for creating return-capturing spies
 def create_return_capturing_spy(
     mocker: MockerFixture,
     target_module: Any,
     function_name: str,
-) -> Tuple[MagicMock, List[Any]]:
+) -> tuple[MagicMock, list[Any]]:
     """Create a spy that captures return values."""
-    return_values: List[Any] = []
+    return_values: list[Any] = []
     original_func = getattr(target_module, function_name)
 
     def capture_returns(*args: Any, **kwargs: Any) -> Any:
@@ -41,17 +40,17 @@ def create_return_capturing_spy(
 class TestProcessorIntegration:
     """Integration tests for process_single_activity with real data mocking."""
 
-    def test_complex_activity_integration(
-        self: "TestProcessorIntegration",
+    async def test_complex_activity_integration(
+        self: TestProcessorIntegration,
         mocker: MockerFixture,
-        real_kaldi_transcripts: Dict[str, List[str]],
-        real_w2v_transcripts: Dict[str, List[str]],
-        real_model_features: Dict[str, List[Dict[str, Any]]],
-        real_activities: Dict[str, Activity],
-        real_manifest_pages: Dict[str, List[Any]],
-        real_deepgram_transcripts: Dict[str, Dict[str, Any]],
+        real_kaldi_transcripts: dict[str, list[str]],
+        real_w2v_transcripts: dict[str, list[str]],
+        real_model_features: dict[str, list[dict[str, Any]]],
+        real_activities: dict[str, Activity],
+        real_manifest_pages: dict[str, list[Any]],
+        real_deepgram_transcripts: dict[str, dict[str, Any]],
         mock_audio_data: bytes,
-        real_timing_files: Dict[str, Dict[str, Any]],
+        real_timing_files: dict[str, dict[str, Any]],
     ) -> None:
         """Test processing of Jane Goodall passage."""
         activity = real_activities["jane_goodall_full_rescore"]
@@ -232,33 +231,39 @@ class TestProcessorIntegration:
             f"Transcribe phrase should be called exactly 13 times, called {spy_transcribe_phrase.call_count} times"
         )
 
+        expected_deepgram = activity.ground_truth_deepgram_matches
+        assert expected_deepgram is not None
         for i in range(spy_deepgram_word_alignment.call_count):
             assert len(deepgram_return_values[i]) == len(activity.phrases[i].split()), (
                 f"Deepgram match does not match phrase length for index {i}"
             )
-            assert deepgram_return_values[i] == activity.ground_truth_deepgram_matches[i], (  # type: ignore[attr-defined]
+            assert deepgram_return_values[i] == expected_deepgram[i], (
                 f"Deepgram match does not match ground truth for phrase {i}"
             )
 
         assert spy_rescoring_kaldi_word_alignment.call_count == 13, (
             f"Resliced Kaldi word alignment should be called exactly 13 times, called {spy_rescoring_kaldi_word_alignment.call_count} times"
         )
+        expected_kaldi = activity.ground_truth_resliced_kaldi_matches
+        assert expected_kaldi is not None
         for i in range(spy_rescoring_kaldi_word_alignment.call_count):
             assert len(kaldi_return_values[i]) == len(activity.phrases[i].split()), (
                 f"Resliced Kaldi match does not match phrase length for index {i}"
             )
-            assert kaldi_return_values[i] == activity.ground_truth_resliced_kaldi_matches[i], (  # type: ignore[attr-defined]
+            assert kaldi_return_values[i] == expected_kaldi[i], (
                 f"Resliced Kaldi match does not match ground truth for phrase {i}"
             )
 
         assert spy_rescoring_w2v_alignment.call_count == 13, (
             f"Resliced W2V word alignment should be called exactly 13 times, called {spy_rescoring_w2v_alignment.call_count} times"
         )
+        expected_w2v = activity.ground_truth_resliced_w2v_matches
+        assert expected_w2v is not None
         for i in range(spy_rescoring_w2v_alignment.call_count):
             assert len(w2v_return_values[i]) == len(activity.phrases[i].split()), (
                 f"Resliced W2V match does not match phrase length for index {i}"
             )
-            assert w2v_return_values[i] == activity.ground_truth_resliced_w2v_matches[i], (  # type: ignore[attr-defined]
+            assert w2v_return_values[i] == expected_w2v[i], (
                 f"Resliced W2V match does not match ground truth for phrase {i}"
             )
 
@@ -269,25 +274,27 @@ class TestProcessorIntegration:
             )
 
         # 8. Check final trimmed retouched errors
+        expected_retouched = activity.ground_truth_retouched_errors
+        assert expected_retouched is not None
         for i in range(len(activity.errors_retouched)):
-            assert len(activity.errors_retouched[i]) == len(
-                activity.ground_truth_retouched_errors[i]  # type: ignore[attr-defined]
-            ), f"Retouched errors length do not match ground truth for phrase {i}"
-            assert activity.errors_retouched[i] == activity.ground_truth_retouched_errors[i], (  # type: ignore[attr-defined]
+            assert len(activity.errors_retouched[i]) == len(expected_retouched[i]), (
+                f"Retouched errors length do not match ground truth for phrase {i}"
+            )
+            assert activity.errors_retouched[i] == expected_retouched[i], (
                 f"Retouched errors do not match ground truth for phrase {i}"
             )
 
-    def test_bad_rescore_needs_redo(
-        self: "TestProcessorIntegration",
+    async def test_bad_rescore_needs_redo(
+        self: TestProcessorIntegration,
         mocker: MockerFixture,
-        real_activities: Dict[str, Activity],
-        real_model_features: Dict[str, List[Dict[str, Any]]],
-        real_deepgram_transcripts: Dict[str, Dict[str, Any]],
-        real_w2v_transcripts: Dict[str, List[str]],
-        real_kaldi_transcripts: Dict[str, List[str]],
-        real_manifest_pages: Dict[str, List[Any]],
+        real_activities: dict[str, Activity],
+        real_model_features: dict[str, list[dict[str, Any]]],
+        real_deepgram_transcripts: dict[str, dict[str, Any]],
+        real_w2v_transcripts: dict[str, list[str]],
+        real_kaldi_transcripts: dict[str, list[str]],
+        real_manifest_pages: dict[str, list[Any]],
         mock_audio_data: bytes,
-        real_timing_files: Dict[str, Dict[str, Any]],
+        real_timing_files: dict[str, dict[str, Any]],
     ) -> None:
         """Test processing of Jane Goodall passage where earlier iteration performed a bad rescore."""
 
@@ -468,11 +475,13 @@ class TestProcessorIntegration:
                     ), f"Phrase {phrase['phrase_idx']} parsed do not match ground truth"
 
         # 6. Check the asr matches
+        expected_deepgram = activity.ground_truth_deepgram_matches
+        assert expected_deepgram is not None
         for i in range(spy_deepgram_word_alignment.call_count):
             assert len(deepgram_return_values[i]) == len(activity.phrases[i].split()), (
                 f"Deepgram match does not match phrase length for index {i}"
             )
-            assert deepgram_return_values[i] == activity.ground_truth_deepgram_matches[i], (  # type: ignore[attr-defined]
+            assert deepgram_return_values[i] == expected_deepgram[i], (
                 f"Deepgram match does not match ground truth for phrase {i}"
             )
 
@@ -482,22 +491,26 @@ class TestProcessorIntegration:
         assert spy_rescoring_kaldi_word_alignment.call_count == 10, (
             f"Resliced Kaldi word alignment should be called exactly 10 times, called {spy_rescoring_kaldi_word_alignment.call_count} times"
         )
+        expected_kaldi = activity.ground_truth_resliced_kaldi_matches
+        assert expected_kaldi is not None
         for i in range(spy_rescoring_kaldi_word_alignment.call_count):
             assert len(kaldi_return_values[i]) == len(activity.phrases[i].split()), (
                 f"Resliced Kaldi match does not match phrase length for index {i}"
             )
-            assert kaldi_return_values[i] == activity.ground_truth_resliced_kaldi_matches[i], (  # type: ignore[attr-defined]
+            assert kaldi_return_values[i] == expected_kaldi[i], (
                 f"Resliced Kaldi match does not match ground truth for phrase {i}"
             )
 
         assert spy_rescoring_w2v_alignment.call_count == 10, (
             f"Resliced W2V word alignment should be called exactly 10 times, called {spy_rescoring_w2v_alignment.call_count} times"
         )
+        expected_w2v = activity.ground_truth_resliced_w2v_matches
+        assert expected_w2v is not None
         for i in range(spy_rescoring_w2v_alignment.call_count):
             assert len(w2v_return_values[i]) == len(activity.phrases[i].split()), (
                 f"Resliced W2V match does not match phrase length for index {i}"
             )
-            assert w2v_return_values[i] == activity.ground_truth_resliced_w2v_matches[i], (  # type: ignore[attr-defined]
+            assert w2v_return_values[i] == expected_w2v[i], (
                 f"Resliced W2V match does not match ground truth for phrase {i}"
             )
 
@@ -525,15 +538,17 @@ class TestProcessorIntegration:
             )
 
         # 8. Check final trimmed retouched errors
-        assert len(activity.errors_retouched) == len(activity.ground_truth_retouched_errors), (  # type: ignore[attr-defined]
+        expected_retouched = activity.ground_truth_retouched_errors
+        assert expected_retouched is not None
+        assert len(activity.errors_retouched) == len(expected_retouched), (
             f"Retouched errors length do not match ground truth, retouched errors length: {len(activity.errors_retouched)}, "
-            f"ground truth length: {len(activity.ground_truth_retouched_errors)}"  # type: ignore[attr-defined]
+            f"ground truth length: {len(expected_retouched)}"
         )
         for i in range(len(activity.errors_retouched)):
-            assert len(activity.errors_retouched[i]) == len(
-                activity.ground_truth_retouched_errors[i]  # type: ignore[attr-defined]
-            ), f"Retouched errors length do not match ground truth for phrase {i}"
-            assert activity.errors_retouched[i] == activity.ground_truth_retouched_errors[i], (  # type: ignore[attr-defined]
+            assert len(activity.errors_retouched[i]) == len(expected_retouched[i]), (
+                f"Retouched errors length do not match ground truth for phrase {i}"
+            )
+            assert activity.errors_retouched[i] == expected_retouched[i], (
                 f"Retouched errors do not match ground truth for phrase {i}"
             )
 
@@ -542,6 +557,6 @@ class TestProcessorIntegration:
             "trim_predictions should be called exactly once"
         )
         for i in range(len(trim_predictions_return_values[0])):
-            assert (
-                trim_predictions_return_values[0][i] == activity.ground_truth_retouched_errors[i]  # type: ignore[attr-defined]
-            ), f"Trim predictions do not match ground truth for phrase {i}"
+            assert trim_predictions_return_values[0][i] == expected_retouched[i], (
+                f"Trim predictions do not match ground truth for phrase {i}"
+            )
