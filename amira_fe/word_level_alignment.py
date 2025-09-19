@@ -6,7 +6,7 @@ from typing import Any, Final, cast
 
 import jellyfish
 import metaphone
-from Bio import pairwise2
+from Bio.Align import PairwiseAligner
 
 import amira_fe.phonetic_algorithms_es as metaphoneES
 from amira_fe.es_soundex import spanish_soundex
@@ -506,7 +506,7 @@ def align_dash(
             MISMATCH_PENALTY = -1
             GAP_PENALTY = 0
             GAP_EXTENSION_PENALTY = 0
-            alignments = pairwise2.align.globalms(
+            alignments = PairwiseAligner().align.globalms(
                 first_words,
                 second_words,
                 MATCH_REWARD,
