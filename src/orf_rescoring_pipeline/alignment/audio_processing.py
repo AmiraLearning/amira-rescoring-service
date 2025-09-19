@@ -9,11 +9,11 @@ import tempfile
 from io import BytesIO
 from typing import Final
 
-from loguru import logger
 from pydub import AudioSegment
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 import amira_pyutils.s3 as s3_utils
+from amira_pyutils.logging import get_logger
 from src.orf_rescoring_pipeline.models import Activity
 
 AUDIO_FILE_SUFFIX: Final[str] = ".wav"
@@ -22,6 +22,8 @@ COMPLETE_AUDIO_FILENAME: Final[str] = "complete.wav"
 RETRY_MAX_ATTEMPTS: Final[int] = 3
 RETRY_MIN_WAIT: Final[float] = 1.0
 RETRY_MAX_WAIT: Final[float] = 10.0
+
+logger = get_logger(__name__)
 
 
 @retry(

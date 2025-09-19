@@ -9,10 +9,9 @@ from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
 import numpy as np
 import torch
-from loguru import logger
 from transformers import BatchFeature, Wav2Vec2ForCTC, Wav2Vec2Processor
 
-from utils.logging import emit_emf_metric
+from amira_pyutils.logging import emit_emf_metric, get_logger
 
 from .metrics_constants import (
     DIM_CORRELATION_ID,
@@ -49,6 +48,8 @@ _ENGINE_CACHE_MAX: int = int(os.getenv("ENGINE_CACHE_MAX", str(ENGINE_CACHE_MAX_
 
 
 TCache = TypeVar("TCache")
+
+logger = get_logger(__name__)
 
 
 class ThreadSafeLRUCache(Generic[TCache]):
@@ -281,7 +282,7 @@ class Wav2Vec2InferenceEngine:
             should_quantize = self._should_enable_quantization()
             if should_quantize:
                 try:
-                    self._model = torch.quantization.quantize_dynamic(  # type: ignore[attr-defined]
+                    self._model = torch.quantization.quantize_dynamic(
                         self._model, {torch.nn.Linear}, dtype=torch.qint8
                     )
                     logger.info("Applied dynamic quantization to W2V2 model (CPU)")
@@ -312,7 +313,7 @@ class Wav2Vec2InferenceEngine:
             dummy_input: torch.Tensor = torch.zeros((1, sample_length), device=self._device)
 
             logger.debug(f"Initializing JIT trace with input shape {dummy_input.shape}")
-            traced_result = torch.jit.trace(self._model, dummy_input, strict=False)  # type: ignore[no-untyped-call]
+            traced_result = torch.jit.trace(self._model, dummy_input, strict=False)
             if isinstance(traced_result, torch.jit.ScriptModule):
                 self._traced_model = traced_result
             else:
@@ -394,7 +395,7 @@ class Wav2Vec2InferenceEngine:
                 autocast_dtype = torch.bfloat16
 
             try:
-                with torch.amp.autocast(device_type="cuda", dtype=autocast_dtype):  # type: ignore[attr-defined]
+                with torch.amp.autocast(device_type="cuda", dtype=autocast_dtype):
                     logger.debug(f"Running model with CUDA autocast (dtype={autocast_dtype})")
                     logits = model_to_use(input_values)
                     if not isinstance(logits, torch.Tensor):
@@ -412,7 +413,7 @@ class Wav2Vec2InferenceEngine:
                         logits = logits.logits
         elif self._device.type == "mps" and use_amp and hasattr(torch, "autocast"):
             try:
-                with torch.amp.autocast(device_type="mps"):  # type: ignore[attr-defined]
+                with torch.amp.autocast(device_type="mps"):
                     logger.debug("Running model with MPS autocast")
                     logits = model_to_use(input_values)
                     if not isinstance(logits, torch.Tensor):

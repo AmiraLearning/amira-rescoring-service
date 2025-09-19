@@ -1,5 +1,4 @@
 import asyncio
-import logging
 import time
 from collections.abc import AsyncGenerator, Callable
 from dataclasses import dataclass
@@ -18,6 +17,8 @@ from tenacity import (
     wait_exponential,
 )
 
+from amira_pyutils.logging import get_logger
+
 
 class AmiraError(Exception):
     """Base error with optional retryable flag."""
@@ -31,8 +32,7 @@ class W2VError(AmiraError):
     """Error for W2V client failures."""
 
 
-# TODO(amira_pyutils): replace with amira_pyutils logger
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 DEFAULT_SESSION_TIMEOUT: Final[float] = 30.0
 DEFAULT_REQUEST_TIMEOUT: Final[float] = 30.0
@@ -458,7 +458,7 @@ class W2VClient:
         elif ws.close_code == aiohttp.WSCloseCode.ABNORMAL_CLOSURE:
             raise ConnectionResetError("Internal server error handling session")
 
-    @retry(  # type: ignore[misc]
+    @retry(
         stop=stop_after_attempt(DEFAULT_MAX_RETRIES),
         wait=wait_exponential(multiplier=DEFAULT_BACKOFF_FACTOR),
         retry=retry_if_exception_type((aiohttp.ClientError, asyncio.TimeoutError)),

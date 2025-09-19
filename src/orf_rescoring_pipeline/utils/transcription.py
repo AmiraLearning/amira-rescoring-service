@@ -8,7 +8,6 @@ the alignment process.
 
 import io
 import json
-import logging
 import os
 import tempfile
 from pathlib import Path
@@ -20,11 +19,12 @@ import requests
 import soundfile as sf
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_fixed
 
+from amira_pyutils.logging import get_logger
 from src.orf_rescoring_pipeline.models import Activity, TranscriptItem, WordItem
 from src.orf_rescoring_pipeline.services.kaldi import KaldiClient, KaldiConfig, KaldiResult
 from src.orf_rescoring_pipeline.services.w2v import W2VClient, W2VConfig
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 # Constants
 DEFAULT_DEEPGRAM_MODEL = "nova-3"
@@ -348,7 +348,7 @@ class KaldiASRClient:
         ]
         return TranscriptItem(transcript=kaldi_result.data.text, words=words)
 
-    @retry(  # type: ignore[misc]
+    @retry(
         stop=stop_after_attempt(RETRY_MAX_ATTEMPTS),
         wait=wait_fixed(RETRY_WAIT_SECONDS),
         retry=retry_if_exception_type(Exception),
@@ -371,7 +371,7 @@ class KaldiASRClient:
         lm_phrase_id = f"{activity.story_id}_{phrase_index + 1}"
 
         logger.info(
-            f"Activity {activity.activity_id}: Transcribing phrase {phrase_index} with Kaldi client {client._url}"  # type: ignore[attr-defined]
+            f"Activity {activity.activity_id}: Transcribing phrase {phrase_index} with Kaldi client {client._config.url}"
         )
 
         self._calculate_audio_duration(
@@ -489,7 +489,7 @@ class W2VASRClient:
 
         return audio
 
-    @retry(  # type: ignore[misc]
+    @retry(
         stop=stop_after_attempt(RETRY_MAX_ATTEMPTS),
         wait=wait_fixed(RETRY_WAIT_SECONDS),
         retry=retry_if_exception_type(Exception),

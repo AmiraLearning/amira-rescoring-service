@@ -8,15 +8,18 @@ from typing import Any, Final, cast
 import boto3
 import torch
 from botocore.exceptions import ClientError, ConnectionError
-from loguru import logger
+
+# Logger will be initialized in handler
 from pydantic import BaseModel
 
+from amira_pyutils.logging import get_logger
 from src.letter_scoring_pipeline.inference.models import W2VConfig
 from src.letter_scoring_pipeline.pipeline import run_activity_pipeline
 from utils.config import AwsConfig, PipelineConfig
-from utils.logging import setup_logging
 
 SCHEMA_VERSION_RESULT: Final[str] = "activity-results-v1"
+
+logger = get_logger(__name__)
 
 
 class LambdaProcessingResult(BaseModel):
@@ -251,7 +254,7 @@ def publish_batch_metrics(successes: int, failures: int, total_time: float) -> N
 
 
 def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
-    setup_logging(service="lambda-parallel-processor")
+    logger = get_logger(__name__, service="lambda-parallel-processor")
     handler_start = time.time()
 
     try:

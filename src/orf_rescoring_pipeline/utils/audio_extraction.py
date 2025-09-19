@@ -8,15 +8,15 @@ This module handles both page-level and phrase-level audio extraction:
 The extracted audio files are organized in separate directories for easy management.
 """
 
-import logging
 from pathlib import Path
 from typing import Any
 
 from pydub import AudioSegment
 
+from amira_pyutils.logging import get_logger
 from src.orf_rescoring_pipeline.models import Activity
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 def extract_page_audio(activity: Activity, manifest_pages: list[Any]) -> list[str]:

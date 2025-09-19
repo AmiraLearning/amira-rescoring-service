@@ -84,6 +84,9 @@ async def process_single_activity(
         For debug mode: (success, activity_id, accuracy_stats_tuple)
         For normal mode: (success, activity_id)
     """
+    # Set activity context for all logging within this function
+    logger.set_activity_context(activity_id=activity.activity_id)
+
     try:
         import time
 
@@ -140,7 +143,7 @@ async def process_single_activity(
         return result
 
     except Exception as e:
-        logger.error(f"Error processing activity {activity.activity_id}: {e}")
+        logger.error(f"Error processing activity: {e}")
         try:
             emit_standardized_metric(
                 namespace="Amira/ORFRescore",

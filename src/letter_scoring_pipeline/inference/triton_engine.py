@@ -3,8 +3,8 @@ import time
 import traceback
 
 import numpy as np
-from loguru import logger
 
+from amira_pyutils.logging import get_logger
 from src.letter_scoring_pipeline.exceptions import (
     DecodingError,
     ModelNotReadyError,
@@ -18,9 +18,8 @@ try:
     TRITON_AVAILABLE = True
 except ImportError:
     TRITON_AVAILABLE = False
-    logger.warning("Triton client not available. Install with: pip install tritonclient[http]")
 
-from utils.logging import emit_emf_metric
+from amira_pyutils.logging import emit_emf_metric
 
 from .constants import MS_PER_SECOND, DeviceType
 from .decoder import PhonemeDecoder
@@ -46,6 +45,12 @@ try:
     from transformers import Wav2Vec2Processor as _Wav2Vec2Processor
 except Exception:
     _Wav2Vec2Processor = None
+
+
+logger = get_logger(__name__)
+
+if not TRITON_AVAILABLE:
+    logger.warning("Triton client not available. Install with: pip install tritonclient[http]")
 
 
 class TritonInferenceEngine:

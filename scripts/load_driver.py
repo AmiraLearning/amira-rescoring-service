@@ -6,7 +6,6 @@ Generates controlled load to measure platform performance and capacity
 
 import argparse
 import json
-import logging
 import statistics
 import time
 import uuid
@@ -16,9 +15,10 @@ from typing import Any
 
 import boto3
 
+from amira_pyutils.logging import get_logger
+
 # Configure logging
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class LoadDriver:

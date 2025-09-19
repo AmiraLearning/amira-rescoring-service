@@ -5,7 +5,6 @@ prediction trimming, and S3 upload operations.
 """
 
 import csv
-import logging
 import os
 import re
 import tempfile
@@ -15,8 +14,9 @@ from types import MappingProxyType
 from typing import Final
 
 import amira_pyutils.s3 as s3_utils
+from amira_pyutils.logging import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 ACCEPTANCE_MAP: Final[MappingProxyType[str, set[str]]] = MappingProxyType(
     {
@@ -45,17 +45,17 @@ ACCEPTANCE_MAP: Final[MappingProxyType[str, set[str]]] = MappingProxyType(
         "æ": {"æ", "ɛ"},
         "ð": {"ð"},
         "ŋ": {"ŋ", "n", "m"},
-        "ɑ": {"ɑ", "ɔ", "ʌ"},  # noqa: RUF001 - IPA phonetic symbol
-        "ɔ": {"ɔ", "ɑ", "ʌ"},  # noqa: RUF001 - IPA phonetic symbol
-        "ɛ": {"ɛ", "æ", "ɪ"},  # noqa: RUF001 - IPA phonetic symbol
+        "ɑ": {"ɑ", "ɔ", "ʌ"},
+        "ɔ": {"ɔ", "ɑ", "ʌ"},
+        "ɛ": {"ɛ", "æ", "ɪ"},
         "ɝ": {"ɝ", "ɹ"},
-        "ɪ": {"ɪ", "ɛ"},  # noqa: RUF001 - IPA phonetic symbol
+        "ɪ": {"ɪ", "ɛ"},
         "ɹ": {"ɹ", "w", "ʌ", "ɝ"},
         "ʃ": {"ʃ", "s"},
         "ʊ": {"ʊ", "ʌ"},
         "ʌ": {"ʌ", "ɔ", "ʊ"},
-        "α": {"α"},  # noqa: RUF001 - Greek phonetic symbol
-        "γ": {"γ", "ɑ"},  # noqa: RUF001 - Greek phonetic symbol
+        "α": {"α"},
+        "γ": {"γ", "ɑ"},
         "θ": {"θ"},
         "ω": {"ω"},
     }

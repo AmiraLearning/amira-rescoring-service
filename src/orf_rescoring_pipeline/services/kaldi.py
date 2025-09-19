@@ -1,5 +1,4 @@
 import asyncio
-import logging
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
@@ -8,8 +7,15 @@ from typing import TYPE_CHECKING, Any, Final
 import aiohttp
 import orjson as json
 from aiohttp import ClientSession, ClientTimeout
+from tenacity import (
+    retry,
+    retry_if_exception_type,
+    stop_after_attempt,
+    wait_exponential,
+)
 
-# TODO(amira_pyutils): swap to shared error and logger when available
+from amira_pyutils.logging import get_logger
+
 if TYPE_CHECKING:  # pragma: no cover - types only
     pass
 
@@ -18,18 +24,6 @@ class AmiraError(Exception):
     def __init__(self, msg: str | None = None, retryable: bool | None = None) -> None:
         super().__init__(msg if msg is not None else "")
         self.retryable = retryable
-
-
-def get_logger(name: str) -> logging.Logger:
-    return logging.getLogger(name)
-
-
-from tenacity import (
-    retry,
-    retry_if_exception_type,
-    stop_after_attempt,
-    wait_exponential,
-)
 
 
 class KaldiError(AmiraError):
@@ -140,7 +134,7 @@ class KaldiClient:
             await self._session.close()
             self._session = None
 
-    @retry(  # type: ignore[misc]
+    @retry(
         stop=stop_after_attempt(DEFAULT_MAX_RETRIES),
         wait=wait_exponential(multiplier=DEFAULT_BACKOFF_FACTOR),
         retry=retry_if_exception_type((aiohttp.ClientError, asyncio.TimeoutError)),

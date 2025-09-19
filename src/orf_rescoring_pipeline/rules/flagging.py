@@ -5,8 +5,7 @@ This module contains the logic for analyzing features and deciding on flagging s
 for phrase rescoring based on ASR match data and model predictions.
 """
 
-import logging
-
+from amira_pyutils.logging import get_logger
 from orf_rescoring_pipeline import constants
 from src.orf_rescoring_pipeline.models import Activity, ModelFeature
 from src.orf_rescoring_pipeline.utils.debug import (
@@ -16,7 +15,7 @@ from src.orf_rescoring_pipeline.utils.debug import (
 )
 from src.orf_rescoring_pipeline.utils.transcription import KaldiASRClient, W2VASRClient
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class FlaggingAnalyzer:

@@ -7,12 +7,12 @@ individual activities without batch operations.
 """
 
 import asyncio
-import logging
 from typing import Any
 
+from amira_pyutils.logging import get_logger
 from src.orf_rescoring_pipeline.lambda_handler import handler
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 def process_single_activity_entry(

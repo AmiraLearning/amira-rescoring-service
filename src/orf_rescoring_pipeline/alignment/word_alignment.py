@@ -1,4 +1,3 @@
-import logging
 import threading
 from pathlib import Path
 from typing import Final
@@ -8,11 +7,12 @@ from amira_fe.phon_level_alignment import phoneme_align_dash
 from amira_fe.word_level_alignment import align_texts_dash
 from amira_pyutils.abstract_alignment import AlignmentConfig, WordSelectionStrategy
 from amira_pyutils.language import LanguageHandling
+from amira_pyutils.logging import get_logger
 from amira_pyutils.phone_alphabets import english2amirabet
 
 # TODO this is the meet of the imports
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 S3_PHONEME_DICT_URI: Final[str] = "s3://amira-kaldi-lm-repo/alts/all_story_words.dic"
 PHONEME_DICT_FILENAME: Final[str] = "all_story_words.dic"

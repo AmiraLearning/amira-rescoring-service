@@ -6,11 +6,11 @@ and rescoring phrase errors based on multiple ASR system outputs.
 """
 
 import asyncio
-import logging
 from typing import Any, cast
 
 import numpy as np
 
+from amira_pyutils.logging import get_logger
 from src.orf_rescoring_pipeline.alignment.word_alignment import (
     get_word_level_transcript_alignment,
     get_word_level_transcript_alignment_w2v,
@@ -18,7 +18,7 @@ from src.orf_rescoring_pipeline.alignment.word_alignment import (
 from src.orf_rescoring_pipeline.models import Activity, ModelFeature
 from src.orf_rescoring_pipeline.utils.transcription import KaldiASRClient, W2VASRClient
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 async def _transcribe_phrase_async(
