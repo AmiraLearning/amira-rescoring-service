@@ -191,7 +191,7 @@ def mock_external_dependencies(monkeypatch: pytest.MonkeyPatch) -> None:
         return phoneme_dict
 
     monkeypatch.setattr(
-        "src.orf_rescoring_pipeline.alignment.word_alignment._load_phoneme_dict_from_s3",
+        "src.orf_rescoring_pipeline.alignment.word_alignment._load_phoneme_dict_from_s3_sync",
         mock_load_phoneme_dict_from_s3,
     )
 

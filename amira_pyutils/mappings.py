@@ -13,7 +13,7 @@ RARE_MAPPING_ARM: Final[float] = 6.0
 
 ARPA_TO_AMIRABET: Final[MappingProxyType[ArpaStr, AmirabetStr]] = MappingProxyType(
     {
-        "SIL": " ",
+        "SIL": "",
         "AA": "ɑ",
         "AE": "æ",
         "AH": "ʌ",

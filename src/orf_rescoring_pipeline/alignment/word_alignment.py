@@ -25,6 +25,16 @@ _download_lock = threading.Lock()
 _phoneme_dict_cache: dict[str, str] | None = None
 
 
+# TODO(amira_pyutils/s3_client): Replace sync bridge with real client wiring
+def _load_phoneme_dict_from_s3_sync() -> dict[str, str]:
+    try:
+        import asyncio
+
+        return asyncio.run(_load_phoneme_dict_from_s3())
+    except Exception:
+        return {}
+
+
 def _get_phoneme_dict_path() -> Path:
     """Get the local path for the phoneme dictionary file.
 
@@ -251,15 +261,6 @@ def get_word_level_transcript_alignment_w2v(
         return [WORD_NO_MATCH_SCORE] * len(story_phrase.split())
 
     config = _create_w2v_alignment_config()
-
-    # TODO(amira_pyutils/s3_client): Replace sync bridge with real client wiring
-    def _load_phoneme_dict_from_s3_sync() -> dict[str, str]:
-        try:
-            import asyncio
-
-            return asyncio.run(_load_phoneme_dict_from_s3())
-        except Exception:
-            return {}
 
     phoneme_dict = _load_phoneme_dict_from_s3_sync()
 
