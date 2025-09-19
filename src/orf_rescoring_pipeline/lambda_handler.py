@@ -9,15 +9,13 @@ independently with proper resource management and error handling.
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, Final, cast
 
-from amira_pyutils.logging import get_logger
-
-logger = get_logger(__name__)
 from pydantic import BaseModel, Field, ValidationError
 
+from amira_pyutils.logging import get_logger
 from orf_rescoring_pipeline import constants
-from orf_rescoring_pipeline.core.processor import process_single_activity
-from orf_rescoring_pipeline.models import Activity
-from orf_rescoring_pipeline.utils.transcription import (
+from src.orf_rescoring_pipeline.core.processor import process_single_activity
+from src.orf_rescoring_pipeline.models import Activity
+from src.orf_rescoring_pipeline.utils.transcription import (
     DeepgramASRClient,
     KaldiASRClient,
     W2VASRClient,
@@ -31,6 +29,8 @@ from amira_pyutils.appsync import AppSync
 from amira_pyutils.environment import Environment, Environments
 
 DEFAULT_ENV_NAME: Final[str] = "prod2"
+
+logger = get_logger(__name__)
 
 
 class LambdaEvent(BaseModel):

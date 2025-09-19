@@ -14,7 +14,7 @@ from typing import Any
 
 from pydub import AudioSegment
 
-from orf_rescoring_pipeline.models import Activity
+from src.orf_rescoring_pipeline.models import Activity
 
 logger = logging.getLogger(__name__)
 

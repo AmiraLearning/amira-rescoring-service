@@ -134,7 +134,7 @@ def mock_external_dependencies(monkeypatch: pytest.MonkeyPatch) -> None:
     def mock_s3_download(*args: Any, **kwargs: Any) -> bool:
         return True
 
-    monkeypatch.setattr("amira_pyutils.services.s3.s3_try_download_file", mock_s3_download)
+    monkeypatch.setattr("amira_pyutils.s3.S3Service.download_file", mock_s3_download)
 
     # boto3 is already mocked at module level to handle import-time client creation
 
@@ -257,20 +257,9 @@ def _create_real_activity(activity_id: str) -> Activity:
         )
 
     model_features_data = cast(list[dict[str, Any]], activity_data["model_features"])
-    story_data = cast(dict[str, Any], activity_data["story"])
-    phrases = cast(list[str], story_data["phrases"])
-    errors = cast(list[list[bool]], activity_data["errors"])
-    story_tags = cast(list[str], story_data.get("story_tags", []))
 
     # Create activity from activity_data directly instead of using async from_appsync_res
-    activity = Activity(
-        activity_id=activity_data["activityId"],
-        story_id=uuid.UUID(activity_data["storyId"]),
-        phrases=phrases,
-        pages=[],  # Will be populated later
-        errors=errors,
-        story_tags=story_tags,
-    )
+    activity = Activity._create_from_activity_data(activity_data=activity_data)
 
     deepgram_matches: list[list[int]] = [
         cast(list[int], f["deepgram_matches"])

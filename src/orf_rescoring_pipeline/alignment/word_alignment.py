@@ -152,7 +152,7 @@ def _convert_words_to_amirabet(*, words: list[str], phoneme_dict: dict[str, str]
     Returns:
         Space-separated Amirabet phoneme string.
     """
-    amirabets = [english2amirabet(phoneme_dict, word) for word in words]
+    amirabets = [english2amirabet(text_to_phons=phoneme_dict, word=word) for word in words]
     return " ".join(amirabets)
 
 
@@ -174,7 +174,7 @@ def _apply_phoneme_matching_corrections(
     Returns:
         Corrected binary match scores.
     """
-    from orf_rescoring_pipeline.utils.file_operations import phoneme_match_with_map
+    from src.orf_rescoring_pipeline.utils.file_operations import phoneme_match_with_map
 
     corrected_matches = matches.copy()
 

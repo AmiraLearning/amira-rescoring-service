@@ -8,7 +8,7 @@ and slice it into phrase segments for ASR processing.
 from __future__ import annotations
 
 from typing import Any
-from unittest.mock import MagicMock, Mock, patch
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
 
@@ -23,27 +23,25 @@ from src.orf_rescoring_pipeline.models import Activity, PageData
 class TestLoadActivityAudioDataFromS3:
     """Test cases for load_activity_audio_data_from_s3 function."""
 
-    @patch("src.orf_rescoring_pipeline.alignment.audio_processing.s3_utils.get_client")
-    @patch("src.orf_rescoring_pipeline.alignment.audio_processing.s3_utils.s3_addr_from_uri")
+    @patch("amira_pyutils.s3.S3Service.download_file")
+    @patch("amira_pyutils.s3.S3Address.from_uri")
     async def test_successful_audio_loading(
         self: TestLoadActivityAudioDataFromS3,
         mock_s3_addr: Mock,
-        mock_get_client: Mock,
+        mock_download_file: AsyncMock,
         sample_activity: Activity,
         mock_audio_data: bytes,
     ) -> None:
         """Test successful loading of audio data from S3."""
         # Setup mocks
         mock_s3_addr.return_value = Mock(bucket="test-bucket", key="test_activity_123/complete.wav")
-        mock_s3_client = Mock()
-        mock_get_client.return_value = mock_s3_client
 
         # Mock the download_file method to write audio data to temp file
-        def mock_download_file(bucket: str, key: str, filename: str) -> None:
+        async def mock_download_file_impl(bucket: str, key: str, filename: str) -> None:
             with open(filename, "wb") as f:
                 f.write(mock_audio_data)
 
-        mock_s3_client.download_file.side_effect = mock_download_file
+        mock_download_file.side_effect = mock_download_file_impl
 
         # Test the function
         await load_activity_audio_data_from_s3(activity=sample_activity, audio_bucket="test-bucket")
@@ -53,25 +51,23 @@ class TestLoadActivityAudioDataFromS3:
         assert sample_activity.audio_file_data == mock_audio_data
 
         # Verify S3 operations were called correctly
-        mock_s3_addr.assert_called_once_with("s3://test-bucket/test_activity_123/complete.wav")
-        mock_s3_client.download_file.assert_called_once()
+        mock_s3_addr.assert_called_once_with(uri="s3://test-bucket/test_activity_123/complete.wav")
+        mock_download_file.assert_called_once()
 
-    @patch("src.orf_rescoring_pipeline.alignment.audio_processing.s3_utils.get_client")
-    @patch("src.orf_rescoring_pipeline.alignment.audio_processing.s3_utils.s3_addr_from_uri")
+    @patch("amira_pyutils.s3.S3Service.download_file")
+    @patch("amira_pyutils.s3.S3Address.from_uri")
     async def test_s3_download_failure(
         self: TestLoadActivityAudioDataFromS3,
         mock_s3_addr: Mock,
-        mock_get_client: Mock,
+        mock_download_file: AsyncMock,
         sample_activity: Activity,
     ) -> None:
         """Test handling of S3 download failure."""
         # Setup mocks
         mock_s3_addr.return_value = Mock(bucket="test-bucket", key="test_activity_123/complete.wav")
-        mock_s3_client = Mock()
-        mock_get_client.return_value = mock_s3_client
 
         # Mock download failure
-        mock_s3_client.download_file.side_effect = Exception("S3 download failed")
+        mock_download_file.side_effect = Exception("S3 download failed")
 
         # Test the function - should raise exception
         with pytest.raises(Exception, match="S3 download failed"):
@@ -82,24 +78,25 @@ class TestLoadActivityAudioDataFromS3:
         # Verify audio_file_data is set to None
         assert sample_activity.audio_file_data is None
 
-    @patch("src.orf_rescoring_pipeline.alignment.audio_processing.s3_utils.get_client")
-    @patch("src.orf_rescoring_pipeline.alignment.audio_processing.s3_utils.s3_addr_from_uri")
+    @patch("amira_pyutils.s3.S3Service.download_file")
+    @patch("amira_pyutils.s3.S3Address.from_uri")
     @patch("builtins.open")
     async def test_file_read_failure(
         self: TestLoadActivityAudioDataFromS3,
         mock_open: Mock,
         mock_s3_addr: Mock,
-        mock_get_client: Mock,
+        mock_download_file: AsyncMock,
         sample_activity: Activity,
     ) -> None:
         """Test handling of file read failure after successful download."""
         # Setup mocks
         mock_s3_addr.return_value = Mock(bucket="test-bucket", key="test_activity_123/complete.wav")
-        mock_s3_client = Mock()
-        mock_get_client.return_value = mock_s3_client
 
-        # Mock successful download
-        mock_s3_client.download_file.return_value = None
+        # Mock successful download - need to make it an async mock
+        async def mock_download_success(bucket: str, key: str, filename: str) -> None:
+            pass  # Successful download does nothing since we're testing file read failure
+
+        mock_download_file.side_effect = mock_download_success
 
         # Mock file read failure
         mock_open.side_effect = OSError("File read failed")
@@ -114,15 +111,9 @@ class TestLoadActivityAudioDataFromS3:
         self: TestLoadActivityAudioDataFromS3, sample_activity: Activity
     ) -> None:
         """Test that S3 URI is constructed correctly."""
-        with patch(
-            "src.orf_rescoring_pipeline.alignment.audio_processing.s3_utils.s3_addr_from_uri"
-        ) as mock_s3_addr:
-            with patch(
-                "src.orf_rescoring_pipeline.alignment.audio_processing.s3_utils.get_client"
-            ) as mock_get_client:
-                mock_s3_client = Mock()
-                mock_get_client.return_value = mock_s3_client
-                mock_s3_client.download_file.side_effect = Exception("Test exception")
+        with patch("amira_pyutils.s3.S3Address.from_uri") as mock_s3_addr:
+            with patch("amira_pyutils.s3.S3Service.download_file") as mock_download_file:
+                mock_download_file.side_effect = Exception("Test exception")
 
                 try:
                     await load_activity_audio_data_from_s3(
@@ -133,7 +124,7 @@ class TestLoadActivityAudioDataFromS3:
 
                 # Verify correct URI was constructed
                 expected_uri = f"s3://my-audio-bucket/{sample_activity.activity_id}/complete.wav"
-                mock_s3_addr.assert_called_once_with(expected_uri)
+                mock_s3_addr.assert_called_once_with(uri=expected_uri)
 
 
 @pytest.mark.unit

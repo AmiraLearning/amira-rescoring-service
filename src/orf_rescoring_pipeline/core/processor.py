@@ -9,28 +9,28 @@ independently without batch operations.
 from typing import TYPE_CHECKING, Any, Final
 
 import amira_pyutils.s3 as s3_utils
-from orf_rescoring_pipeline.alignment.audio_processing import (
+from src.orf_rescoring_pipeline.alignment.audio_processing import (
     load_activity_audio_data_from_s3,
 )
-from orf_rescoring_pipeline.alignment.phrase_alignment import process_activity_timing
-from orf_rescoring_pipeline.alignment.phrase_manifest import (
+from src.orf_rescoring_pipeline.alignment.phrase_alignment import process_activity_timing
+from src.orf_rescoring_pipeline.alignment.phrase_manifest import (
     PhraseBuilder,
     PhraseManifest,
 )
-from orf_rescoring_pipeline.alignment.word_alignment import (
+from src.orf_rescoring_pipeline.alignment.word_alignment import (
     get_word_level_transcript_alignment,
 )
-from orf_rescoring_pipeline.models import Activity
-from orf_rescoring_pipeline.rules.flagging import FlaggingAnalyzer, FlaggingExecutor
-from orf_rescoring_pipeline.utils.debug import ActivityDebugger
-from orf_rescoring_pipeline.utils.file_operations import trim_predictions
+from src.orf_rescoring_pipeline.models import Activity
+from src.orf_rescoring_pipeline.rules.flagging import FlaggingAnalyzer, FlaggingExecutor
+from src.orf_rescoring_pipeline.utils.debug import ActivityDebugger
+from src.orf_rescoring_pipeline.utils.file_operations import trim_predictions
 from utils.standardized_metrics import emit_standardized_metric
 
 if TYPE_CHECKING:
     # TODO CRTITICAL
     from amira_pyutils.appsync import AppSync
     from amira_pyutils.environment import Environment
-    from orf_rescoring_pipeline.utils.transcription import (
+    from src.orf_rescoring_pipeline.utils.transcription import (
         DeepgramASRClient,
         KaldiASRClient,
         W2VASRClient,

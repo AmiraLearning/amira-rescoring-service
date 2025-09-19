@@ -14,7 +14,7 @@ from pydub import AudioSegment
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 import amira_pyutils.s3 as s3_utils
-from orf_rescoring_pipeline.models import Activity
+from src.orf_rescoring_pipeline.models import Activity
 
 AUDIO_FILE_SUFFIX: Final[str] = ".wav"
 AUDIO_FORMAT: Final[str] = "wav"
@@ -24,7 +24,7 @@ RETRY_MIN_WAIT: Final[float] = 1.0
 RETRY_MAX_WAIT: Final[float] = 10.0
 
 
-@retry(  # type: ignore[misc]
+@retry(
     stop=stop_after_attempt(RETRY_MAX_ATTEMPTS),
     wait=wait_exponential(multiplier=RETRY_MIN_WAIT, max=RETRY_MAX_WAIT),
     reraise=True,

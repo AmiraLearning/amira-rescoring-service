@@ -8,9 +8,9 @@ individual activities without batch operations.
 
 import asyncio
 import logging
-from typing import Any, cast
+from typing import Any
 
-from orf_rescoring_pipeline.lambda_handler import handler
+from src.orf_rescoring_pipeline.lambda_handler import handler
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +34,7 @@ def process_single_activity_entry(
     """
     event = {"activity_id": activity_id, "env_name": env_name, "debug": debug}
 
-    result = cast(dict[str, Any], asyncio.run(handler(event, None)))
+    result = asyncio.run(handler(event, None))
 
     if result["statusCode"] == 200:
         logger.info(f"Successfully processed activity {activity_id}")

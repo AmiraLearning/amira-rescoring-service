@@ -18,7 +18,7 @@ from typing import Any, Final
 
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
-from orf_rescoring_pipeline.models import Activity, WordItem
+from src.orf_rescoring_pipeline.models import Activity, WordItem
 
 logger = logging.getLogger(__name__)
 
@@ -309,7 +309,7 @@ def _create_default_phrase_data(
     ]
 
 
-@retry(  # type: ignore[misc]
+@retry(
     stop=stop_after_attempt(RETRY_MAX_ATTEMPTS),
     wait=wait_exponential(
         multiplier=RETRY_MIN_WAIT_SECONDS,

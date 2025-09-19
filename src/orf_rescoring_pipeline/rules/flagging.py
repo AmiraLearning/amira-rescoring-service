@@ -8,13 +8,13 @@ for phrase rescoring based on ASR match data and model predictions.
 import logging
 
 from orf_rescoring_pipeline import constants
-from orf_rescoring_pipeline.models import Activity, ModelFeature
-from orf_rescoring_pipeline.utils.debug import (
+from src.orf_rescoring_pipeline.models import Activity, ModelFeature
+from src.orf_rescoring_pipeline.utils.debug import (
     ActivityDebugger,
     FlaggingDecision,
     FlaggingStrategy,
 )
-from orf_rescoring_pipeline.utils.transcription import KaldiASRClient, W2VASRClient
+from src.orf_rescoring_pipeline.utils.transcription import KaldiASRClient, W2VASRClient
 
 logger = logging.getLogger(__name__)
 
@@ -275,7 +275,7 @@ class FlaggingExecutor:
         Returns:
             Tuple of (retouched_errors, kaldi_transcript, w2v_transcript).
         """
-        from orf_rescoring_pipeline.rules.rescoring import rescore_phrase
+        from src.orf_rescoring_pipeline.rules.rescoring import rescore_phrase
 
         (
             retouched_errors,
