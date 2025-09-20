@@ -5,20 +5,21 @@ including Activity, ModelFeature, and supporting classes for handling
 story content, audio data, and processing results.
 """
 
+import asyncio
+import inspect
 import json
-import logging
 import re
 import uuid
 from dataclasses import dataclass, field
-from functools import lru_cache
 from pathlib import Path
-from typing import Any, Final
+from typing import Any, Final, cast
 
-import amira_pyutils.services.s3 as s3_utils
-import boto3
+import aioboto3
 from tenacity import retry, stop_after_attempt, wait_exponential
 
-logger = logging.getLogger(__name__)
+from amira_pyutils.logging import get_logger
+
+logger = get_logger(__name__)
 
 # Constants
 MODEL_METADATA_BUCKET: Final[str] = "amira-ml-models"
@@ -42,7 +43,7 @@ RETRY_MAX_WAIT: Final[float] = 10.0
     wait=wait_exponential(multiplier=RETRY_MIN_WAIT, max=RETRY_MAX_WAIT),
     reraise=True,
 )
-def _fetch_model_metadata(*, model: str) -> dict[str, Any]:
+async def _fetch_model_metadata(*, model: str) -> dict[str, Any]:
     """Fetch model metadata from S3 with retry logic.
 
     Args:
@@ -54,15 +55,14 @@ def _fetch_model_metadata(*, model: str) -> dict[str, Any]:
     Raises:
         Exception: If S3 operation fails after all retries.
     """
-    s3_client = boto3.client("s3")
-    key = MODEL_METADATA_KEY_TEMPLATE.format(model=model)
+    async with aioboto3.Session().client("s3") as s3_client:
+        key = MODEL_METADATA_KEY_TEMPLATE.format(model=model)
+        response = await s3_client.get_object(Bucket=MODEL_METADATA_BUCKET, Key=key)
+        data = json.loads(response["Body"].read().decode("utf-8"))
+        return cast(dict[str, Any], data)
 
-    response = s3_client.get_object(Bucket=MODEL_METADATA_BUCKET, Key=key)
-    return json.loads(response["Body"].read().decode("utf-8"))
 
-
-@lru_cache(maxsize=MODEL_THRESHOLD_CACHE_SIZE)
-def get_model_threshold(model: str) -> float:
+async def get_model_threshold(model: str) -> float:
     """Get the threshold value for a specific model.
 
     Args:
@@ -75,8 +75,43 @@ def get_model_threshold(model: str) -> float:
         KeyError: If threshold not found in model metadata.
         Exception: If S3 operation fails.
     """
-    metadata = _fetch_model_metadata(model=model)
+    metadata = await _fetch_model_metadata(model=model)
     return float(metadata["properties"]["threshold"])
+
+
+_MODEL_THRESHOLD_SYNC_CACHE: dict[str, float] = {}
+
+
+def resolve_model_threshold(model: str) -> float:
+    """Resolve a model threshold value with sync caching.
+
+    Supports both async and sync implementations of ``get_model_threshold`` so that
+    tests can monkeypatch the function without needing to return a coroutine.
+    """
+
+    if model in _MODEL_THRESHOLD_SYNC_CACHE:
+        return _MODEL_THRESHOLD_SYNC_CACHE[model]
+
+    threshold_result = get_model_threshold(model)
+    if inspect.isawaitable(threshold_result):
+        try:
+            # Check if we're in an async context
+            asyncio.get_running_loop()
+            # We're in an async context but called from sync code
+            # Fall back to default threshold to avoid blocking the event loop
+            threshold_value = 0.5
+            logger.warning(
+                f"Using default threshold 0.5 for model {model} to avoid async call from sync context"
+            )
+        except RuntimeError:
+            # No running loop, safe to use asyncio.run()
+            threshold_value = asyncio.run(threshold_result)
+    else:
+        threshold_value = float(threshold_result)
+
+    threshold_value = float(threshold_value)
+    _MODEL_THRESHOLD_SYNC_CACHE[model] = threshold_value
+    return threshold_value
 
 
 @dataclass
@@ -220,27 +255,40 @@ class Activity:
     pages: list[PageData] = field(default_factory=list)
     errors: list[list[bool]] = field(default_factory=list)
     story_tags: list[str] = field(default_factory=list)
-    complete_audio_s3_path: s3_utils.S3Addr | None = None
+    # TODO(amira_pyutils): Replace Any with S3Addr from amira_pyutils.services.s3 when available
+    complete_audio_s3_path: Any | None = None
     transcript_json: TranscriptItem | None = None
     audio_file_data: bytes | None = None
     timing_path: str | None = None
     model_features: list[ModelFeature] = field(default_factory=list)
     errors_retouched: list[list[bool]] = field(default_factory=list)
+    ground_truth_deepgram_matches: list[list[int]] | None = None
+    ground_truth_resliced_kaldi_matches: list[list[int]] | None = None
+    ground_truth_resliced_w2v_matches: list[list[int]] | None = None
+    ground_truth_retouched_errors: list[list[bool]] | None = None
+    _first_pass_model_features_cache: list[ModelFeature] | None = field(
+        default=None, init=False, repr=False
+    )
+    _second_pass_model_features_cache: list[ModelFeature] | None = field(
+        default=None, init=False, repr=False
+    )
+    _preferred_model_features_cache: list[ModelFeature] | None = field(
+        default=None, init=False, repr=False
+    )
+    _model_predictions_cache: list[list[bool]] | None = field(default=None, init=False, repr=False)
 
     @staticmethod
-    def from_appsync_res(appsync_res: list[dict[str, Any]]) -> list["Activity"]:
+    def from_appsync_res(appsync_res: list[list[dict[str, Any]]]) -> "Activity":
         """Create Activity objects from AppSync response data.
 
         Args:
             appsync_res: Response data from AppSync query.
 
         Returns:
-            List of Activity objects with basic story data loaded.
+            Activity object with basic story data loaded.
         """
-        return [
-            Activity._create_from_activity_data(activity_data=activity_data)
-            for activity_data in appsync_res
-        ]
+        logger.debug(f"Appsync res: {appsync_res}")
+        return Activity._create_from_activity_data(activity_data=appsync_res[0][0])
 
     @staticmethod
     def _create_from_activity_data(*, activity_data: dict[str, Any]) -> "Activity":
@@ -252,6 +300,7 @@ class Activity:
         Returns:
             Activity instance.
         """
+        logger.info(f"Activity data: {activity_data}")
         phrases = Activity._normalize_phrases(
             phrases=activity_data["story"]["chapters"][0]["phrases"]
         )
@@ -284,6 +333,7 @@ class Activity:
         """
         deduped_features = self._deduplicate_model_features(features=appsync_model_res)
         self.model_features = sorted(deduped_features, key=lambda x: x.phrase_index)
+        self._invalidate_model_feature_caches()
 
     def _deduplicate_model_features(self, *, features: list[dict[str, Any]]) -> list[ModelFeature]:
         """Deduplicate model features based on phrase index and model.
@@ -308,6 +358,14 @@ class Activity:
 
         return deduped_features
 
+    def _invalidate_model_feature_caches(self) -> None:
+        """Clear cached views that depend on the model features list."""
+
+        self._first_pass_model_features_cache = None
+        self._second_pass_model_features_cache = None
+        self._preferred_model_features_cache = None
+        self._model_predictions_cache = None
+
     def _should_skip_feature(self, *, feature: dict[str, Any]) -> bool:
         """Check if a feature should be skipped during processing.
 
@@ -317,7 +375,8 @@ class Activity:
         Returns:
             True if feature should be skipped.
         """
-        return feature["model"].lower().startswith("faux")
+        model_val = str(feature.get("model", ""))
+        return model_val.lower().startswith("faux")
 
     @property
     def second_pass_model_features(self) -> list[ModelFeature]:
@@ -326,10 +385,12 @@ class Activity:
         Returns:
             Sorted list of second pass model features.
         """
-        return sorted(
-            [feature for feature in self.model_features if "second" in feature.model.lower()],
-            key=lambda x: x.phrase_index,
-        )
+        if self._second_pass_model_features_cache is None:
+            self._second_pass_model_features_cache = sorted(
+                [feature for feature in self.model_features if "second" in feature.model.lower()],
+                key=lambda x: x.phrase_index,
+            )
+        return self._second_pass_model_features_cache
 
     @property
     def first_pass_model_features(self) -> list[ModelFeature]:
@@ -338,10 +399,16 @@ class Activity:
         Returns:
             Sorted list of first pass model features.
         """
-        return sorted(
-            [feature for feature in self.model_features if "second" not in feature.model.lower()],
-            key=lambda x: x.phrase_index,
-        )
+        if self._first_pass_model_features_cache is None:
+            self._first_pass_model_features_cache = sorted(
+                [
+                    feature
+                    for feature in self.model_features
+                    if "second" not in feature.model.lower()
+                ],
+                key=lambda x: x.phrase_index,
+            )
+        return self._first_pass_model_features_cache
 
     @property
     def preferred_model_features(self) -> list[ModelFeature]:
@@ -352,10 +419,13 @@ class Activity:
         Returns:
             List of preferred model features.
         """
-        second_pass = self.second_pass_model_features
-        if len(second_pass) > 0 and len(second_pass) == self.max_feature_index + 1:
-            return second_pass
-        return self.first_pass_model_features
+        if self._preferred_model_features_cache is None:
+            second_pass = self.second_pass_model_features
+            if len(second_pass) > 0 and len(second_pass) == self.max_feature_index + 1:
+                self._preferred_model_features_cache = second_pass
+            else:
+                self._preferred_model_features_cache = self.first_pass_model_features
+        return self._preferred_model_features_cache
 
     @property
     def max_feature_index(self) -> int:
@@ -382,10 +452,26 @@ class Activity:
         Returns:
             List of boolean predictions for each phrase.
         """
-        return [
-            [conf < get_model_threshold(feature.model) for conf in feature.correct_confidences]
-            for feature in self.preferred_model_features
-        ]
+
+        if self._model_predictions_cache is not None:
+            return self._model_predictions_cache
+
+        predictions: list[list[bool]] = []
+        threshold_cache: dict[str, float] = {}
+
+        for feature in self.preferred_model_features:
+            model_name = feature.model
+            if model_name not in threshold_cache:
+                try:
+                    threshold_cache[model_name] = resolve_model_threshold(model_name)
+                except Exception:
+                    threshold_cache[model_name] = 0.5  # Fall back to safe default
+
+            threshold = threshold_cache[model_name]
+            predictions.append([conf < threshold for conf in feature.correct_confidences])
+
+        self._model_predictions_cache = predictions
+        return predictions
 
     @property
     def is_kaldi_general(self) -> bool:
@@ -481,6 +567,7 @@ class Activity:
                 logger.error(
                     f"Activity {self.activity_id}: Error reading page file {page_file}: {e}"
                 )
+                raise e
                 break
 
         return pages

@@ -160,7 +160,8 @@ class SlackNotification:
             )
 
             with urllib.request.urlopen(req, timeout=10) as response:
-                return response.status == 200
+                status: int = getattr(response, "status", 0)
+                return status == 200
 
         except urllib.error.URLError as e:
             print(f"Network error sending Slack message: {e}")
@@ -267,7 +268,9 @@ def parse_sns_message(event: dict[str, Any]) -> dict[str, Any]:
     message_text: str = sns_message.get("Message", "{}")
 
     try:
-        return json.loads(message_text)
+        from typing import cast
+
+        return cast(dict[str, Any], json.loads(message_text))
     except json.JSONDecodeError:
         return {"RawMessage": message_text}
 
@@ -299,10 +302,9 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
 
         success = notifier.send_message(message)
 
-        return {
-            "statusCode": 200 if success else 500,
-            "body": json.dumps({"sent": success, "timestamp": datetime.now(UTC).isoformat()}),
-        }
+        status_code: int = 200 if success else 500
+        body: str = json.dumps({"sent": success, "timestamp": datetime.now(UTC).isoformat()})
+        return {"statusCode": status_code, "body": body}
 
     except Exception as e:
         return {"statusCode": 500, "body": json.dumps({"error": str(e)})}

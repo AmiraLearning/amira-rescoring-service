@@ -5,9 +5,12 @@ This module tests the phrase-level alignment functions that match expected phras
 to transcribed tokens within page time boundaries, and timing file generation.
 """
 
+from __future__ import annotations
+
 import json
 import tempfile
 from pathlib import Path
+from typing import TypedDict
 from unittest.mock import Mock, patch
 
 import pytest
@@ -17,14 +20,21 @@ from src.orf_rescoring_pipeline.alignment.phrase_alignment import (
     process_activity_timing,
     save_timing_file,
 )
-from src.orf_rescoring_pipeline.models import PageData, WordItem
+from src.orf_rescoring_pipeline.models import Activity, PageData, WordItem
+
+
+class ScenarioDict(TypedDict):
+    name: str
+    phrases: list[str]
+    tokens: list[WordItem]
+    expected_phrases: int
 
 
 @pytest.mark.unit
 class TestAlignPagePhrases:
     """Test cases for align_page_phrases function."""
 
-    def test_perfect_alignment(self):
+    def test_perfect_alignment(self: TestAlignPagePhrases) -> None:
         """Test alignment when phrases perfectly match tokens."""
         expected_phrases = ["hello world", "how are you"]
         tokens = [
@@ -37,8 +47,11 @@ class TestAlignPagePhrases:
         page_start_ms = 1000
         page_end_ms = 4000
 
-        boundaries = align_page_phrases(expected_phrases=
-            expected_phrases, tokens=tokens, page_start_ms=page_start_ms, page_end_ms=page_end_ms
+        boundaries = align_page_phrases(
+            expected_phrases=expected_phrases,
+            tokens=tokens,
+            page_start_ms=page_start_ms,
+            page_end_ms=page_end_ms,
         )
 
         assert len(boundaries) == 2, "Should return 2 phrase boundaries"
@@ -55,7 +68,7 @@ class TestAlignPagePhrases:
         assert boundaries[1]["end"] == 3800  # you end time in ms
         assert boundaries[1]["parsed"] == "how are you"
 
-    def test_partial_alignment(self):
+    def test_partial_alignment(self: TestAlignPagePhrases) -> None:
         """Test alignment when some words are missing from tokens."""
         expected_phrases = ["hello world", "good morning"]
         tokens = [
@@ -67,8 +80,11 @@ class TestAlignPagePhrases:
         page_start_ms = 1000
         page_end_ms = 4000
 
-        boundaries = align_page_phrases(expected_phrases=
-            expected_phrases, tokens=tokens, page_start_ms=page_start_ms, page_end_ms=page_end_ms
+        boundaries = align_page_phrases(
+            expected_phrases=expected_phrases,
+            tokens=tokens,
+            page_start_ms=page_start_ms,
+            page_end_ms=page_end_ms,
         )
 
         assert len(boundaries) == 2, "Should return 2 phrase boundaries"
@@ -85,7 +101,7 @@ class TestAlignPagePhrases:
         assert boundaries[1]["end"] == 3500
         assert boundaries[1]["parsed"] == "good morning"
 
-    def test_no_matching_tokens(self):
+    def test_no_matching_tokens(self: TestAlignPagePhrases) -> None:
         """Test alignment when no tokens match expected phrases."""
         expected_phrases = ["hello world", "good morning"]
         tokens = [
@@ -96,13 +112,14 @@ class TestAlignPagePhrases:
         page_start_ms = 1000
         page_end_ms = 3000
 
-        boundaries = align_page_phrases(expected_phrases=
-            expected_phrases, tokens=tokens, page_start_ms=page_start_ms, page_end_ms=page_end_ms
+        boundaries = align_page_phrases(
+            expected_phrases=expected_phrases,
+            tokens=tokens,
+            page_start_ms=page_start_ms,
+            page_end_ms=page_end_ms,
         )
 
-        assert len(boundaries) == 2, (
-            "Should return 2 phrase boundaries even with no matches"
-        )
+        assert len(boundaries) == 2, "Should return 2 phrase boundaries even with no matches"
 
         # Both phrases should have continuity enforced but may have some parsed text
         for boundary in boundaries:
@@ -110,23 +127,30 @@ class TestAlignPagePhrases:
             assert boundary["end"] is not None, "End should be set"
             # Note: parsed text may contain partial matches from the alignment algorithm
 
-    def test_empty_inputs(self):
+    def test_empty_inputs(self: TestAlignPagePhrases) -> None:
         """Test alignment with empty inputs."""
         # Empty phrases
-        boundaries = align_page_phrases(expected_phrases=
-            [], tokens=[WordItem(word="hello", start=1.0, end=1.5, confidence=0.9)], page_start_ms=1000, page_end_ms=2000
+        boundaries = align_page_phrases(
+            expected_phrases=[],
+            tokens=[WordItem(word="hello", start=1.0, end=1.5, confidence=0.9)],
+            page_start_ms=1000,
+            page_end_ms=2000,
         )
         assert boundaries == [], "Empty phrases should return empty boundaries"
 
         # Empty tokens
-        boundaries = align_page_phrases(expected_phrases=["hello world"], tokens=[], page_start_ms=1000, page_end_ms=2000)
+        boundaries = align_page_phrases(
+            expected_phrases=["hello world"], tokens=[], page_start_ms=1000, page_end_ms=2000
+        )
         assert boundaries == [], "Empty tokens should return empty boundaries"
 
         # Both empty
-        boundaries = align_page_phrases(expected_phrases=[], tokens=[], page_start_ms=1000, page_end_ms=2000)
+        boundaries = align_page_phrases(
+            expected_phrases=[], tokens=[], page_start_ms=1000, page_end_ms=2000
+        )
         assert boundaries == [], "Both empty should return empty boundaries"
 
-    def test_tokens_outside_page_range(self):
+    def test_tokens_outside_page_range(self: TestAlignPagePhrases) -> None:
         """Test that tokens outside page time range are filtered out."""
         expected_phrases = ["hello world"]
         tokens = [
@@ -138,16 +162,17 @@ class TestAlignPagePhrases:
         page_start_ms = 1000  # 1.0 seconds
         page_end_ms = 3000  # 3.0 seconds
 
-        boundaries = align_page_phrases(expected_phrases=
-            expected_phrases, tokens=tokens, page_start_ms=page_start_ms, page_end_ms=page_end_ms
+        boundaries = align_page_phrases(
+            expected_phrases=expected_phrases,
+            tokens=tokens,
+            page_start_ms=page_start_ms,
+            page_end_ms=page_end_ms,
         )
 
         assert len(boundaries) == 1
-        assert boundaries[0]["parsed"] == "hello world", (
-            "Should only use tokens within time range"
-        )
+        assert boundaries[0]["parsed"] == "hello world", "Should only use tokens within time range"
 
-    def test_continuity_enforcement(self):
+    def test_continuity_enforcement(self: TestAlignPagePhrases) -> None:
         """Test that phrase boundaries maintain continuity within page."""
         expected_phrases = ["phrase one", "phrase two", "phrase three"]
         tokens = [
@@ -160,8 +185,11 @@ class TestAlignPagePhrases:
         page_start_ms = 1000
         page_end_ms = 4000
 
-        boundaries = align_page_phrases(expected_phrases=
-            expected_phrases, tokens=tokens, page_start_ms=page_start_ms, page_end_ms=page_end_ms
+        boundaries = align_page_phrases(
+            expected_phrases=expected_phrases,
+            tokens=tokens,
+            page_start_ms=page_start_ms,
+            page_end_ms=page_end_ms,
         )
 
         assert len(boundaries) == 3
@@ -173,7 +201,7 @@ class TestAlignPagePhrases:
                 f"boundary {i + 1} start ({boundaries[i + 1]['start']})"
             )
 
-    def test_single_word_phrases(self):
+    def test_single_word_phrases(self: TestAlignPagePhrases) -> None:
         """Test alignment with single word phrases."""
         expected_phrases = ["hello", "world", "test"]
         tokens = [
@@ -184,8 +212,11 @@ class TestAlignPagePhrases:
         page_start_ms = 1000
         page_end_ms = 4000
 
-        boundaries = align_page_phrases(expected_phrases=
-            expected_phrases, tokens=tokens, page_start_ms=page_start_ms, page_end_ms=page_end_ms
+        boundaries = align_page_phrases(
+            expected_phrases=expected_phrases,
+            tokens=tokens,
+            page_start_ms=page_start_ms,
+            page_end_ms=page_end_ms,
         )
 
         assert len(boundaries) == 3
@@ -194,7 +225,7 @@ class TestAlignPagePhrases:
             assert boundary["phrase_idx"] == i
             assert boundary["parsed"] == expected_phrases[i]
 
-    def test_overlapping_time_ranges(self):
+    def test_overlapping_time_ranges(self: TestAlignPagePhrases) -> None:
         """Test alignment when token time ranges overlap."""
         expected_phrases = ["hello world"]
         tokens = [
@@ -204,8 +235,11 @@ class TestAlignPagePhrases:
         page_start_ms = 1000
         page_end_ms = 3000
 
-        boundaries = align_page_phrases(expected_phrases=
-            expected_phrases, tokens=tokens, page_start_ms=page_start_ms, page_end_ms=page_end_ms
+        boundaries = align_page_phrases(
+            expected_phrases=expected_phrases,
+            tokens=tokens,
+            page_start_ms=page_start_ms,
+            page_end_ms=page_end_ms,
         )
 
         assert len(boundaries) == 1
@@ -214,7 +248,7 @@ class TestAlignPagePhrases:
         assert boundaries[0]["start"] == 1000
         assert boundaries[0]["end"] == 2500
 
-    def test_end_to_end_alignment_processing(self):
+    def test_end_to_end_alignment_processing(self: TestAlignPagePhrases) -> None:
         """Test complete end-to-end phrase alignment processing."""
         # Create realistic test data
         phrases = ["once upon a time", "there was a princess", "in a far away land"]
@@ -234,7 +268,9 @@ class TestAlignPagePhrases:
             WordItem("land", 4.7, 5.0, 0.92),
         ]
 
-        boundaries = align_page_phrases(expected_phrases=phrases, tokens=tokens, page_start_ms=1000, page_end_ms=6000)
+        boundaries = align_page_phrases(
+            expected_phrases=phrases, tokens=tokens, page_start_ms=1000, page_end_ms=6000
+        )
 
         assert len(boundaries) == 3, "Should align all three phrases"
 
@@ -250,9 +286,9 @@ class TestAlignPagePhrases:
         for i in range(len(boundaries) - 1):
             assert boundaries[i]["end"] <= boundaries[i + 1]["start"]
 
-    def test_realistic_misalignment_scenarios(self):
+    def test_realistic_misalignment_scenarios(self: TestAlignPagePhrases) -> None:
         """Test alignment with realistic misalignment scenarios."""
-        scenarios = [
+        scenarios: list[ScenarioDict] = [
             {
                 "name": "Missing words in transcript",
                 "phrases": ["the quick brown fox", "jumps over the lazy dog"],
@@ -282,13 +318,19 @@ class TestAlignPagePhrases:
         ]
 
         for scenario in scenarios:
-            boundaries = align_page_phrases(expected_phrases=
-                scenario["phrases"], tokens=scenario["tokens"], page_start_ms=500, page_end_ms=# Start before first token
-                5000,  # End after last token
+            phrases: list[str] = scenario["phrases"]
+            tokens: list[WordItem] = scenario["tokens"]
+            expected_phrase_count: int = scenario["expected_phrases"]
+            boundaries = align_page_phrases(
+                expected_phrases=phrases,
+                tokens=tokens,
+                page_start_ms=500,
+                # Start before first token
+                page_end_ms=5000,  # End after last token
             )
 
-            assert len(boundaries) == scenario["expected_phrases"], (
-                f"Scenario '{scenario['name']}' failed: expected {scenario['expected_phrases']} "
+            assert len(boundaries) == expected_phrase_count, (
+                f"Scenario '{scenario['name']}' failed: expected {expected_phrase_count} "
                 f"phrases, got {len(boundaries)}"
             )
 
@@ -304,11 +346,9 @@ class TestAlignPagePhrases:
 class TestSaveTimingFile:
     """Test cases for save_timing_file function."""
 
-    def test_save_timing_file_basic(self, sample_activity):
+    def test_save_timing_file_basic(self: TestSaveTimingFile, sample_activity: Activity) -> None:
         """Test basic timing file saving functionality."""
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".json", delete=False
-        ) as temp_file:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as temp_file:
             timing_path = Path(temp_file.name)
 
         try:
@@ -346,11 +386,11 @@ class TestSaveTimingFile:
             if timing_path.exists():
                 timing_path.unlink()
 
-    def test_save_timing_file_no_aligned_phrases(self, sample_activity):
+    def test_save_timing_file_no_aligned_phrases(
+        self: TestSaveTimingFile, sample_activity: Activity
+    ) -> None:
         """Test saving timing file when page has no aligned phrases."""
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".json", delete=False
-        ) as temp_file:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as temp_file:
             timing_path = Path(temp_file.name)
 
         try:
@@ -376,11 +416,9 @@ class TestSaveTimingFile:
             if timing_path.exists():
                 timing_path.unlink()
 
-    def test_save_timing_file_sets_activity_path(self, sample_activity):
+    def test_save_timing_file_sets_activity_path(self, sample_activity: Activity) -> None:
         """Test that save_timing_file sets the timing_path on activity."""
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".json", delete=False
-        ) as temp_file:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as temp_file:
             timing_path = Path(temp_file.name)
 
         try:
@@ -397,7 +435,7 @@ class TestSaveTimingFile:
 class TestProcessActivityTiming:
     """Test cases for process_activity_timing function."""
 
-    def test_process_activity_timing_success(self, sample_activity):
+    def test_process_activity_timing_success(self, sample_activity: Activity) -> None:
         """Test successful activity timing processing."""
         # Create mock manifest pages
         mock_manifest_pages = [
@@ -415,7 +453,9 @@ class TestProcessActivityTiming:
             with patch(
                 "src.orf_rescoring_pipeline.alignment.phrase_alignment.save_timing_file"
             ) as mock_save:
-                process_activity_timing(activity=sample_activity, manifest_pages=mock_manifest_pages)
+                process_activity_timing(
+                    activity=sample_activity, manifest_pages=mock_manifest_pages
+                )
 
                 # Should set page timing from manifest
                 assert sample_activity.pages[0].start_time == 1000
@@ -428,7 +468,7 @@ class TestProcessActivityTiming:
                 # Should call save_timing_file
                 mock_save.assert_called_once()
 
-    def test_process_activity_timing_no_transcript(self):
+    def test_process_activity_timing_no_transcript(self: TestProcessActivityTiming) -> None:
         """Test processing when activity has no transcript."""
         # Create a fresh activity without transcript for this test
         import uuid
@@ -455,7 +495,7 @@ class TestProcessActivityTiming:
         with pytest.raises(ValueError, match="No transcript available"):
             process_activity_timing(activity=activity, manifest_pages=mock_manifest_pages)
 
-    def test_process_activity_timing_no_pages(self, sample_activity):
+    def test_process_activity_timing_no_pages(self, sample_activity: Activity) -> None:
         """Test processing when activity has no pages."""
         sample_activity.pages = []
         mock_manifest_pages = [Mock(start=1000, end=5000)]
@@ -464,7 +504,7 @@ class TestProcessActivityTiming:
         with pytest.raises(ValueError, match="No page data available"):
             process_activity_timing(activity=sample_activity, manifest_pages=mock_manifest_pages)
 
-    def test_process_activity_timing_more_pages_than_audio(self, sample_activity):
+    def test_process_activity_timing_more_pages_than_audio(self, sample_activity: Activity) -> None:
         """Test processing when story has more pages than available audio."""
         # Add extra page to activity
         extra_page = PageData(
@@ -482,10 +522,10 @@ class TestProcessActivityTiming:
         ) as mock_align:
             mock_align.return_value = []
 
-            with patch(
-                "src.orf_rescoring_pipeline.alignment.phrase_alignment.save_timing_file"
-            ):
-                process_activity_timing(activity=sample_activity, manifest_pages=mock_manifest_pages)
+            with patch("src.orf_rescoring_pipeline.alignment.phrase_alignment.save_timing_file"):
+                process_activity_timing(
+                    activity=sample_activity, manifest_pages=mock_manifest_pages
+                )
 
                 # First page should be processed
                 assert sample_activity.pages[0].start_time == 1000
@@ -494,7 +534,7 @@ class TestProcessActivityTiming:
                 # Second page should have empty aligned_phrases
                 assert sample_activity.pages[1].aligned_phrases == []
 
-    def test_process_activity_timing_save_files_false(self, sample_activity):
+    def test_process_activity_timing_save_files_false(self, sample_activity: Activity) -> None:
         """Test processing with save_files=False."""
         mock_manifest_pages = [Mock(start=1000, end=5000)]
 
@@ -506,8 +546,8 @@ class TestProcessActivityTiming:
             with patch(
                 "src.orf_rescoring_pipeline.alignment.phrase_alignment.save_timing_file"
             ) as mock_save:
-                process_activity_timing(activity=
-                    sample_activity, manifest_pages=mock_manifest_pages, save_files=False
+                process_activity_timing(
+                    activity=sample_activity, manifest_pages=mock_manifest_pages, save_files=False
                 )
 
                 # Should not call save_timing_file
@@ -515,8 +555,8 @@ class TestProcessActivityTiming:
 
     @patch("src.orf_rescoring_pipeline.alignment.phrase_alignment.align_page_phrases")
     def test_process_activity_timing_alignment_exception(
-        self, mock_align, sample_activity
-    ):
+        self, mock_align: Mock, sample_activity: Activity
+    ) -> None:
         """Test processing when alignment raises exception."""
         mock_manifest_pages = [Mock(start=1000, end=5000)]
         mock_align.side_effect = Exception("Alignment failed")

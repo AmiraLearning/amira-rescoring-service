@@ -2,20 +2,24 @@ import asyncio
 import json
 import os
 import time
-from typing import Any, Final
+from collections.abc import Callable
+from typing import Any, Final, cast
 
 import boto3
 import torch
 from botocore.exceptions import ClientError, ConnectionError
-from loguru import logger
+
+# Logger will be initialized in handler
 from pydantic import BaseModel
 
-from src.pipeline.inference.models import W2VConfig
-from src.pipeline.pipeline import run_activity_pipeline
-from utils.config import PipelineConfig
-from utils.logging import setup_logging
+from amira_pyutils.logging import get_logger
+from src.letter_scoring_pipeline.inference.models import W2VConfig
+from src.letter_scoring_pipeline.pipeline import run_activity_pipeline
+from utils.config import AwsConfig, PipelineConfig
 
 SCHEMA_VERSION_RESULT: Final[str] = "activity-results-v1"
+
+logger = get_logger(__name__)
 
 
 class LambdaProcessingResult(BaseModel):
@@ -53,12 +57,9 @@ def apply_lambda_optimizations() -> None:
         torch.set_num_interop_threads(2)
         torch.backends.cudnn.benchmark = False
 
-        if (
-            hasattr(torch.backends, "openmp")
-            and hasattr(torch.backends.openmp, "is_available")
-            and torch.backends.openmp.is_available()
-        ):
-            pass
+        if hasattr(torch.backends, "openmp") and hasattr(torch.backends.openmp, "is_available"):
+            is_available = cast(Callable[[], bool], torch.backends.openmp.is_available)
+            _ = is_available()
 
         _optimizations_applied = True
 
@@ -69,7 +70,7 @@ def apply_lambda_optimizations() -> None:
 
 
 def create_lambda_config() -> PipelineConfig:
-    from utils.config import AwsConfig
+    from utils.config import PipelineConfig
 
     aws_config = AwsConfig(
         aws_profile=os.environ.get("AWS_PROFILE", "default"),
@@ -170,7 +171,7 @@ def write_results_to_s3(result: LambdaProcessingResult) -> None:
 def _get_cached_engine(config: PipelineConfig) -> Any:
     global _cached_engine
     if _cached_engine is None:
-        from src.pipeline.inference.engine import get_cached_engine
+        from src.letter_scoring_pipeline.inference.engine import get_cached_engine
 
         _cached_engine = get_cached_engine(w2v_config=config.w2v2)
     return _cached_engine
@@ -253,7 +254,7 @@ def publish_batch_metrics(successes: int, failures: int, total_time: float) -> N
 
 
 def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
-    setup_logging(service="lambda-parallel-processor")
+    logger = get_logger(__name__, service="lambda-parallel-processor")
     handler_start = time.time()
 
     try:

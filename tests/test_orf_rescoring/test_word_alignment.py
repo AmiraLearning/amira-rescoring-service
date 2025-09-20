@@ -12,26 +12,31 @@ from src.orf_rescoring_pipeline.alignment.word_alignment import (
     get_word_level_transcript_alignment_w2v,
 )
 
+
 @pytest.mark.unit
 class TestWordLevelTranscriptAlignment:
     """Test cases for get_word_level_transcript_alignment function using real alignment."""
 
-    def test_perfect_match(self):
+    def test_perfect_match(self) -> None:
         """Test alignment when story phrase exactly matches transcript."""
         story_phrase = "hello world"
         transcript_text = "hello world"
 
-        matches = get_word_level_transcript_alignment(story_phrase=story_phrase, transcript_text=transcript_text)
+        matches = get_word_level_transcript_alignment(
+            story_phrase=story_phrase, transcript_text=transcript_text
+        )
 
         assert len(matches) == 2, "Should return match for each word"
         assert matches == [1, 1], "Perfect match should return all 1s"
 
-    def test_partial_match(self):
+    def test_partial_match(self) -> None:
         """Test alignment when only some words match."""
         story_phrase = "hello world how are you"
         transcript_text = "hello world are you"  # Missing "how"
 
-        matches = get_word_level_transcript_alignment(story_phrase=story_phrase, transcript_text=transcript_text)
+        matches = get_word_level_transcript_alignment(
+            story_phrase=story_phrase, transcript_text=transcript_text
+        )
 
         assert len(matches) == 5, "Should return match for each story word"
         # The exact pattern depends on the alignment algorithm, but we should have some matches
@@ -39,70 +44,84 @@ class TestWordLevelTranscriptAlignment:
         assert matches == [1, 1, 0, 1, 1], "Should match 4 words in transcript"
         assert all(m in [0, 1] for m in matches), "All matches should be 0 or 1"
 
-    def test_no_match(self):
+    def test_no_match(self) -> None:
         """Test alignment when no words match."""
         story_phrase = "hello world"
         transcript_text = "completely different"
 
-        matches = get_word_level_transcript_alignment(story_phrase=story_phrase, transcript_text=transcript_text)
+        matches = get_word_level_transcript_alignment(
+            story_phrase=story_phrase, transcript_text=transcript_text
+        )
 
         assert len(matches) == 2, "Should return match for each story word"
         assert matches == [0, 0], "No match should return all 0s"
 
-    def test_reordered_words(self):
+    def test_reordered_words(self) -> None:
         """Test alignment with reordered words in transcript."""
         story_phrase = "the quick brown fox"
         transcript_text = "brown fox the quick"  # Reordered
 
-        matches = get_word_level_transcript_alignment(story_phrase=story_phrase, transcript_text=transcript_text)
+        matches = get_word_level_transcript_alignment(
+            story_phrase=story_phrase, transcript_text=transcript_text
+        )
 
         assert len(matches) == 4, "Should return match for each story word"
         # Reordered words may or may not match depending on alignment algorithm
         assert all(m in [0, 1] for m in matches), "All matches should be 0 or 1"
         assert sum(matches) < 4, "Should match less than four words"
 
-    def test_empty_inputs(self):
+    def test_empty_inputs(self) -> None:
         """Test alignment with empty inputs."""
         # Empty story phrase
-        matches = get_word_level_transcript_alignment(story_phrase="", transcript_text="hello world")
+        matches = get_word_level_transcript_alignment(
+            story_phrase="", transcript_text="hello world"
+        )
         assert matches == [], "Empty story phrase should return empty list"
 
         # Empty transcript
-        matches = get_word_level_transcript_alignment(story_phrase="hello world", transcript_text="")
+        matches = get_word_level_transcript_alignment(
+            story_phrase="hello world", transcript_text=""
+        )
         assert matches == [0, 0], "Empty transcript should return all 0s"
 
         # Both empty
         matches = get_word_level_transcript_alignment(story_phrase="", transcript_text="")
         assert matches == [], "Both empty should return empty list"
 
-    def test_extra_words_in_transcript(self):
+    def test_extra_words_in_transcript(self) -> None:
         """Test alignment when transcript has extra words."""
         story_phrase = "the cat"
         transcript_text = "the big fluffy cat"  # Extra words
 
-        matches = get_word_level_transcript_alignment(story_phrase=story_phrase, transcript_text=transcript_text)
+        matches = get_word_level_transcript_alignment(
+            story_phrase=story_phrase, transcript_text=transcript_text
+        )
 
         assert len(matches) == 2, "Should return match for each story word"
         # Should match "the" and "cat" despite extra words
         assert sum(matches) >= 1, "Should match at least one word"
 
-    def test_case_sensitivity(self):
+    def test_case_sensitivity(self) -> None:
         """Test alignment with different cases."""
         story_phrase = "Hello World"
         transcript_text = "hello world"
 
-        matches = get_word_level_transcript_alignment(story_phrase=story_phrase, transcript_text=transcript_text)
+        matches = get_word_level_transcript_alignment(
+            story_phrase=story_phrase, transcript_text=transcript_text
+        )
 
         assert len(matches) == 2, "Should return match for each word"
         # The alignment algorithm should handle case differences
         assert sum(matches) >= 1, "Should match despite case differences"
 
-    def test_punctuation_handling(self):
+    def test_punctuation_handling(self) -> None:
         """Test alignment with punctuation."""
         story_phrase = "hello world"
         transcript_text = "hello, world!"
 
-        matches = get_word_level_transcript_alignment(story_phrase=story_phrase, transcript_text=transcript_text)
+        matches = get_word_level_transcript_alignment(
+            story_phrase=story_phrase, transcript_text=transcript_text
+        )
 
         assert len(matches) == 2, "Should return match for each word"
         # Should match despite punctuation differences
@@ -113,7 +132,7 @@ class TestWordLevelTranscriptAlignment:
 class TestWordLevelTranscriptAlignmentW2V:
     """Test cases for get_word_level_transcript_alignment_w2v function using real phoneme alignment."""
 
-    def test_w2v_basic_functionality(self):
+    def test_w2v_basic_functionality(self) -> None:
         """Test W2V alignment basic functionality with proper Amirabet transcript."""
         story_phrase = "hello world"
         transcript_amirabet = "hɛlo wɝld"  # Amirabet phoneme notation
@@ -125,11 +144,9 @@ class TestWordLevelTranscriptAlignmentW2V:
         assert len(matches) == 2, "Should return match for each word"
         assert all(m in [0, 1] for m in matches), "All matches should be 0 or 1"
         # With proper Amirabet input, we should get good matches for identical phonemes
-        assert sum(matches) == 2, (
-            "Should have exactly two matches with proper Amirabet input"
-        )
+        assert sum(matches) == 2, "Should have exactly two matches with proper Amirabet input"
 
-    def test_w2v_hyphenated_word(self):
+    def test_w2v_hyphenated_word(self) -> None:
         """Test W2V alignment with hyphenated word using proper Amirabet."""
         story_phrase = "kind-hearted"
         transcript_amirabet = "kγnd hɑɹtɪd"  # Amirabet for "kind hearted"
@@ -142,19 +159,23 @@ class TestWordLevelTranscriptAlignmentW2V:
         # Should match since it's the same word in phoneme form
         assert matches[0] == 1, "Should match identical phoneme representation"
 
-    def test_w2v_empty_inputs(self):
+    def test_w2v_empty_inputs(self) -> None:
         """Test W2V alignment with empty inputs."""
         # Empty story phrase
-        matches = get_word_level_transcript_alignment_w2v(story_phrase="", transcript_text="hello world")
+        matches = get_word_level_transcript_alignment_w2v(
+            story_phrase="", transcript_text="hello world"
+        )
         assert matches == [], "Empty story phrase should return empty list"
 
         # Empty transcript
-        matches = get_word_level_transcript_alignment_w2v(story_phrase="hello world", transcript_text="")
+        matches = get_word_level_transcript_alignment_w2v(
+            story_phrase="hello world", transcript_text=""
+        )
         assert matches == [0, 0], "Empty transcript should return all 0s"
 
-    def test_w2v_common_words(self):
+    def test_w2v_common_words(self) -> None:
         """Test W2V alignment with common English words."""
-        test_cases = [
+        test_cases: list[tuple[str, str]] = [
             ("the", "the"),
             ("and", "and"),
             ("cat", "cat"),
@@ -171,10 +192,10 @@ class TestWordLevelTranscriptAlignmentW2V:
             # Phoneme alignment may have complexity, so just check it's valid
             assert matches[0] in [0, 1], f"Match for '{story_word}' should be 0 or 1"
 
-    def test_w2v_realistic_phrases(self):
+    def test_w2v_realistic_phrases(self) -> None:
         """Test W2V alignment with realistic phrases using proper Amirabet."""
         # Using actual Amirabet conversions for more realistic tests
-        test_cases = [
+        test_cases: list[dict[str, str]] = [
             {
                 "story": "hello world",
                 "transcript_amirabet": "hɛlo wɝld",  # Perfect match

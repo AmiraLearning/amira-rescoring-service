@@ -5,8 +5,8 @@ import numpy as np
 import pytest
 import torch
 
-from src.pipeline.inference.engine import Wav2Vec2InferenceEngine
-from src.pipeline.inference.models import InferenceInput, W2VConfig
+from src.letter_scoring_pipeline.inference.engine import Wav2Vec2InferenceEngine
+from src.letter_scoring_pipeline.inference.models import InferenceInput, W2VConfig
 
 
 class DummyProcessor:

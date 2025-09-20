@@ -3,8 +3,11 @@ from typing import Any
 
 import pytest
 
+word_level_alignment: Callable[..., tuple[list[str], list[bool], list[float]]] | None
 try:
-    from my_asr_aligner import word_level_alignment  # type: ignore
+    from my_asr_aligner import word_level_alignment as _word_level_alignment
+
+    word_level_alignment = _word_level_alignment
 except Exception:  # pragma: no cover - extension may be missing locally
 
     def _stub_alignment(
@@ -17,9 +20,7 @@ except Exception:  # pragma: no cover - extension may be missing locally
     ) -> tuple[list[str], list[bool], list[float]]:
         return hyp, [False] * len(hyp), conf[: len(hyp)]
 
-    word_level_alignment: Callable[..., tuple[list[str], list[bool], list[float]]] | None = (
-        _stub_alignment
-    )
+    word_level_alignment = _stub_alignment
 
 
 @pytest.mark.skipif(word_level_alignment is None, reason="aligner extension not built")
@@ -31,6 +32,7 @@ def test_word_level_alignment_basic() -> None:
 
     if word_level_alignment is None:
         pytest.skip("aligner extension not available")
+    assert word_level_alignment is not None
     words, errors, matched_conf = word_level_alignment(expected, ref, hyp, conf)
     assert len(words) == len(hyp)
     assert not any(errors)
@@ -46,6 +48,7 @@ def test_word_level_alignment_with_errors() -> None:
 
     if word_level_alignment is None:
         pytest.skip("aligner extension not available")
+    assert word_level_alignment is not None
     words, errors, matched_conf = word_level_alignment(expected, ref, hyp, conf)
     assert len(words) == len(hyp)
     assert any(errors)
@@ -61,6 +64,7 @@ def test_word_level_alignment_pure_insertion_exposed() -> None:
 
     if word_level_alignment is None:
         pytest.skip("aligner extension not available")
+    assert word_level_alignment is not None
     words, errors, matched_conf = word_level_alignment(expected, ref, hyp, conf)
     assert words == hyp
     assert len(errors) == 2
@@ -76,6 +80,7 @@ def test_word_level_alignment_confidence_weighting_halves_error_confidence() -> 
 
     if word_level_alignment is None:
         pytest.skip("aligner extension not available")
+    assert word_level_alignment is not None
     words, errors, matched_conf = word_level_alignment(
         expected, ref, hyp, conf, enable_confidence_weighting=True
     )

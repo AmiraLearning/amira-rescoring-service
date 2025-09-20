@@ -1,0 +1,16 @@
+syntax = "proto3";
+
+message BlankDetectMessage {
+    string expected = 1;
+    string actual = 2;
+}
+
+message Blanks {
+    string value = 1;
+    string alignment = 2;
+    string error = 3;
+}
+
+service BlankDetect {
+    rpc blankdetect(BlankDetectMessage) returns (Blanks);
+}

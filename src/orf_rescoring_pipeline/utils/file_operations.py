@@ -5,20 +5,18 @@ prediction trimming, and S3 upload operations.
 """
 
 import csv
-import logging
 import os
 import re
-import shutil
 import tempfile
-import zipfile
 from datetime import datetime
 from pathlib import Path
 from types import MappingProxyType
 from typing import Final
 
-import amira_pyutils.services.s3 as s3_utils
+import amira_pyutils.s3 as s3_utils
+from amira_pyutils.logging import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 ACCEPTANCE_MAP: Final[MappingProxyType[str, set[str]]] = MappingProxyType(
     {
@@ -47,17 +45,17 @@ ACCEPTANCE_MAP: Final[MappingProxyType[str, set[str]]] = MappingProxyType(
         "æ": {"æ", "ɛ"},
         "ð": {"ð"},
         "ŋ": {"ŋ", "n", "m"},
-        "ɑ": {"ɑ", "ɔ", "ʌ"},  # noqa: RUF001 - IPA phonetic symbol
-        "ɔ": {"ɔ", "ɑ", "ʌ"},  # noqa: RUF001 - IPA phonetic symbol
-        "ɛ": {"ɛ", "æ", "ɪ"},  # noqa: RUF001 - IPA phonetic symbol
+        "ɑ": {"ɑ", "ɔ", "ʌ"},
+        "ɔ": {"ɔ", "ɑ", "ʌ"},
+        "ɛ": {"ɛ", "æ", "ɪ"},
         "ɝ": {"ɝ", "ɹ"},
-        "ɪ": {"ɪ", "ɛ"},  # noqa: RUF001 - IPA phonetic symbol
+        "ɪ": {"ɪ", "ɛ"},
         "ɹ": {"ɹ", "w", "ʌ", "ɝ"},
         "ʃ": {"ʃ", "s"},
         "ʊ": {"ʊ", "ʌ"},
         "ʌ": {"ʌ", "ɔ", "ʊ"},
-        "α": {"α"},  # noqa: RUF001 - Greek phonetic symbol
-        "γ": {"γ", "ɑ"},  # noqa: RUF001 - Greek phonetic symbol
+        "α": {"α"},
+        "γ": {"γ", "ɑ"},
         "θ": {"θ"},
         "ω": {"ω"},
     }
@@ -129,7 +127,7 @@ def trim_predictions(*, predictions: list[list[bool]]) -> list[list[bool]]:
         return predictions
 
 
-def upload_file_to_s3(
+async def upload_file_to_s3(
     *,
     file_path: str,
     bucket_name: str,
@@ -152,11 +150,13 @@ def upload_file_to_s3(
     try:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = Path(file_path).name
-        upload_dest = s3_utils.s3_addr_from_uri(
-            f"s3://{bucket_name}/{s3_key_prefix}/{timestamp}_{filename}"
+        upload_dest = s3_utils.S3Address.from_uri(
+            uri=f"s3://{bucket_name}/{s3_key_prefix}/{timestamp}_{filename}"
         )
 
-        s3_utils.upload_file(bucket=upload_dest.bucket, key=upload_dest.key, filename=file_path)
+        await s3_utils.S3Service().upload_file(
+            bucket=upload_dest.bucket, key=upload_dest.key, filename=file_path
+        )
 
         s3_url = f"s3://{upload_dest.bucket}/{upload_dest.key}"
         logger.info(f"Uploaded {file_type} to S3: {s3_url}")
@@ -175,7 +175,7 @@ def upload_file_to_s3(
         return None
 
 
-def upload_logs_to_s3(
+async def upload_logs_to_s3(
     *,
     log_file_path: str,
     bucket_name: str,
@@ -193,7 +193,7 @@ def upload_logs_to_s3(
     Returns:
         S3 URL of the uploaded file or None if upload failed.
     """
-    return upload_file_to_s3(
+    return await upload_file_to_s3(
         file_path=log_file_path,
         bucket_name=bucket_name,
         s3_key_prefix=s3_key_prefix,
@@ -202,7 +202,7 @@ def upload_logs_to_s3(
     )
 
 
-def upload_csv_to_s3(
+async def upload_csv_to_s3(
     *,
     activity_ids: set[str],
     env_name: str,
@@ -241,11 +241,11 @@ def upload_csv_to_s3(
         try:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             timestamped_filename = f"{timestamp}_{csv_filename}"
-            upload_dest = s3_utils.s3_addr_from_uri(
-                f"s3://{bucket_name}/{s3_key_prefix}/{timestamped_filename}"
+            upload_dest = s3_utils.S3Address.from_uri(
+                uri=f"s3://{bucket_name}/{s3_key_prefix}/{timestamped_filename}"
             )
 
-            s3_utils.upload_file(
+            await s3_utils.S3Service().upload_file(
                 bucket=upload_dest.bucket, key=upload_dest.key, filename=temp_file_path
             )
 
@@ -258,75 +258,4 @@ def upload_csv_to_s3(
 
     except Exception as e:
         logger.error(f"Failed to create or upload CSV file to S3: {e}")
-        return None
-
-
-def zip_and_upload_folder_to_s3(
-    *,
-    folder_path: Path,
-    env_name: str,
-    bucket_name: str,
-    s3_key_prefix: str = "orf-rescoring-pipeline/debug",
-) -> str | None:
-    """Zip the debug folder and upload to S3.
-
-    Args:
-        folder_path: Path to the folder to zip.
-        env_name: Environment name for filename.
-        bucket_name: S3 bucket name.
-        s3_key_prefix: Prefix for the S3 key.
-
-    Returns:
-        S3 URL of the uploaded zip file or None if upload failed.
-    """
-    if not folder_path.exists() or not folder_path.is_dir():
-        logger.warning(f"Folder does not exist or is not a directory: {folder_path}")
-        return None
-
-    files = list(folder_path.glob("*"))
-    if not files:
-        logger.warning(f"Folder is empty: {folder_path}")
-        return None
-
-    try:
-        zip_filename = folder_path.name + f"_{env_name}.zip"
-
-        with tempfile.NamedTemporaryFile(suffix=".zip", delete=False) as temp_zip:
-            temp_zip_path = temp_zip.name
-
-        with zipfile.ZipFile(temp_zip_path, "w", zipfile.ZIP_DEFLATED) as zipf:
-            for file_path in files:
-                if file_path.is_file():
-                    zipf.write(file_path, file_path.name)
-                    logger.debug(f"Added to zip: {file_path.name}")
-
-        logger.info(f"Created zip file with {len(files)} files: {temp_zip_path}")
-
-        try:
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            timestamped_filename = f"{timestamp}_{zip_filename}"
-            upload_dest = s3_utils.s3_addr_from_uri(
-                f"s3://{bucket_name}/{s3_key_prefix}/{timestamped_filename}"
-            )
-
-            s3_utils.upload_file(
-                bucket=upload_dest.bucket, key=upload_dest.key, filename=temp_zip_path
-            )
-
-            s3_url = f"s3://{upload_dest.bucket}/{upload_dest.key}"
-            logger.info(f"Uploaded zip file to S3: {s3_url}")
-
-            try:
-                shutil.rmtree(folder_path)
-                logger.info(f"Cleaned up folder after successful upload: {folder_path}")
-            except Exception as cleanup_error:
-                logger.warning(f"Failed to clean up folder {folder_path}: {cleanup_error}")
-
-            return s3_url
-
-        finally:
-            os.unlink(temp_zip_path)
-
-    except Exception as e:
-        logger.error(f"Failed to create or upload zip file to S3: {e}")
         return None

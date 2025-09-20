@@ -1,6 +1,6 @@
 import polars as pl
 
-from src.pipeline.pipeline import ActivityFields, group_activities_by_id
+from src.letter_scoring_pipeline.pipeline import ActivityFields, group_activities_by_id
 
 
 def test_group_activities_by_id_basic() -> None:

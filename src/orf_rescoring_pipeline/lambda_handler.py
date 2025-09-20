@@ -6,23 +6,31 @@ activities in AWS Lambda. Each invocation processes exactly one activity
 independently with proper resource management and error handling.
 """
 
-from typing import Any, Final
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any, Final, cast
 
-from amira_pyutils.general.environment import Environment, Environments
-from amira_pyutils.services.appsync import AppSync
-from loguru import logger
 from pydantic import BaseModel, Field, ValidationError
 
+from amira_pyutils.logging import get_logger
 from orf_rescoring_pipeline import constants
-from orf_rescoring_pipeline.core.processor import process_single_activity
-from orf_rescoring_pipeline.models import Activity
-from orf_rescoring_pipeline.utils.transcription import (
+from src.orf_rescoring_pipeline.core.processor import process_single_activity
+from src.orf_rescoring_pipeline.models import Activity
+from src.orf_rescoring_pipeline.utils.transcription import (
     DeepgramASRClient,
     KaldiASRClient,
     W2VASRClient,
 )
 
+if TYPE_CHECKING:  # pragma: no cover - types only
+    from amira_pyutils.appsync import AppSync
+    from amira_pyutils.environment import Environment
+
+from amira_pyutils.appsync import AppSync
+from amira_pyutils.environment import Environment, Environments
+
 DEFAULT_ENV_NAME: Final[str] = "prod2"
+
+logger = get_logger(__name__)
 
 
 class LambdaEvent(BaseModel):
@@ -59,18 +67,21 @@ class ASRClients(BaseModel):
     class Config:
         arbitrary_types_allowed = True
 
-    def close_all(self) -> None:
+    async def close_all(self) -> None:
         """Close all ASR client connections."""
         for client_name in ["kaldi", "deepgram", "w2v"]:
             try:
                 client = getattr(self, client_name)
                 if hasattr(client, "close"):
-                    client.close()
+                    if client_name in ["kaldi", "w2v"]:
+                        await client.close()
+                    else:
+                        client.close()
             except Exception as cleanup_error:
                 logger.warning(f"Failed to close {client_name}: {cleanup_error}")
 
 
-def handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
+async def handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
     """
     AWS Lambda entry point for ORF rescoring pipeline.
 
@@ -81,9 +92,12 @@ def handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
     Returns:
         HTTP-style response with processing results
     """
+    logger.info(f"Received event in lambda_handler: {event}")
     try:
+        logger.debug(f"Validating event: {event}")
         validated_event = LambdaEvent.model_validate(event)
-        result = _process_activity_with_cleanup(event=validated_event)
+        logger.debug(f"Validated event: {validated_event}")
+        result = await _process_activity_with_cleanup(event=validated_event)
         return _create_success_response(result=result)
 
     except ValidationError as validation_error:
@@ -103,7 +117,7 @@ def handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
         )
 
 
-def _process_activity_with_cleanup(*, event: LambdaEvent) -> ProcessingResult:
+async def _process_activity_with_cleanup(*, event: LambdaEvent) -> ProcessingResult:
     """
     Process activity with guaranteed resource cleanup.
 
@@ -113,27 +127,32 @@ def _process_activity_with_cleanup(*, event: LambdaEvent) -> ProcessingResult:
     Returns:
         Processing result with success status
     """
+    logger.info(f"Processing activity with cleanup: {event}")
+    logger.debug(f"Event: {event}")
     asr_clients: ASRClients | None = None
-
     try:
+        logger.debug(f"Initializing environment: {event.env_name}")
         env = _initialize_environment(env_name=event.env_name)
+        logger.debug(f"Environment initialized: {env}")
         appsync = AppSync(env=env)
         asr_clients = _initialize_asr_clients()
 
+        logger.debug(f"Loading activity data for {event.activity_id}")
         activity = _load_activity_data(appsync=appsync, activity_id=event.activity_id)
 
-        success = _execute_processing_pipeline(
+        success = await _execute_processing_pipeline(
             activity=activity, appsync=appsync, env=env, asr_clients=asr_clients, debug=event.debug
         )
 
         return ProcessingResult(activity_id=event.activity_id, success=success, debug=event.debug)
     except Exception as e:
+        logger.error(f"Error processing activity: {e}", exc_info=True)
         return ProcessingResult(
             activity_id=event.activity_id, success=False, debug=event.debug, error=str(e)
         )
     finally:
         if asr_clients:
-            asr_clients.close_all()
+            await asr_clients.close_all()
 
 
 def _initialize_environment(*, env_name: str) -> Environment:
@@ -150,8 +169,15 @@ def _initialize_environment(*, env_name: str) -> Environment:
         ValueError: If environment name is invalid
     """
     try:
-        return Environments.find(env_name)
+        logger.debug(f"Finding environment: {env_name}")
+        finder = cast(Callable[[str], Environment | None], getattr(Environments, "find"))
+        env = finder(env_name)
+        if env is None:
+            raise ValueError(f"Environment '{env_name}' not found")
+        assert env is not None
+        return env
     except Exception as env_error:
+        logger.error(f"Invalid environment '{env_name}': {env_error}")
         raise ValueError(f"Invalid environment '{env_name}': {env_error}") from env_error
 
 
@@ -175,6 +201,53 @@ def _initialize_asr_clients() -> ASRClients:
         raise RuntimeError(f"Failed to initialize ASR clients: {client_error}") from client_error
 
 
+def _get_activity_story_data(*, appsync: AppSync, activity_id: str) -> list[dict[str, Any]]:
+    """
+    Get activity story data from AppSync.
+    """
+    logger.debug(f"Getting activity story data for {activity_id}")
+    results: list[dict[str, Any]] = appsync.get_activity_details(
+        activity_ids=[activity_id],
+        fields=[
+            "activityId",
+            "storyId",
+            "story.chapters.phrases",
+            "errors",
+            "story.tags",
+        ],
+        show_progress=True,
+    )
+    logger.debug(f"Results: {results}")
+    return results
+
+
+def _get_model_features(*, appsync: AppSync, activity_id: str) -> list[dict[str, Any]]:
+    """Fetch model features from AppSync for the given activity.
+
+    Args:
+        appsync: AppSync client for data retrieval
+        activity_id: Activity ID to load
+
+    Returns:
+        List of model features
+    """
+    features_query = appsync.get_custom_activity_features(
+        feature_list=[
+            "model",
+            "phraseIndex",
+            "Kaldi_match",
+            "W2V_match",
+            "we_dist",
+            "correct_confidences",
+        ]
+    )
+    logger.debug(f"Getting model features for {activity_id}")
+    logger.debug(f"Features query: {features_query}")
+    results: list[dict[str, Any]] = features_query(activity_id=activity_id)
+    logger.debug(f"Results: {results}")
+    return results
+
+
 def _load_activity_data(*, appsync: AppSync, activity_id: str) -> Activity:
     """
     Load activity with story data and model features.
@@ -189,26 +262,17 @@ def _load_activity_data(*, appsync: AppSync, activity_id: str) -> Activity:
     Raises:
         ValueError: If activity not found or invalid
     """
-    activities_data = appsync.get_activity_story_data([activity_id])
+    activities_data = _get_activity_story_data(appsync=appsync, activity_id=activity_id)
+    activity = Activity.from_appsync_res([activities_data])
 
-    if not activities_data or activity_id not in activities_data:
-        raise ValueError(f"Activity '{activity_id}' not found")
-
-    activities = Activity.from_appsync_res([activities_data[activity_id]])
-    activity = activities[0] if activities else None
-    if activity is None:
-        raise ValueError(f"Failed to create Activity from data for {activity_id}")
-
-    model_features = appsync.get_model_features_by_activity_ids([activity_id])
-    if activity_id in model_features:
-        activity.model_features_from_appsync_res(appsync_model_res=model_features[activity_id])
-    else:
-        logger.warning(f"No model features found for activity {activity_id}")
-
+    model_features = _get_model_features(appsync=appsync, activity_id=activity_id)
+    logger.debug(f"Model features: {model_features}")
+    activity.model_features_from_appsync_res(appsync_model_res=model_features)
+    logger.debug("leaving _load_activity_data")
     return activity
 
 
-def _execute_processing_pipeline(
+async def _execute_processing_pipeline(
     *, activity: Activity, appsync: AppSync, env: Environment, asr_clients: ASRClients, debug: bool
 ) -> bool:
     """
@@ -224,7 +288,7 @@ def _execute_processing_pipeline(
     Returns:
         True if processing succeeded, False otherwise
     """
-    result = process_single_activity(
+    result = await process_single_activity(
         activity=activity,
         appsync=appsync,
         env=env,
@@ -236,7 +300,11 @@ def _execute_processing_pipeline(
         model_features_cache=None,
     )
 
-    return result[0] if isinstance(result, tuple) else result
+    from typing import cast as _cast
+
+    if isinstance(result, tuple):
+        return bool(result[0])
+    return bool(_cast(bool, result))
 
 
 def _create_success_response(*, result: ProcessingResult) -> dict[str, Any]:

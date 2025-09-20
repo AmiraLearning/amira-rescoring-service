@@ -5,12 +5,13 @@ This module tests the flagging system that analyzes features and decides on
 flagging strategies for phrase rescoring based on ASR match data and model predictions.
 """
 
+from typing import TypedDict, cast
 from unittest.mock import Mock, patch
 
 import pytest
 
 from src.orf_rescoring_pipeline import constants
-from src.orf_rescoring_pipeline.models import ModelFeature
+from src.orf_rescoring_pipeline.models import Activity, ModelFeature
 from src.orf_rescoring_pipeline.rules.flagging import (
     FlaggingAnalyzer,
     FlaggingExecutor,
@@ -21,18 +22,37 @@ from src.orf_rescoring_pipeline.utils.debug import (
 )
 
 
+class EdgeCaseDict(TypedDict):
+    """Type definition for edge case test data."""
+
+    name: str
+    deepgram_match: list[int]
+    model_preds: list[bool]
+    w2v_match: list[int]
+
+
+class ScenarioDict(TypedDict):
+    """Type definition for scenario test data."""
+
+    name: str
+    deepgram_match: list[int]
+    model_preds: list[bool]
+    w2v_match: list[int]
+    expected_strategy: FlaggingStrategy
+
+
 @pytest.mark.unit
 class TestFlaggingAnalyzer:
     """Test cases for FlaggingAnalyzer class."""
 
-    def test_edm_correct_threshold_value(self):
+    def test_edm_correct_threshold_value(self: "TestFlaggingAnalyzer") -> None:
         """Test that EDM_CORRECT_THRESHOLD has expected value - will fail if changed."""
         assert constants.EDM_CORRECT_THRESHOLD == 2, (
             f"EDM_CORRECT_THRESHOLD changed from 2 to {constants.EDM_CORRECT_THRESHOLD}. "
             "Update flagging tests if this change is intentional."
         )
 
-    def test_count_deepgram_matches(self):
+    def test_count_deepgram_matches(self: "TestFlaggingAnalyzer") -> None:
         """Test counting Deepgram matches."""
         feature = ModelFeature(
             model="test_model", phrase_index=0, deepgram_match=[1, 1, 0, 1, 0, 1]
@@ -41,23 +61,21 @@ class TestFlaggingAnalyzer:
         count = FlaggingAnalyzer.count_deepgram_matches(feature=feature)
         assert count == 4, "Should count 4 matches (1s) out of 6 total"
 
-    def test_count_deepgram_matches_empty(self):
+    def test_count_deepgram_matches_empty(self: "TestFlaggingAnalyzer") -> None:
         """Test counting Deepgram matches with empty list."""
         feature = ModelFeature(model="test_model", phrase_index=0, deepgram_match=[])
 
         count = FlaggingAnalyzer.count_deepgram_matches(feature=feature)
         assert count == 0, "Empty list should return 0 matches"
 
-    def test_count_deepgram_matches_all_zeros(self):
+    def test_count_deepgram_matches_all_zeros(self: "TestFlaggingAnalyzer") -> None:
         """Test counting Deepgram matches with all zeros."""
-        feature = ModelFeature(
-            model="test_model", phrase_index=0, deepgram_match=[0, 0, 0, 0]
-        )
+        feature = ModelFeature(model="test_model", phrase_index=0, deepgram_match=[0, 0, 0, 0])
 
         count = FlaggingAnalyzer.count_deepgram_matches(feature=feature)
         assert count == 0, "All zeros should return 0 matches"
 
-    def test_count_edm_corrects(self):
+    def test_count_edm_corrects(self: "TestFlaggingAnalyzer") -> None:
         """Test counting EDM correct predictions."""
         # EDM predictions: False = correct, True = miscue
         model_preds = [False, True, False, True, False]
@@ -65,56 +83,62 @@ class TestFlaggingAnalyzer:
         count = FlaggingAnalyzer.count_edm_corrects(errors=model_preds)
         assert count == 3, "Should count 3 correct predictions (False values)"
 
-    def test_count_edm_corrects_all_miscues(self):
+    def test_count_edm_corrects_all_miscues(self: "TestFlaggingAnalyzer") -> None:
         """Test counting EDM corrects when all are miscues."""
         model_preds = [True, True, True, True]
 
         count = FlaggingAnalyzer.count_edm_corrects(errors=model_preds)
         assert count == 0, "All miscues should return 0 corrects"
 
-    def test_count_edm_corrects_all_correct(self):
+    def test_count_edm_corrects_all_correct(self: "TestFlaggingAnalyzer") -> None:
         """Test counting EDM corrects when all are correct."""
         model_preds = [False, False, False]
 
         count = FlaggingAnalyzer.count_edm_corrects(errors=model_preds)
         assert count == 3, "All correct should return count equal to length"
 
-    def test_count_w2v_matches(self):
+    def test_count_w2v_matches(self: "TestFlaggingAnalyzer") -> None:
         """Test counting W2V matches."""
-        feature = ModelFeature(
-            model="test_model", phrase_index=0, w2v_match=[1, 0, 1, 1, 0]
-        )
+        feature = ModelFeature(model="test_model", phrase_index=0, w2v_match=[1, 0, 1, 1, 0])
 
         count = FlaggingAnalyzer.count_w2v_matches(feature=feature)
         assert count == 3, "Should count 3 matches (1s) out of 5 total"
 
-    def test_deepgram_edm_agree_perfect_agreement(self):
+    def test_deepgram_edm_agree_perfect_agreement(self: "TestFlaggingAnalyzer") -> None:
         """Test agreement when Deepgram and EDM perfectly agree."""
         deepgram_matches = [1, 1, 0, 0]
         edm_preds = [False, False, True, True]  # False=correct, True=miscue
 
         # Agreement means: deepgram_match=1 corresponds to edm_pred=False (correct)
         # and deepgram_match=0 corresponds to edm_pred=True (miscue)
-        agrees = FlaggingAnalyzer.deepgram_edm_agree(deepgram_matches=deepgram_matches, edm_preds=edm_preds)
+        agrees = FlaggingAnalyzer.deepgram_edm_agree(
+            deepgram_matches=deepgram_matches, edm_preds=edm_preds
+        )
         assert agrees is True, "Perfect agreement should return True"
 
-    def test_deepgram_edm_agree_disagreement(self):
+    def test_deepgram_edm_agree_disagreement(self: "TestFlaggingAnalyzer") -> None:
         """Test agreement when Deepgram and EDM disagree."""
         deepgram_matches = [1, 0, 1, 0]
         edm_preds = [True, False, False, True]  # Disagreement pattern
 
-        agrees = FlaggingAnalyzer.deepgram_edm_agree(deepgram_matches=deepgram_matches, edm_preds=edm_preds)
+        agrees = FlaggingAnalyzer.deepgram_edm_agree(
+            deepgram_matches=deepgram_matches, edm_preds=edm_preds
+        )
         assert agrees is False, "Disagreement should return False"
 
-    def test_deepgram_edm_agree_partial_agreement(self):
+    def test_deepgram_edm_agree_partial_agreement(self: "TestFlaggingAnalyzer") -> None:
         """Test agreement when Deepgram and EDM partially agree."""
         deepgram_matches = [1, 1, 0]
         edm_preds = [False, True, True]  # First agrees, second and third disagree
 
-        agrees = FlaggingAnalyzer.deepgram_edm_agree(deepgram_matches=deepgram_matches, edm_preds=edm_preds)
+        agrees = FlaggingAnalyzer.deepgram_edm_agree(
+            deepgram_matches=deepgram_matches, edm_preds=edm_preds
+        )
         assert agrees is False, "Partial agreement should return False"
 
-    def test_decide_flagging_strategy_deepgram_no_words_edm_no_corrects(self):
+    def test_decide_flagging_strategy_deepgram_no_words_edm_no_corrects(
+        self: "TestFlaggingAnalyzer",
+    ) -> None:
         """Test flagging decision when Deepgram found no words and EDM found no corrects."""
         feature = ModelFeature(
             model="test_model",
@@ -129,7 +153,9 @@ class TestFlaggingAnalyzer:
         assert decision.strategy == FlaggingStrategy.KEEP_ORIGINAL
         assert "Deepgram found no words and EDM found all miscues" in decision.reason
 
-    def test_decide_flagging_strategy_deepgram_no_words_edm_many_corrects(self):
+    def test_decide_flagging_strategy_deepgram_no_words_edm_many_corrects(
+        self: "TestFlaggingAnalyzer",
+    ) -> None:
         """Test flagging decision when Deepgram found no words but EDM found many corrects."""
         feature = ModelFeature(
             model="test_model",
@@ -150,8 +176,8 @@ class TestFlaggingAnalyzer:
         assert "EDM found 3 corrects (>2)" in decision.reason
 
     def test_decide_flagging_strategy_deepgram_no_words_edm_few_corrects_w2v_no_matches(
-        self,
-    ):
+        self: "TestFlaggingAnalyzer",
+    ) -> None:
         """Test flagging when Deepgram has no words, EDM has few corrects, W2V has no matches."""
         feature = ModelFeature(
             model="test_model",
@@ -167,8 +193,8 @@ class TestFlaggingAnalyzer:
         assert "mark all as errors" in decision.reason
 
     def test_decide_flagging_strategy_deepgram_no_words_edm_few_corrects_w2v_has_matches(
-        self,
-    ):
+        self: "TestFlaggingAnalyzer",
+    ) -> None:
         """Test flagging when Deepgram has no words, EDM has few corrects, but W2V has matches."""
         feature = ModelFeature(
             model="test_model",
@@ -183,7 +209,9 @@ class TestFlaggingAnalyzer:
         assert decision.strategy == FlaggingStrategy.RESCORE_PHRASE
         assert "W2V found 2 matches - rescore needed" in decision.reason
 
-    def test_decide_flagging_strategy_deepgram_has_words_agrees_with_edm(self):
+    def test_decide_flagging_strategy_deepgram_has_words_agrees_with_edm(
+        self: "TestFlaggingAnalyzer",
+    ) -> None:
         """Test flagging when Deepgram found words and agrees with EDM."""
         feature = ModelFeature(
             model="test_model",
@@ -198,7 +226,9 @@ class TestFlaggingAnalyzer:
         assert decision.strategy == FlaggingStrategy.KEEP_ORIGINAL
         assert "agrees with EDM" in decision.reason
 
-    def test_decide_flagging_strategy_deepgram_has_words_disagrees_with_edm(self):
+    def test_decide_flagging_strategy_deepgram_has_words_disagrees_with_edm(
+        self: "TestFlaggingAnalyzer",
+    ) -> None:
         """Test flagging when Deepgram found words but disagrees with EDM."""
         feature = ModelFeature(
             model="test_model",
@@ -218,9 +248,16 @@ class TestFlaggingAnalyzer:
 class TestFlaggingExecutor:
     """Test cases for FlaggingExecutor class."""
 
-    def test_init(self, sample_activity, mock_kaldi_client, mock_w2v_client):
+    def test_init(
+        self: "TestFlaggingExecutor",
+        sample_activity: Activity,
+        mock_kaldi_client: Mock,
+        mock_w2v_client: Mock,
+    ) -> None:
         """Test FlaggingExecutor initialization."""
-        executor = FlaggingExecutor(activity=sample_activity, kaldi=mock_kaldi_client, w2v=mock_w2v_client)
+        executor = FlaggingExecutor(
+            activity=sample_activity, kaldi=mock_kaldi_client, w2v=mock_w2v_client
+        )
 
         assert executor.activity == sample_activity
         assert executor.kaldi == mock_kaldi_client
@@ -228,25 +265,34 @@ class TestFlaggingExecutor:
         assert executor.debugger is None
 
     def test_init_with_debugger(
-        self, sample_activity, mock_kaldi_client, mock_w2v_client
-    ):
+        self: "TestFlaggingExecutor",
+        sample_activity: Activity,
+        mock_kaldi_client: Mock,
+        mock_w2v_client: Mock,
+    ) -> None:
         """Test FlaggingExecutor initialization with debugger."""
         mock_debugger = Mock()
         executor = FlaggingExecutor(
-            activity=sample_activity, kaldi=mock_kaldi_client, w2v=mock_w2v_client, debugger=mock_debugger
+            activity=sample_activity,
+            kaldi=mock_kaldi_client,
+            w2v=mock_w2v_client,
+            debugger=mock_debugger,
         )
 
         assert executor.debugger == mock_debugger
 
     def test_execute_flagging_decision_keep_original(
-        self, sample_activity, mock_kaldi_client, mock_w2v_client
-    ):
+        self: "TestFlaggingExecutor",
+        sample_activity: Activity,
+        mock_kaldi_client: Mock,
+        mock_w2v_client: Mock,
+    ) -> None:
         """Test executing KEEP_ORIGINAL flagging decision."""
-        executor = FlaggingExecutor(activity=sample_activity, kaldi=mock_kaldi_client, w2v=mock_w2v_client)
-
-        feature = ModelFeature(
-            model="test_model", phrase_index=0, deepgram_match=[1, 1, 0, 1, 0]
+        executor = FlaggingExecutor(
+            activity=sample_activity, kaldi=mock_kaldi_client, w2v=mock_w2v_client
         )
+
+        feature = ModelFeature(model="test_model", phrase_index=0, deepgram_match=[1, 1, 0, 1, 0])
 
         decision = FlaggingDecision(
             FlaggingStrategy.KEEP_ORIGINAL, "Test reason for keeping original"
@@ -261,14 +307,17 @@ class TestFlaggingExecutor:
         assert result == [True, False, True, False, True]
 
     def test_execute_flagging_decision_mark_all_errors(
-        self, sample_activity, mock_kaldi_client, mock_w2v_client
-    ):
+        self: "TestFlaggingExecutor",
+        sample_activity: Activity,
+        mock_kaldi_client: Mock,
+        mock_w2v_client: Mock,
+    ) -> None:
         """Test executing MARK_ALL_ERRORS flagging decision."""
-        executor = FlaggingExecutor(activity=sample_activity, kaldi=mock_kaldi_client, w2v=mock_w2v_client)
-
-        feature = ModelFeature(
-            model="test_model", phrase_index=0, deepgram_match=[0, 0, 0]
+        executor = FlaggingExecutor(
+            activity=sample_activity, kaldi=mock_kaldi_client, w2v=mock_w2v_client
         )
+
+        feature = ModelFeature(model="test_model", phrase_index=0, deepgram_match=[0, 0, 0])
 
         decision = FlaggingDecision(
             FlaggingStrategy.MARK_ALL_ERRORS, "Test reason for marking all errors"
@@ -287,18 +336,20 @@ class TestFlaggingExecutor:
 
     @patch("src.orf_rescoring_pipeline.rules.rescoring.rescore_phrase")
     def test_execute_flagging_decision_rescore_phrase(
-        self, mock_rescore, sample_activity, mock_kaldi_client, mock_w2v_client
-    ):
+        self: "TestFlaggingExecutor",
+        mock_rescore: Mock,
+        sample_activity: Activity,
+        mock_kaldi_client: Mock,
+        mock_w2v_client: Mock,
+    ) -> None:
         """Test executing RESCORE_PHRASE flagging decision."""
-        executor = FlaggingExecutor(activity=sample_activity, kaldi=mock_kaldi_client, w2v=mock_w2v_client)
-
-        feature = ModelFeature(
-            model="test_model", phrase_index=0, deepgram_match=[1, 0, 1]
+        executor = FlaggingExecutor(
+            activity=sample_activity, kaldi=mock_kaldi_client, w2v=mock_w2v_client
         )
 
-        decision = FlaggingDecision(
-            FlaggingStrategy.RESCORE_PHRASE, "Test reason for rescoring"
-        )
+        feature = ModelFeature(model="test_model", phrase_index=0, deepgram_match=[1, 0, 1])
+
+        decision = FlaggingDecision(FlaggingStrategy.RESCORE_PHRASE, "Test reason for rescoring")
 
         # Mock the rescore_phrase function
         mock_rescore.return_value = (
@@ -324,33 +375,40 @@ class TestFlaggingExecutor:
         assert feature.resliced_w2v_match == [1, 1, 0]
 
     def test_execute_flagging_decision_invalid_strategy(
-        self, sample_activity, mock_kaldi_client, mock_w2v_client
-    ):
+        self: "TestFlaggingExecutor",
+        sample_activity: Activity,
+        mock_kaldi_client: Mock,
+        mock_w2v_client: Mock,
+    ) -> None:
         """Test executing invalid flagging decision raises error."""
-        executor = FlaggingExecutor(activity=sample_activity, kaldi=mock_kaldi_client, w2v=mock_w2v_client)
-
-        feature = ModelFeature(
-            model="test_model", phrase_index=0, deepgram_match=[1, 0, 1]
+        executor = FlaggingExecutor(
+            activity=sample_activity, kaldi=mock_kaldi_client, w2v=mock_w2v_client
         )
 
-        # Create decision with invalid strategy
-        decision = FlaggingDecision("INVALID_STRATEGY", "Invalid strategy")
+        feature = ModelFeature(model="test_model", phrase_index=0, deepgram_match=[1, 0, 1])
+
+        # Create decision with invalid strategy - bypassing type checking for test
+        decision = FlaggingDecision(cast(FlaggingStrategy, "INVALID_STRATEGY"), "Invalid strategy")
 
         with pytest.raises(ValueError, match="Unknown flagging strategy"):
             executor.execute_flagging_decision(feature=feature, decision=decision)
 
     def test_execute_flagging_decision_with_debugger(
-        self, sample_activity, mock_kaldi_client, mock_w2v_client
-    ):
+        self: "TestFlaggingExecutor",
+        sample_activity: Activity,
+        mock_kaldi_client: Mock,
+        mock_w2v_client: Mock,
+    ) -> None:
         """Test executing flagging decision with debugger enabled."""
         mock_debugger = Mock()
         executor = FlaggingExecutor(
-            activity=sample_activity, kaldi=mock_kaldi_client, w2v=mock_w2v_client, debugger=mock_debugger
+            activity=sample_activity,
+            kaldi=mock_kaldi_client,
+            w2v=mock_w2v_client,
+            debugger=mock_debugger,
         )
 
-        feature = ModelFeature(
-            model="test_model", phrase_index=0, deepgram_match=[1, 1, 0]
-        )
+        feature = ModelFeature(model="test_model", phrase_index=0, deepgram_match=[1, 1, 0])
 
         decision = FlaggingDecision(FlaggingStrategy.KEEP_ORIGINAL, "Test reason")
 
@@ -374,14 +432,17 @@ class TestFlaggingExecutor:
         assert call_kwargs["w2v_transcript"] is None  # None for KEEP_ORIGINAL
 
     def test_get_original_errors_exists(
-        self, sample_activity, mock_kaldi_client, mock_w2v_client
-    ):
+        self: "TestFlaggingExecutor",
+        sample_activity: Activity,
+        mock_kaldi_client: Mock,
+        mock_w2v_client: Mock,
+    ) -> None:
         """Test getting original errors when they exist."""
-        executor = FlaggingExecutor(activity=sample_activity, kaldi=mock_kaldi_client, w2v=mock_w2v_client)
-
-        feature = ModelFeature(
-            model="test_model", phrase_index=0, deepgram_match=[1, 0, 1]
+        executor = FlaggingExecutor(
+            activity=sample_activity, kaldi=mock_kaldi_client, w2v=mock_w2v_client
         )
+
+        feature = ModelFeature(model="test_model", phrase_index=0, deepgram_match=[1, 0, 1])
 
         # Setup activity with errors
         sample_activity.errors = [[True, False, True], [False, True, False]]
@@ -391,14 +452,17 @@ class TestFlaggingExecutor:
         assert original_errors == [True, False, True]
 
     def test_get_original_errors_fallback(
-        self, sample_activity, mock_kaldi_client, mock_w2v_client
-    ):
+        self: "TestFlaggingExecutor",
+        sample_activity: Activity,
+        mock_kaldi_client: Mock,
+        mock_w2v_client: Mock,
+    ) -> None:
         """Test getting original errors when they don't exist (fallback)."""
-        executor = FlaggingExecutor(activity=sample_activity, kaldi=mock_kaldi_client, w2v=mock_w2v_client)
-
-        feature = ModelFeature(
-            model="test_model", phrase_index=0, deepgram_match=[1, 0, 1]
+        executor = FlaggingExecutor(
+            activity=sample_activity, kaldi=mock_kaldi_client, w2v=mock_w2v_client
         )
+
+        feature = ModelFeature(model="test_model", phrase_index=0, deepgram_match=[1, 0, 1])
 
         # Setup activity without errors but with model predictions
         sample_activity.errors = []  # Empty errors
@@ -413,10 +477,15 @@ class TestFlaggingExecutor:
             assert original_errors == [True, True, True]
 
     def test_keep_original_errors_phrase_exists(
-        self, sample_activity, mock_kaldi_client, mock_w2v_client
-    ):
+        self: "TestFlaggingExecutor",
+        sample_activity: Activity,
+        mock_kaldi_client: Mock,
+        mock_w2v_client: Mock,
+    ) -> None:
         """Test keeping original errors when phrase exists."""
-        executor = FlaggingExecutor(activity=sample_activity, kaldi=mock_kaldi_client, w2v=mock_w2v_client)
+        executor = FlaggingExecutor(
+            activity=sample_activity, kaldi=mock_kaldi_client, w2v=mock_w2v_client
+        )
 
         feature = ModelFeature(
             model="test_model",
@@ -431,14 +500,17 @@ class TestFlaggingExecutor:
         assert result == [False, True]  # Second phrase errors
 
     def test_mark_all_as_errors(
-        self, sample_activity, mock_kaldi_client, mock_w2v_client
-    ):
+        self: "TestFlaggingExecutor",
+        sample_activity: Activity,
+        mock_kaldi_client: Mock,
+        mock_w2v_client: Mock,
+    ) -> None:
         """Test marking all words as errors."""
-        executor = FlaggingExecutor(activity=sample_activity, kaldi=mock_kaldi_client, w2v=mock_w2v_client)
-
-        feature = ModelFeature(
-            model="test_model", phrase_index=0, deepgram_match=[1, 0, 1, 0]
+        executor = FlaggingExecutor(
+            activity=sample_activity, kaldi=mock_kaldi_client, w2v=mock_w2v_client
         )
+
+        feature = ModelFeature(model="test_model", phrase_index=0, deepgram_match=[1, 0, 1, 0])
 
         with patch.object(
             type(sample_activity),
@@ -455,8 +527,11 @@ class TestFlaggingAnalyzerCombined:
     """Integration tests for flagging functionality."""
 
     def test_complete_flagging_workflow(
-        self, sample_activity, mock_kaldi_client, mock_w2v_client
-    ):
+        self: "TestFlaggingAnalyzerCombined",
+        sample_activity: Activity,
+        mock_kaldi_client: Mock,
+        mock_w2v_client: Mock,
+    ) -> None:
         """Test complete flagging workflow from analysis to execution."""
         # Setup test data
         feature = ModelFeature(
@@ -484,11 +559,11 @@ class TestFlaggingAnalyzerCombined:
         assert decision.strategy == FlaggingStrategy.RESCORE_PHRASE
 
         # Step 2: Execute the decision
-        executor = FlaggingExecutor(activity=sample_activity, kaldi=mock_kaldi_client, w2v=mock_w2v_client)
+        executor = FlaggingExecutor(
+            activity=sample_activity, kaldi=mock_kaldi_client, w2v=mock_w2v_client
+        )
 
-        with patch(
-            "src.orf_rescoring_pipeline.rules.rescoring.rescore_phrase"
-        ) as mock_rescore:
+        with patch("src.orf_rescoring_pipeline.rules.rescoring.rescore_phrase") as mock_rescore:
             mock_rescore.return_value = (
                 [False, False, True, False],  # New error array
                 [1, 1, 0, 1],  # Kaldi matches
@@ -497,14 +572,16 @@ class TestFlaggingAnalyzerCombined:
                 "hello world phrase",  # W2V transcript
             )
 
-            retouched_errors = executor.execute_flagging_decision(feature=feature, decision=decision)
+            retouched_errors = executor.execute_flagging_decision(
+                feature=feature, decision=decision
+            )
 
             assert retouched_errors == [False, False, True, False]
             mock_rescore.assert_called_once()
 
-    def test_multiple_scenarios_decision_making(self):
+    def test_multiple_scenarios_decision_making(self: "TestFlaggingAnalyzerCombined") -> None:
         """Test decision making across multiple realistic scenarios."""
-        scenarios = [
+        scenarios: list[ScenarioDict] = [
             {
                 "name": "Perfect Deepgram, EDM agrees",
                 "deepgram_match": [1, 1, 1, 1],
@@ -537,27 +614,35 @@ class TestFlaggingAnalyzerCombined:
 
         # Using actual EDM_CORRECT_THRESHOLD value to catch logic changes
         for scenario in scenarios:
+            deepgram_match: list[int] = scenario["deepgram_match"]
+            w2v_match: list[int] = scenario["w2v_match"]
+            model_preds: list[bool] = scenario["model_preds"]
+            expected_strategy: FlaggingStrategy = scenario["expected_strategy"]
+
             feature = ModelFeature(
                 model="test_model",
                 phrase_index=0,
-                deepgram_match=scenario["deepgram_match"],
-                w2v_match=scenario["w2v_match"],
+                deepgram_match=deepgram_match,
+                w2v_match=w2v_match,
             )
 
             decision = FlaggingAnalyzer.decide_flagging_strategy(
-                feature=feature, errors=scenario["model_preds"]
+                feature=feature, errors=model_preds
             )
 
-            assert decision.strategy == scenario["expected_strategy"], (
-                f"Scenario '{scenario['name']}' failed: expected {scenario['expected_strategy']}, "
+            assert decision.strategy == expected_strategy, (
+                f"Scenario '{scenario['name']}' failed: expected {expected_strategy}, "
                 f"got {decision.strategy}"
             )
 
     def test_edge_cases_handling(
-        self, sample_activity, mock_kaldi_client, mock_w2v_client
-    ):
+        self: "TestFlaggingAnalyzerCombined",
+        sample_activity: Activity,
+        mock_kaldi_client: Mock,
+        mock_w2v_client: Mock,
+    ) -> None:
         """Test handling of edge cases in flagging."""
-        edge_cases = [
+        edge_cases: list[EdgeCaseDict] = [
             {
                 "name": "Empty matches and predictions",
                 "deepgram_match": [],
@@ -579,23 +664,25 @@ class TestFlaggingAnalyzerCombined:
         ]
 
         for case in edge_cases:
+            deepgram_match: list[int] = case["deepgram_match"]
+            w2v_match: list[int] = case["w2v_match"]
+            model_preds: list[bool] = case["model_preds"]
+
             feature = ModelFeature(
                 model="test_model",
                 phrase_index=0,
-                deepgram_match=case["deepgram_match"],
-                w2v_match=case["w2v_match"],
+                deepgram_match=deepgram_match,
+                w2v_match=w2v_match,
             )
 
             # Should not raise exceptions
             try:
                 decision = FlaggingAnalyzer.decide_flagging_strategy(
-                    feature=feature, errors=case["model_preds"]
+                    feature=feature, errors=model_preds
                 )
 
                 # Basic validation
-                assert hasattr(decision.strategy, "value") or isinstance(
-                    decision.strategy, str
-                )
+                assert hasattr(decision.strategy, "value") or isinstance(decision.strategy, str)
                 assert isinstance(decision.reason, str)
                 assert len(decision.reason) > 0
 
@@ -603,4 +690,3 @@ class TestFlaggingAnalyzerCombined:
                 pytest.fail(f"Edge case '{case['name']}' raised exception: {e}")
 
             # Should not reach here if exception was raised
-            pass

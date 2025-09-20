@@ -28,6 +28,21 @@ dependencies = [
   "torchaudio>=2.8.0",
   "transformers>=4.55.3",
   "psutil>=6.1.1",
+  "orjson>=3.11.3",
+  "toolz>=1.0.0",
+  "pandas>=2.3.2",
+  "fuzzywuzzy>=0.18.0",
+  "epitran>=1.26.0",
+  "edit-distance>=1.0.6",
+  "jellyfish>=1.2.0",
+  "metaphone>=0.6",
+  "bio>=1.8.0",
+  "fire>=0.7.1",
+  "dotenv>=0.9.9",
+  "python-levenshtein>=0.27.1",
+  "grpcio-tools>=1.75.0",
+  "pytest-mock>=3.15.1",
+  "pytest-asyncio>=1.2.0",
 ]
 
 [project.optional-dependencies]
@@ -38,6 +53,9 @@ gpu = [
 [build-system]
 requires = ["setuptools>=61"]
 build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
 
 [dependency-groups]
 dev = [
@@ -62,7 +80,7 @@ target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E","F","I","UP","PT","RUF"]
-ignore = ["E501"]
+ignore = ["E501", "RUF001", "UP046"]
 
 [tool.mypy]
 python_version = "3.12"
@@ -85,6 +103,85 @@ exclude = [
 module = "transformers.*"
 ignore_missing_imports = true
 follow_imports = "skip"
+
+[[tool.mypy.overrides]]
+# Ensure pydantic types are visible; otherwise BaseModel becomes Any.
+module = [
+    "pydantic",
+    "pydantic.*",
+]
+ignore_missing_imports = false
+follow_imports = "normal"
+
+[[tool.mypy.overrides]]
+# Make pytest decorators typed to avoid "untyped decorator" in tests.
+module = [
+    "pytest",
+    "pytest.*",
+]
+ignore_missing_imports = false
+follow_imports = "normal"
+
+[[tool.mypy.overrides]]
+# Use proper typing for scientific stack used in code/tests.
+module = [
+    "numpy",
+    "numpy.*",
+    "scipy",
+    "scipy.*",
+    "torch",
+    "torch.*",
+    "torchaudio",
+    "torchaudio.*",
+]
+ignore_missing_imports = true
+follow_imports = "normal"
+
+[[tool.mypy.overrides]]
+# Tests often use untyped decorators; allow them.
+module = [
+    "tests.*",
+]
+disallow_untyped_decorators = false
+
+[[tool.mypy.overrides]]
+# Suppress untyped import warnings for torchaudio which lacks py.typed
+module = [
+    "torchaudio",
+    "torchaudio.*",
+]
+disable_error_code = ["import-untyped"]
+
+[[tool.mypy.overrides]]
+# Typer decorators should be typed for CLI
+module = [
+    "typer",
+    "typer.*",
+]
+ignore_missing_imports = true
+follow_imports = "normal"
+
+[[tool.mypy.overrides]]
+# Suppress import-untyped in benchmark which imports torchaudio
+module = [
+    "benchmark_optimizations",
+]
+disable_error_code = ["import-untyped"]
+
+[[tool.mypy.overrides]]
+# Suppress import-untyped for utils.audio which imports torchaudio
+module = [
+    "utils.audio",
+]
+disable_error_code = ["import-untyped"]
+
+[[tool.mypy.overrides]]
+# Generated protobuf modules are dynamically defined and intentionally untyped.
+module = [
+    "amira_fe.blank_detect_pb2",
+    "amira_fe.blank_detect_pb2_grpc",
+]
+ignore_errors = true
 
 [tool.pyrefly]
 project-excludes = [

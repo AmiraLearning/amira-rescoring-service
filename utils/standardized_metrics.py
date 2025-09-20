@@ -9,12 +9,12 @@ import platform
 
 from loguru import logger
 
-from src.pipeline.inference.metrics_constants import (
+from amira_pyutils.logging import emit_emf_metric
+from src.letter_scoring_pipeline.inference.metrics_constants import (
     DIM_ACTIVITY_ID,
     DIM_CORRELATION_ID,
     DIM_DEVICE,
 )
-from utils.logging import emit_emf_metric
 
 
 class StandardizedMetricsEmitter:

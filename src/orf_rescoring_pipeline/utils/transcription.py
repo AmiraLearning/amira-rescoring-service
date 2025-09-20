@@ -6,10 +6,8 @@ transcribing audio data with word-level timing information essential for
 the alignment process.
 """
 
-import asyncio
 import io
 import json
-import logging
 import os
 import tempfile
 from pathlib import Path
@@ -19,13 +17,14 @@ import aiohttp
 import numpy as np
 import requests
 import soundfile as sf
-from src.orf_rescoring_pipeline.services.kaldi import KaldiClient, KaldiConfig
-from src.orf_rescoring_pipeline.services.w2v import W2VClient, W2VConfig
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_fixed
 
+from amira_pyutils.logging import get_logger
 from src.orf_rescoring_pipeline.models import Activity, TranscriptItem, WordItem
+from src.orf_rescoring_pipeline.services.kaldi import KaldiClient, KaldiConfig, KaldiResult
+from src.orf_rescoring_pipeline.services.w2v import W2VClient, W2VConfig
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 # Constants
 DEFAULT_DEEPGRAM_MODEL = "nova-3"
@@ -77,7 +76,7 @@ class DeepgramASRClient:
         transcript_dir.mkdir(parents=True, exist_ok=True)
         return transcript_dir / f"{activity_id}_deepgram_transcript.json"
 
-    def _load_cached_transcript(self, activity_id: str) -> dict | None:
+    def _load_cached_transcript(self, activity_id: str) -> dict[str, Any] | None:
         """Load cached transcript if available.
 
         Args:
@@ -90,10 +89,12 @@ class DeepgramASRClient:
         if transcript_path.exists():
             logger.info(f"Activity {activity_id}: Loading cached transcript")
             with open(transcript_path) as f:
-                return json.load(f)
+                from typing import cast
+
+                return cast(dict[str, Any], json.load(f))
         return None
 
-    def _save_transcript(self, activity_id: str, transcript_json: dict) -> None:
+    def _save_transcript(self, activity_id: str, transcript_json: dict[str, Any]) -> None:
         """Save transcript to cache file.
 
         Args:
@@ -104,7 +105,7 @@ class DeepgramASRClient:
         with open(transcript_path, "w") as f:
             json.dump(transcript_json, f)
 
-    def _create_transcript_item(self, transcript_json: dict) -> TranscriptItem:
+    def _create_transcript_item(self, transcript_json: dict[str, Any]) -> TranscriptItem:
         """Create TranscriptItem from Deepgram response.
 
         Args:
@@ -284,7 +285,7 @@ class KaldiASRClient:
         self.general_client = KaldiClient(config=KaldiConfig(url=GENERAL_KALDI_URL))
         self.partner_client = KaldiClient(config=KaldiConfig(url=PARTNER_KALDI_URL))
 
-    def _get_asr_client(self, activity: Activity) -> KaldiClient:
+    def _get_asr_client(self, *, activity: Activity) -> KaldiClient:
         """Get the appropriate ASR client based on activity story type.
 
         Args:
@@ -306,7 +307,7 @@ class KaldiASRClient:
             )
 
     def _calculate_audio_duration(
-        self, audio_data: bytes, activity_id: str, phrase_index: int
+        self, *, audio_data: bytes, activity_id: str, phrase_index: int
     ) -> None:
         """Calculate and log audio duration for debugging purposes.
 
@@ -336,7 +337,7 @@ class KaldiASRClient:
         Returns:
             Structured transcript item.
         """
-        words = [
+        words: list[WordItem] = [
             WordItem(
                 word=word_transcription.word,
                 start=word_transcription.start_time,
@@ -366,28 +367,29 @@ class KaldiASRClient:
         Returns:
             TranscriptItem with transcript and word-level timing, or None if failed.
         """
-        client = self._get_asr_client(activity)
+        client = self._get_asr_client(activity=activity)
         lm_phrase_id = f"{activity.story_id}_{phrase_index + 1}"
 
         logger.info(
-            f"Activity {activity.activity_id}: Transcribing phrase {phrase_index} with Kaldi client {client._url}"
+            f"Activity {activity.activity_id}: Transcribing phrase {phrase_index} with Kaldi client {client._config.url}"
         )
 
-        self._calculate_audio_duration(audio_data, activity.activity_id, phrase_index)
+        self._calculate_audio_duration(
+            audio_data=audio_data, activity_id=activity.activity_id, phrase_index=phrase_index
+        )
 
         with tempfile.NamedTemporaryFile(suffix=".wav", delete=False, buffering=0) as tmp_file:
             tmp_file.write(audio_data)
 
         try:
             from pathlib import Path
-            
+
             kaldi_result = await client.transcribe_audio(
                 audio_path=Path(tmp_file.name),
                 graph_id=KALDI_GRAPH_ID,
                 lm_phrase_id=lm_phrase_id,
                 kaldi_type="kaldi",
             )
-            result = await loop.run_in_executor(None, fetch_fn)
 
             transcript_item = self._create_transcript_item(kaldi_result)
 
@@ -404,15 +406,10 @@ class KaldiASRClient:
             except OSError:
                 pass
 
-    def close(self) -> None:
+    async def close(self) -> None:
         """Clean up both Kaldi client resources."""
-        import asyncio
-        
-        async def close_clients():
-            await self.general_client.close()
-            await self.partner_client.close()
-        
-        asyncio.run(close_clients())
+        await self.general_client.close()
+        await self.partner_client.close()
 
 
 class W2VASRClient:
@@ -516,9 +513,7 @@ class W2VASRClient:
         audio = self._load_audio_data(audio_data, activity.activity_id, phrase_index)
 
         # Use batch transcription with the new async client
-        w2v_result = await self.w2v_client.transcribe_batch(
-            audio=audio, incremental=True
-        )
+        w2v_result = await self.w2v_client.transcribe_batch(audio=audio, incremental=True)
 
         if w2v_result.status != "success" or "transcription" not in w2v_result.data:
             logger.warning(
@@ -534,14 +529,9 @@ class W2VASRClient:
 
         return TranscriptItem(transcript=transcription_data, words=[])
 
-    def close(self) -> None:
+    async def close(self) -> None:
         """Close underlying client if supported."""
-        import asyncio
-        
-        async def close_client():
-            await self.w2v_client.close()
-        
         try:
-            asyncio.run(close_client())
+            await self.w2v_client.close()
         except Exception:
             pass

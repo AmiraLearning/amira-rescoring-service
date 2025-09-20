@@ -5,18 +5,17 @@ This module contains the logic for analyzing features and deciding on flagging s
 for phrase rescoring based on ASR match data and model predictions.
 """
 
-import logging
-
+from amira_pyutils.logging import get_logger
 from orf_rescoring_pipeline import constants
-from orf_rescoring_pipeline.models import Activity, ModelFeature
-from orf_rescoring_pipeline.utils.debug import (
+from src.orf_rescoring_pipeline.models import Activity, ModelFeature
+from src.orf_rescoring_pipeline.utils.debug import (
     ActivityDebugger,
     FlaggingDecision,
     FlaggingStrategy,
 )
-from orf_rescoring_pipeline.utils.transcription import KaldiASRClient, W2VASRClient
+from src.orf_rescoring_pipeline.utils.transcription import KaldiASRClient, W2VASRClient
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class FlaggingAnalyzer:
@@ -183,7 +182,7 @@ class FlaggingExecutor:
         self.w2v = w2v
         self.debugger = debugger
 
-    def execute_flagging_decision(
+    async def execute_flagging_decision(
         self, *, feature: ModelFeature, decision: FlaggingDecision
     ) -> list[bool]:
         """Execute a flagging decision and return the error array.
@@ -209,7 +208,7 @@ class FlaggingExecutor:
             case FlaggingStrategy.MARK_ALL_ERRORS:
                 retouched_errors = self._mark_all_as_errors(feature=feature)
             case FlaggingStrategy.RESCORE_PHRASE:
-                retouched_errors, kaldi_transcript, w2v_transcript = self._rescore_phrase(
+                retouched_errors, kaldi_transcript, w2v_transcript = await self._rescore_phrase(
                     feature=feature
                 )
             case _:
@@ -248,7 +247,9 @@ class FlaggingExecutor:
             Original error array or fallback if not available.
         """
         if feature.phrase_index < len(self.activity.errors):
-            return self.activity.errors[feature.phrase_index]
+            from typing import cast
+
+            return cast(list[bool], self.activity.errors[feature.phrase_index])  # type: ignore[redundant-cast]
         model_preds = self.activity.model_predictions[feature.phrase_index]
         return [True] * len(model_preds)
 
@@ -264,7 +265,7 @@ class FlaggingExecutor:
         model_preds = self.activity.model_predictions[feature.phrase_index]
         return [True] * len(model_preds)
 
-    def _rescore_phrase(self, *, feature: ModelFeature) -> tuple[list[bool], str, str]:
+    async def _rescore_phrase(self, *, feature: ModelFeature) -> tuple[list[bool], str, str]:
         """Rescore the phrase using ASR systems and return transcripts.
 
         Args:
@@ -273,7 +274,7 @@ class FlaggingExecutor:
         Returns:
             Tuple of (retouched_errors, kaldi_transcript, w2v_transcript).
         """
-        from orf_rescoring_pipeline.rules.rescoring import rescore_phrase
+        from src.orf_rescoring_pipeline.rules.rescoring import rescore_phrase
 
         (
             retouched_errors,
@@ -281,7 +282,9 @@ class FlaggingExecutor:
             w2v_matches,
             kaldi_transcript,
             w2v_transcript,
-        ) = rescore_phrase(activity=self.activity, feature=feature, kaldi=self.kaldi, w2v=self.w2v)
+        ) = await rescore_phrase(
+            activity=self.activity, feature=feature, kaldi=self.kaldi, w2v=self.w2v
+        )
 
         feature.resliced_kaldi_match = kaldi_matches
         feature.resliced_w2v_match = w2v_matches

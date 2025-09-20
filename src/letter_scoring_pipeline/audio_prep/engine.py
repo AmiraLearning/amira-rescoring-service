@@ -2,8 +2,8 @@ import os
 from pathlib import Path
 
 import numpy as np
-from loguru import logger
 
+from amira_pyutils.logging import emit_emf_metric, get_logger
 from infra.s3_client import (
     HighPerformanceS3Config,
     ProductionS3Client,
@@ -20,7 +20,6 @@ from utils.audio import (
     prefetch_activity_phrase_audio,
 )
 from utils.config import PipelineConfig
-from utils.logging import emit_emf_metric
 
 from .models import (
     ActivityInput,
@@ -28,6 +27,8 @@ from .models import (
     PhraseInput,
     ProcessedPhraseOutput,
 )
+
+logger = get_logger(__name__)
 
 
 class AudioPreparationEngine:

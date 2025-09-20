@@ -3,6 +3,7 @@
 import json
 import uuid
 from pathlib import Path
+from typing import Any, cast
 from unittest.mock import MagicMock, Mock
 
 import boto3
@@ -18,8 +19,9 @@ from src.orf_rescoring_pipeline.models import (
 from src.orf_rescoring_pipeline.utils.transcription import KaldiASRClient, W2VASRClient
 
 # Mock boto3 at import time to prevent AWS calls and credential lookups
+
 original_boto3_client = boto3.client
-boto3.client = lambda service_name, **kwargs: MagicMock()
+boto3.client = lambda service_name, **kwargs: MagicMock()  # type: ignore[assignment]
 
 
 @pytest.fixture
@@ -125,16 +127,14 @@ def mock_w2v_client() -> Mock:
 
 
 @pytest.fixture(autouse=True)
-def mock_external_dependencies(monkeypatch):
+def mock_external_dependencies(monkeypatch: pytest.MonkeyPatch) -> None:
     """Mock external dependencies that are not available in test environment."""
 
     # Mock S3 operations
-    def mock_s3_download(*args, **kwargs):
+    def mock_s3_download(*args: Any, **kwargs: Any) -> bool:
         return True
 
-    monkeypatch.setattr(
-        "amira_pyutils.services.s3.s3_try_download_file", mock_s3_download
-    )
+    monkeypatch.setattr("amira_pyutils.s3.S3Service.download_file", mock_s3_download)
 
     # boto3 is already mocked at module level to handle import-time client creation
 
@@ -151,24 +151,28 @@ def mock_external_dependencies(monkeypatch):
 
     original_load_page_data = Activity.load_page_data
 
-    def patched_load_page_data(self, *, page_data_dir=None):
+    def patched_load_page_data(self: Activity, *, page_data_dir: Path | str | None = None) -> None:
         if page_data_dir is None:
             # Use test input data directory for integration tests
             test_input_dir = Path(__file__).parent / "input_data" / "no_alt_phrases"
             page_data_dir = test_input_dir
-        return original_load_page_data(self, page_data_dir=page_data_dir)
+        normalized_dir: Path
+        if isinstance(page_data_dir, Path):
+            normalized_dir = page_data_dir
+        else:
+            normalized_dir = Path(page_data_dir)
+
+        original_load_page_data(self, page_data_dir=normalized_dir)
 
     monkeypatch.setattr(Activity, "load_page_data", patched_load_page_data)
 
-    def mock_load_phoneme_dict_from_s3():
+    def mock_load_phoneme_dict_from_s3() -> dict[str, str]:
         """
         Mocked version of load_phoneme_dict_from_s3 for testing.
 
         Loads the phoneme dictionary from the test input_data/mock_all_story_words.dic file.
         """
-        mock_dic_path = (
-            Path(__file__).parent / "input_data" / "mock_all_story_words.dic"
-        )
+        mock_dic_path = Path(__file__).parent / "input_data" / "mock_all_story_words.dic"
         if not mock_dic_path.exists():
             raise FileNotFoundError(
                 f"Mock phoneme dictionary file not found at: {mock_dic_path}\n"
@@ -187,7 +191,7 @@ def mock_external_dependencies(monkeypatch):
         return phoneme_dict
 
     monkeypatch.setattr(
-        "src.orf_rescoring_pipeline.alignment.word_alignment._load_phoneme_dict_from_s3",
+        "src.orf_rescoring_pipeline.alignment.word_alignment._load_phoneme_dict_from_s3_sync",
         mock_load_phoneme_dict_from_s3,
     )
 
@@ -203,7 +207,7 @@ def mock_external_dependencies(monkeypatch):
 
 
 @pytest.fixture
-def real_activities():
+def real_activities() -> dict[str, Activity]:
     activity_ids = ["jane_goodall_full_rescore", "jane_goodall_bad_needs_rescore"]
     activities = {}
     for activity_id in activity_ids:
@@ -211,7 +215,7 @@ def real_activities():
     return activities
 
 
-def _create_real_activity(activity_id: str):
+def _create_real_activity(activity_id: str) -> Activity:
     """Create Activity from real data files."""
     input_data_dir = Path(__file__).parent / "input_data"
 
@@ -225,7 +229,7 @@ def _create_real_activity(activity_id: str):
 
     # Load real activity JSON
     with open(activity_file) as f:
-        activity_data = json.load(f)
+        activity_data = cast(dict[str, Any], json.load(f))
 
     # Validate activity data structure
     required_keys = ["activityId", "storyId", "story", "model_features"]
@@ -252,64 +256,64 @@ def _create_real_activity(activity_id: str):
             f"Activity {activity_id}: errors_retouched array not found. Expected errors_retouched array."
         )
 
-    activity = Activity.from_appsync_res([activity_data])[0]
+    model_features_data = cast(list[dict[str, Any]], activity_data["model_features"])
+
+    # Create activity from activity_data directly instead of using async from_appsync_res
+    activity = Activity._create_from_activity_data(activity_data=activity_data)
 
     deepgram_matches: list[list[int]] = [
-        f["deepgram_matches"]
-        for f in activity_data["model_features"]
+        cast(list[int], f["deepgram_matches"])
+        for f in model_features_data
         if f["model"].find("second") != -1
     ]
     activity.ground_truth_deepgram_matches = deepgram_matches
-
-    retouched_errors: list[list[bool]] = activity_data["errors_retouched"]
+    retouched_errors = cast(list[list[bool]], activity_data["errors_retouched"])
     activity.ground_truth_retouched_errors = retouched_errors
-
     resliced_kaldi_matches: list[list[int]] = [
-        f["kaldi_matches_new"]
-        for f in activity_data["model_features"]
+        cast(list[int], f["kaldi_matches_new"])
+        for f in model_features_data
         if f["model"].find("second") != -1
     ]
     activity.ground_truth_resliced_kaldi_matches = resliced_kaldi_matches
-
     resliced_w2v_matches: list[list[int]] = [
-        f["w2v_matches_new"]
-        for f in activity_data["model_features"]
+        cast(list[int], f["w2v_matches_new"])
+        for f in model_features_data
         if f["model"].find("second") != -1
     ]
     activity.ground_truth_resliced_w2v_matches = resliced_w2v_matches
-
     return activity
 
 
 @pytest.fixture
-def real_model_features():
+def real_model_features() -> dict[str, list[dict[str, Any]]]:
     activity_ids = ["jane_goodall_full_rescore", "jane_goodall_bad_needs_rescore"]
-    model_features = {}
+    model_features: dict[str, list[dict[str, Any]]] = {}
     for activity_id in activity_ids:
         model_features[activity_id] = _real_model_features(activity_id)
     return model_features
 
 
-def _real_model_features(activity_id: str):
+def _real_model_features(activity_id: str) -> list[dict[str, Any]]:
     """Real model features from model_features/ folder"""
     input_data_dir = Path(__file__).parent / "input_data"
     input_data_file = input_data_dir / f"{activity_id}.json"
     with open(input_data_file) as f:
-        model_features = json.load(f)
-    if "model_features" not in model_features:
+        raw_model_features = cast(dict[str, Any], json.load(f))
+    if "model_features" not in raw_model_features:
         raise ValueError(
             f"Model features not found in {input_data_file}. "
             f"Expected model_features key. "
-            f"Found keys: {list(model_features.keys())}"
+            f"Found keys: {list(raw_model_features.keys())}"
         )
-    return model_features["model_features"]
+    result = cast(list[dict[str, Any]], raw_model_features["model_features"])
+    return result
 
 
 @pytest.fixture
-def real_deepgram_transcripts():
+def real_deepgram_transcripts() -> dict[str, dict[str, Any]]:
     """Real Deepgram transcripts from transcript files"""
     input_data_dir = Path(__file__).parent / "input_data"
-    transcripts = {}
+    transcripts: dict[str, dict[str, Any]] = {}
 
     activity_ids = ["jane_goodall_full_rescore", "jane_goodall_bad_needs_rescore"]
 
@@ -317,7 +321,7 @@ def real_deepgram_transcripts():
         transcript_file = input_data_dir / f"{activity_id}_deepgram_transcript.json"
         if transcript_file.exists():
             with open(transcript_file) as f:
-                data = json.load(f)
+                data = cast(dict[str, Any], json.load(f))
 
                 if "transcript" in data and "words" in data:
                     transcripts[activity_id] = data
@@ -337,46 +341,47 @@ def real_deepgram_transcripts():
 
 
 @pytest.fixture
-def real_kaldi_transcripts():
+def real_kaldi_transcripts() -> dict[str, list[str]]:
     """Real Kaldi transcripts from transcript files"""
     activity_ids = ["jane_goodall_full_rescore", "jane_goodall_bad_needs_rescore"]
-    kaldi_transcripts = {}
+    kaldi_transcripts: dict[str, list[str]] = {}
     for activity_id in activity_ids:
         kaldi_transcripts[activity_id] = _real_transcript(activity_id, "kaldi")
     return kaldi_transcripts
 
 
 @pytest.fixture
-def real_w2v_transcripts():
+def real_w2v_transcripts() -> dict[str, list[str]]:
     """Real W2V transcripts from transcript files"""
     activity_ids = ["jane_goodall_full_rescore", "jane_goodall_bad_needs_rescore"]
-    w2v_transcripts = {}
+    w2v_transcripts: dict[str, list[str]] = {}
     for activity_id in activity_ids:
         w2v_transcripts[activity_id] = _real_transcript(activity_id, "w2v")
     return w2v_transcripts
 
 
-def _real_transcript(activity_id: str, transcript_type: str):
+def _real_transcript(activity_id: str, transcript_type: str) -> list[str]:
     input_data_dir = Path(__file__).parent / "input_data"
     features_file = input_data_dir / f"{activity_id}.json"
     transcript_type = f"{transcript_type}_transcript".lower()
     with open(features_file) as f:
-        model_features = json.load(f)
+        model_features = cast(dict[str, Any], json.load(f))
     if transcript_type not in model_features:
         raise ValueError(
             f"{transcript_type} transcript not found in {features_file}. "
             f"Expected {transcript_type} key. "
             f"Found keys: {list(model_features.keys())}"
         )
-    return model_features[transcript_type]
+    result = cast(list[str], model_features[transcript_type])
+    return result
 
 
 @pytest.fixture
-def real_manifest_pages():
+def real_manifest_pages() -> dict[str, list[Any]]:
     """Real manifest pages from phrase manifest files"""
     import tests.test_orf_rescoring.input_data.test_manifest as tm
 
-    manifest_pages = {}
+    manifest_pages: dict[str, list[Any]] = {}
 
     activity_ids = ["jane_goodall_full_rescore", "jane_goodall_bad_needs_rescore"]
 
@@ -388,19 +393,19 @@ def real_manifest_pages():
 
 
 @pytest.fixture
-def real_timing_files():
+def real_timing_files() -> dict[str, dict[str, Any]]:
     """Real timing files from timing files folder"""
-    timing_files = {}
+    timing_files: dict[str, dict[str, Any]] = {}
     activity_ids = ["jane_goodall_full_rescore", "jane_goodall_bad_needs_rescore"]
     for activity_id in activity_ids:
         timing_files[activity_id] = _real_timing_file(activity_id)
     return timing_files
 
 
-def _real_timing_file(activity_id: str):
+def _real_timing_file(activity_id: str) -> dict[str, Any]:
     """Real timing file from timing files folder"""
     input_data_dir = Path(__file__).parent / "input_data"
     timing_file = input_data_dir / f"{activity_id}_timing_deepgram.json"
     with open(timing_file) as f:
-        timing_file = json.load(f)
-    return timing_file
+        timing_data = cast(dict[str, Any], json.load(f))
+    return timing_data

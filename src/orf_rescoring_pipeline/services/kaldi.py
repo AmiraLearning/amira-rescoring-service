@@ -2,19 +2,28 @@ import asyncio
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
-from typing import Any, Final
+from typing import TYPE_CHECKING, Any, Final
 
 import aiohttp
 import orjson as json
 from aiohttp import ClientSession, ClientTimeout
-from amira_pyutils.shared.core.errors import AmiraError
-from amira_pyutils.shared.core.logging import get_logger
 from tenacity import (
     retry,
     retry_if_exception_type,
     stop_after_attempt,
     wait_exponential,
 )
+
+from amira_pyutils.logging import get_logger
+
+if TYPE_CHECKING:  # pragma: no cover - types only
+    pass
+
+
+class AmiraError(Exception):
+    def __init__(self, msg: str | None = None, retryable: bool | None = None) -> None:
+        super().__init__(msg if msg is not None else "")
+        self.retryable = retryable
 
 
 class KaldiError(AmiraError):
@@ -209,7 +218,10 @@ class KaldiClient:
             raise KaldiError(msg="Session not initialized", retryable=False)
         async with self._session.post(url, data=audio_data) as response:
             response.raise_for_status()
-            return await response.text()
+            text_any = await response.text()
+            from typing import cast
+
+            return cast(str, text_any)
 
     def _parse_response(self, *, response_text: str) -> dict[str, Any]:
         """Parse Kaldi response based on format.
@@ -228,10 +240,14 @@ class KaldiClient:
 
             if len(lines) > 2:
                 result = json.loads(lines[-2])
-                return result
+                from typing import cast
+
+                return cast(dict[str, Any], result)
             else:
                 result = json.loads(response_text)
-                return result
+                from typing import cast
+
+                return cast(dict[str, Any], result)
 
         except (json.JSONDecodeError, IndexError) as e:
             raise KaldiError(msg=f"Failed to parse Kaldi response: {e}", retryable=False) from e

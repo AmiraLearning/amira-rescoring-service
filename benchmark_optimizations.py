@@ -3,15 +3,17 @@
 
 import statistics
 import time
-from typing import Final
+from typing import Final, cast
 
 import numpy as np
 import torchaudio
-from loguru import logger
 from pydantic import BaseModel
 
-from src.pipeline.inference.engine import perform_single_audio_inference
-from src.pipeline.inference.models import W2VConfig
+from amira_pyutils.logging import get_logger
+from src.letter_scoring_pipeline.inference.engine import perform_single_audio_inference
+from src.letter_scoring_pipeline.inference.models import W2VConfig
+
+logger = get_logger(__name__)
 
 BENCHMARK_RUNS: Final[int] = 5
 WARMUP_RUNS: Final[int] = 2
@@ -50,7 +52,7 @@ class BenchmarkSuite(BaseModel):
                 f"audio/reconstituted_phrase_audio/DEFAULT/{self.activity_id}/phrase_4.wav"
             )
             speech, sr = torchaudio.load(phrase_path)
-            audio_array = speech[0].numpy()
+            audio_array = cast(np.ndarray, speech[0].numpy())
             logger.info(f"Loaded phrase audio shape: {audio_array.shape}")
             return audio_array
         except Exception as e:

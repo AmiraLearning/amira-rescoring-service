@@ -8,7 +8,7 @@ from unittest.mock import Mock, patch
 
 import pytest
 
-from src.pipeline.inference.engine import ThreadSafeLRUCache
+from src.letter_scoring_pipeline.inference.engine import ThreadSafeLRUCache
 
 
 class TestThreadSafeLRUCache:
@@ -250,7 +250,7 @@ class TestEngineCacheIntegration:
 
     def test_engine_cache_creation_lock(self) -> None:
         """Test that engine creation is properly synchronized."""
-        from src.pipeline.inference.engine import _engine_creation_lock
+        from src.letter_scoring_pipeline.inference.engine import _engine_creation_lock
 
         # Test that the lock exists and is a threading.Lock
         assert hasattr(_engine_creation_lock, "acquire")
@@ -261,7 +261,7 @@ class TestEngineCacheIntegration:
         assert acquired is True
         _engine_creation_lock.release()
 
-    @patch("src.pipeline.inference.engine._engine_cache")
+    @patch("src.letter_scoring_pipeline.inference.engine._engine_cache")
     def test_engine_cache_mock_integration(self, mock_cache: Mock) -> None:
         """Test engine cache integration patterns."""
         # Mock cache behavior
@@ -286,7 +286,7 @@ class TestEngineCacheIntegration:
 
     def test_engine_cache_key_generation_consistency(self) -> None:
         """Test that cache keys are generated consistently for same config."""
-        from src.pipeline.inference.models import W2VConfig
+        from src.letter_scoring_pipeline.inference.models import W2VConfig
 
         # Create identical configs
         config1 = W2VConfig(model_path="test/path", device="cpu", use_triton=False)
@@ -301,7 +301,7 @@ class TestEngineCacheIntegration:
 
     def test_cache_maxsize_environment_variable(self) -> None:
         """Test that cache maxsize respects environment variable."""
-        from src.pipeline.inference.engine import _ENGINE_CACHE_MAX
+        from src.letter_scoring_pipeline.inference.engine import _ENGINE_CACHE_MAX
 
         # Should use default or environment value
         assert isinstance(_ENGINE_CACHE_MAX, int)
@@ -312,11 +312,11 @@ class TestEngineCacheIntegration:
             # Re-import to pick up new env var (in practice, this is set at startup)
             import importlib
 
-            import src.pipeline.inference.engine
+            import src.letter_scoring_pipeline.inference.engine
 
-            importlib.reload(src.pipeline.inference.engine)
+            importlib.reload(src.letter_scoring_pipeline.inference.engine)
 
-            from src.pipeline.inference.engine import _ENGINE_CACHE_MAX as new_max
+            from src.letter_scoring_pipeline.inference.engine import _ENGINE_CACHE_MAX as new_max
 
             # Note: Due to module reloading complexities, we test the principle
             assert isinstance(new_max, int)

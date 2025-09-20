@@ -6,11 +6,11 @@ and rescoring phrase errors based on multiple ASR system outputs.
 """
 
 import asyncio
-import logging
-import os
+from typing import Any, cast
 
 import numpy as np
 
+from amira_pyutils.logging import get_logger
 from src.orf_rescoring_pipeline.alignment.word_alignment import (
     get_word_level_transcript_alignment,
     get_word_level_transcript_alignment_w2v,
@@ -18,7 +18,7 @@ from src.orf_rescoring_pipeline.alignment.word_alignment import (
 from src.orf_rescoring_pipeline.models import Activity, ModelFeature
 from src.orf_rescoring_pipeline.utils.transcription import KaldiASRClient, W2VASRClient
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 async def _transcribe_phrase_async(
@@ -30,7 +30,7 @@ async def _transcribe_phrase_async(
 ) -> tuple[str, str]:
     """
     Internal async implementation for transcribing phrases.
-    
+
     Args:
         activity: Activity containing the audio data.
         phrase_index: Index of the phrase to transcribe.
@@ -55,22 +55,32 @@ async def _transcribe_phrase_async(
     results = await asyncio.gather(
         kaldi.transcribe(activity, phrase_index, phrase_audio_data),
         w2v.transcribe(activity, phrase_index, phrase_audio_data),
-        return_exceptions=True
+        return_exceptions=True,
     )
-    
+
     kaldi_result, w2v_result = results
-    
+
     # Extract transcripts with error handling
     kaldi_transcript = ""
     w2v_transcript = ""
-    
+
     try:
-        kaldi_transcript = kaldi_result.transcript if kaldi_result and not isinstance(kaldi_result, Exception) else ""
+        if isinstance(kaldi_result, Exception):
+            kaldi_transcript = ""
+        elif kaldi_result is not None:
+            kaldi_transcript = cast(Any, kaldi_result).transcript
+        else:
+            kaldi_transcript = ""
     except Exception as e:
         logger.warning(f"Transcription failed for kaldi: {e}")
-        
+
     try:
-        w2v_transcript = w2v_result.transcript if w2v_result and not isinstance(w2v_result, Exception) else ""
+        if isinstance(w2v_result, Exception):
+            w2v_transcript = ""
+        elif w2v_result is not None:
+            w2v_transcript = cast(Any, w2v_result).transcript
+        else:
+            w2v_transcript = ""
     except Exception as e:
         logger.warning(f"Transcription failed for w2v: {e}")
 
@@ -99,12 +109,9 @@ def transcribe_phrase(
     Returns:
         Tuple of (kaldi_transcript, w2v_transcript).
     """
-    return asyncio.run(_transcribe_phrase_async(
-        activity=activity,
-        phrase_index=phrase_index,
-        kaldi=kaldi,
-        w2v=w2v
-    ))
+    return asyncio.run(
+        _transcribe_phrase_async(activity=activity, phrase_index=phrase_index, kaldi=kaldi, w2v=w2v)
+    )
 
 
 def align_phrase_transcripts(
@@ -164,10 +171,12 @@ def rescore_phrase_errors(
 
     is_error = ~(no_error_w2v | no_error_consensus)
 
-    return is_error.tolist()
+    from typing import cast
+
+    return cast(list[bool], is_error.tolist())
 
 
-def rescore_phrase(
+async def rescore_phrase(
     *,
     activity: Activity,
     feature: ModelFeature,
@@ -201,7 +210,7 @@ def rescore_phrase(
         fallback_errors = [True] * len(feature.kaldi_match)
         return fallback_errors, fallback_matches, fallback_matches, "", ""
 
-    kaldi_transcript, w2v_transcript = transcribe_phrase(
+    kaldi_transcript, w2v_transcript = await _transcribe_phrase_async(
         activity=activity, phrase_index=feature.phrase_index, kaldi=kaldi, w2v=w2v
     )
 

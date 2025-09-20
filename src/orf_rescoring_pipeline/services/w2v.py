@@ -10,14 +10,22 @@ import aiohttp
 import numpy as np
 import orjson as json
 from aiohttp import ClientSession, ClientTimeout, WSMsgType
-from amira_pyutils.shared.core.errors import AmiraError
-from amira_pyutils.shared.core.logging import get_logger
 from tenacity import (
     retry,
     retry_if_exception_type,
     stop_after_attempt,
     wait_exponential,
 )
+
+from amira_pyutils.logging import get_logger
+
+
+class AmiraError(Exception):
+    """Base error with optional retryable flag."""
+
+    def __init__(self, msg: str | None = None, retryable: bool | None = None) -> None:
+        super().__init__(msg if msg is not None else "")
+        self.retryable = retryable
 
 
 class W2VError(AmiraError):

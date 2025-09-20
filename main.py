@@ -6,17 +6,18 @@ import traceback
 
 import typer
 import yaml
-from loguru import logger
 
-from src.pipeline.exceptions import ConfigurationError
-from src.pipeline.pipeline import run_activity_pipeline
+from amira_pyutils.logging import get_logger
+from src.letter_scoring_pipeline.exceptions import ConfigurationError
+from src.letter_scoring_pipeline.pipeline import run_activity_pipeline
 from utils.cleanup import cleanup_pipeline_data
 from utils.config import PipelineConfig, load_config
-from utils.logging import setup_logging
 
 app: typer.Typer = typer.Typer(
     help="Run CPU-GPU Parallel LNS Scoring Pipeline", no_args_is_help=True
 )
+
+logger = get_logger(__name__)
 
 
 async def run_pipeline_core(*, config: PipelineConfig) -> bool:
@@ -99,7 +100,7 @@ def run(
 
         os.environ["LOG_JSON"] = "true"
 
-    setup_logging(service="cli")
+    logger = get_logger(__name__, service="cli")
     typer.echo("Scoring Pipeline Runner\n========================")
     typer.echo("This script runs the scoring pipeline for letter names and sounds.\n")
 

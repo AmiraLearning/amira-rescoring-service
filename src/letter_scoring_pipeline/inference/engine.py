@@ -1,16 +1,17 @@
+from __future__ import annotations
+
 import asyncio
 import os
 import time
 import traceback
 from threading import Lock, RLock
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
 import numpy as np
 import torch
-from loguru import logger
 from transformers import BatchFeature, Wav2Vec2ForCTC, Wav2Vec2Processor
 
-from utils.logging import emit_emf_metric
+from amira_pyutils.logging import emit_emf_metric, get_logger
 
 from .metrics_constants import (
     DIM_CORRELATION_ID,
@@ -46,16 +47,21 @@ from .models import (
 _ENGINE_CACHE_MAX: int = int(os.getenv("ENGINE_CACHE_MAX", str(ENGINE_CACHE_MAX_DEFAULT)))
 
 
-class ThreadSafeLRUCache:
+TCache = TypeVar("TCache")
+
+logger = get_logger(__name__)
+
+
+class ThreadSafeLRUCache(Generic[TCache]):
     """Thread-safe LRU cache for inference engines."""
 
     def __init__(self, *, maxsize: int = 2):
         self.maxsize = maxsize
-        self.cache: dict[str, Any] = {}
+        self.cache: dict[str, TCache] = {}
         self.access_order: list[str] = []
         self.lock = RLock()
 
-    def get(self, key: str) -> Any | None:
+    def get(self, key: str) -> TCache | None:
         with self.lock:
             if key in self.cache:
                 # Move to end (most recently used)
@@ -64,7 +70,7 @@ class ThreadSafeLRUCache:
                 return self.cache[key]
             return None
 
-    def put(self, key: str, value: Any) -> None:
+    def put(self, key: str, value: TCache) -> None:
         with self.lock:
             if key in self.cache:
                 # Update existing entry
@@ -95,7 +101,9 @@ class ThreadSafeLRUCache:
             return len(self.cache)
 
 
-_engine_cache = ThreadSafeLRUCache(maxsize=_ENGINE_CACHE_MAX)
+_engine_cache: ThreadSafeLRUCache[Wav2Vec2InferenceEngine | TritonInferenceEngine] = (
+    ThreadSafeLRUCache(maxsize=_ENGINE_CACHE_MAX)
+)
 _engine_creation_lock: Lock = Lock()
 
 
@@ -116,7 +124,7 @@ def _make_cache_key(*, w2v_config: W2VConfig) -> str:
 
 async def preload_inference_engine_async(
     *, w2v_config: W2VConfig, warmup: bool = False
-) -> "Wav2Vec2InferenceEngine | TritonInferenceEngine":
+) -> Wav2Vec2InferenceEngine | TritonInferenceEngine:
     """Asynchronously preload the inference engine.
 
     Args:
@@ -127,8 +135,8 @@ async def preload_inference_engine_async(
         Inference engine instance (either Wav2Vec2InferenceEngine or TritonInferenceEngine).
     """
 
-    def _build() -> "Wav2Vec2InferenceEngine | TritonInferenceEngine":
-        engine: Any
+    def _build() -> Wav2Vec2InferenceEngine | TritonInferenceEngine:
+        engine: Wav2Vec2InferenceEngine | TritonInferenceEngine
         if w2v_config.use_triton:
             from .triton_engine import TritonInferenceEngine
 
@@ -145,7 +153,7 @@ async def preload_inference_engine_async(
 
 
 class Wav2Vec2InferenceEngine:
-    _device: "torch.device"
+    _device: torch.device
 
     def __init__(
         self,
@@ -711,9 +719,7 @@ class Wav2Vec2InferenceEngine:
         return result
 
 
-def get_cached_engine(
-    *, w2v_config: W2VConfig
-) -> "Wav2Vec2InferenceEngine | TritonInferenceEngine":
+def get_cached_engine(*, w2v_config: W2VConfig) -> Wav2Vec2InferenceEngine | TritonInferenceEngine:
     """Get or create a cached inference engine with thread-safe LRU caching.
 
     Args:
@@ -762,7 +768,7 @@ def perform_single_audio_inference(
     model_instance: Wav2Vec2ForCTC | None = None,
     processor_instance: Wav2Vec2Processor | None = None,
     inference_id: str | None = None,
-    engine: "Wav2Vec2InferenceEngine | TritonInferenceEngine | None" = None,
+    engine: Wav2Vec2InferenceEngine | TritonInferenceEngine | None = None,
     use_cache: bool = False,
     correlation_id: str | None = None,
 ) -> GPUInferenceResult:

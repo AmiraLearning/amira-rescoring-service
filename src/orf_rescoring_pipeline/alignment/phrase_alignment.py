@@ -10,7 +10,6 @@ to transcribed speech at the page level. The alignment process:
 """
 
 import json
-import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from difflib import SequenceMatcher
 from pathlib import Path
@@ -18,9 +17,10 @@ from typing import Any, Final
 
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
-from orf_rescoring_pipeline.models import Activity, WordItem
+from amira_pyutils.logging import get_logger
+from src.orf_rescoring_pipeline.models import Activity, WordItem
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 # Constants
 MAX_CONCURRENT_PAGES: Final[int] = 4
@@ -372,7 +372,7 @@ def _process_single_page(
     *,
     page_index: int,
     activity: Activity,
-    manifest_pages: list,
+    manifest_pages: list[Any],
 ) -> tuple[int, int, int]:
     """Process alignment for a single page.
 
@@ -432,7 +432,7 @@ def _get_timing_file_path(*, activity: Activity) -> Path:
 def process_activity_timing(
     *,
     activity: Activity,
-    manifest_pages: list,
+    manifest_pages: list[Any],
     save_files: bool = True,
 ) -> None:
     """Process page-level timing alignment for an activity.

@@ -4,9 +4,10 @@ import os
 from pathlib import Path
 from typing import Any
 
-from loguru import logger
+from amira_pyutils.logging import get_logger
+from src.letter_scoring_pipeline.exceptions import ConfigurationError
 
-from src.pipeline.exceptions import ConfigurationError
+logger = get_logger(__name__)
 
 
 class ConfigurationValidator:

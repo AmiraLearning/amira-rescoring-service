@@ -1,11 +1,12 @@
 import json
 from pathlib import Path
+from typing import Any
 
-from amira_pyutils.general.environment import Environments
-from amira_pyutils.services.appsync import AppSync
 from fire import Fire
 from tqdm import tqdm
 
+from amira_pyutils.appsync import AppSync
+from amira_pyutils.environment import Environments
 from src.orf_rescoring_pipeline.alignment.phrase_manifest import (
     PhraseBuilder,
     PhraseManifest,
@@ -24,7 +25,7 @@ def pull_srs_data(env_name: str, activity_ids: list[str]) -> None:
     - timing files with page and phrase alignment information
     For those, we can run the pipeline in debug mode and update this json file manually with the correct data.
     """
-    env = Environments.find(env_name)
+    env = Environments.find(env_name)  # type: ignore[attr-defined]
     appsync = AppSync(env=env)
 
     save_path = Path("tests/input_data")
@@ -59,7 +60,7 @@ def pull_srs_data(env_name: str, activity_ids: list[str]) -> None:
             json.dump(activity, f)
 
 
-def pull_phrase_manifest(activity_id: str):
+def pull_phrase_manifest(activity_id: str) -> list[Any]:
     """
     Util to export the phrase manifest for a given activity ID.
     This util is helpful for creating the test manifest files for the integration tests.
@@ -71,8 +72,7 @@ def pull_phrase_manifest(activity_id: str):
     """
     import os
 
-    import amira_pyutils.services.s3 as s3_utils
-    from amira_pyutils.general.environment import Environments
+    import amira_pyutils.s3 as s3_utils
 
     # Since this code is borrowed from the slicing service, we do not test it in this repo
     # Rather we will use it to create mocks for the integration tests
@@ -81,10 +81,11 @@ def pull_phrase_manifest(activity_id: str):
     # Copy the returned value from this file into the test_manifest.py file
 
     env_name = os.environ["AWS_PROFILE"]
-    env = Environments.find(env_name)
-    builder = PhraseBuilder(s3_client=s3_utils.get_client())
-    manifest = PhraseManifest(builder)
-    return manifest.generate(bucket=env.audio_bucket, activity_id=activity_id)
+    env = Environments.find(env_name)  # type: ignore[attr-defined]
+    builder = PhraseBuilder(s3_client=s3_utils.S3Service())
+    manifest = PhraseManifest(builder=builder)
+    phrases = manifest.generate(bucket=env.audio_bucket, activity_id=activity_id)
+    return [phrase.to_dict() for phrase in phrases]
 
 
 if __name__ == "__main__":

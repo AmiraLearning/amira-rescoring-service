@@ -6,12 +6,13 @@ that work with Lambda-based serverless architecture. Each function processes
 individual activities without batch operations.
 """
 
-import logging
+import asyncio
 from typing import Any
 
-from orf_rescoring_pipeline.lambda_handler import handler
+from amira_pyutils.logging import get_logger
+from src.orf_rescoring_pipeline.lambda_handler import handler
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 def process_single_activity_entry(
@@ -33,7 +34,7 @@ def process_single_activity_entry(
     """
     event = {"activity_id": activity_id, "env_name": env_name, "debug": debug}
 
-    result = handler(event, None)
+    result = asyncio.run(handler(event, None))
 
     if result["statusCode"] == 200:
         logger.info(f"Successfully processed activity {activity_id}")

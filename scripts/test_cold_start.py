@@ -15,8 +15,8 @@ from typing import Annotated, Final
 from loguru import logger
 from pydantic import BaseModel, Field
 
-from src.pipeline.inference.engine import Wav2Vec2InferenceEngine
-from src.pipeline.inference.models import W2VConfig
+from src.letter_scoring_pipeline.inference.engine import Wav2Vec2InferenceEngine
+from src.letter_scoring_pipeline.inference.models import W2VConfig
 
 DEFAULT_MODEL_PATH: Final[str] = "models/wav2vec2-ft-large-eng-phoneme-amirabet_2025-04-24"
 

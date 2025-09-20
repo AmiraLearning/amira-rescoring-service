@@ -1,7 +1,8 @@
 import os
 
 import numpy as np
-from loguru import logger
+
+from amira_pyutils.logging import get_logger
 
 from .constants import VALID_PHONETIC_ELEMENTS, TokenType
 from .metrics_constants import MET_DECODER_PARSE_FAILURE, NS_DECODER
@@ -11,6 +12,8 @@ from .models import (
     Segment,
 )
 from .phonetics import LongestMatchResult, PhoneticTrie
+
+logger = get_logger(__name__)
 
 # Global cache for PhoneticTrie to avoid rebuilding across Lambda invocations
 _cached_phonetic_trie: PhoneticTrie | None = None
@@ -181,7 +184,7 @@ class PhonemeDecoder:
                     continue
                 logger.error(message)
                 try:
-                    from utils.logging import emit_emf_metric
+                    from amira_pyutils.logging import emit_emf_metric
 
                     emit_emf_metric(
                         namespace=NS_DECODER,

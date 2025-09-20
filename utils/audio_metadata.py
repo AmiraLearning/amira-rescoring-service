@@ -33,7 +33,7 @@ class SegmentMetadataResult(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
 
-SEGMENT_FILENAME_PATTERN: Final[re.Pattern] = re.compile(r"(\d{3})-(\d{6})-(\d+)-v\d\.wav")
+SEGMENT_FILENAME_PATTERN: Final[re.Pattern[str]] = re.compile(r"(\d{3})-(\d{6})-(\d+)-v\d\.wav")
 
 
 def _parse_segment_filename(filename: str) -> SegmentHead:
@@ -50,7 +50,7 @@ def _parse_segment_filename(filename: str) -> SegmentHead:
     """
 
     try:
-        match: re.Match | None = SEGMENT_FILENAME_PATTERN.match(filename)
+        match: re.Match[str] | None = SEGMENT_FILENAME_PATTERN.match(filename)
 
         if match:
             phrase_idx: int = int(match.group(1))

@@ -1,16 +1,18 @@
-import logging
 import threading
 from pathlib import Path
 from typing import Final
 
-import amira_pyutils.services.s3 as s3_utils
+import amira_pyutils.s3 as s3_utils
 from amira_fe.phon_level_alignment import phoneme_align_dash
 from amira_fe.word_level_alignment import align_texts_dash
-from amira_pyutils.data.abstract_alignment import AlignmentConfig, WordSelection
-from amira_pyutils.general.language import LanguageHandling
-from amira_pyutils.general.phon_alphabets import english2amirabet
+from amira_pyutils.abstract_alignment import AlignmentConfig, WordSelectionStrategy
+from amira_pyutils.language import LanguageHandling
+from amira_pyutils.logging import get_logger
+from amira_pyutils.phone_alphabets import english2amirabet
 
-logger = logging.getLogger(__name__)
+# TODO this is the meet of the imports
+
+logger = get_logger(__name__)
 
 S3_PHONEME_DICT_URI: Final[str] = "s3://amira-kaldi-lm-repo/alts/all_story_words.dic"
 PHONEME_DICT_FILENAME: Final[str] = "all_story_words.dic"
@@ -23,6 +25,16 @@ _download_lock = threading.Lock()
 _phoneme_dict_cache: dict[str, str] | None = None
 
 
+# TODO(amira_pyutils/s3_client): Replace sync bridge with real client wiring
+def _load_phoneme_dict_from_s3_sync() -> dict[str, str]:
+    try:
+        import asyncio
+
+        return asyncio.run(_load_phoneme_dict_from_s3())
+    except Exception:
+        return {}
+
+
 def _get_phoneme_dict_path() -> Path:
     """Get the local path for the phoneme dictionary file.
 
@@ -32,7 +44,7 @@ def _get_phoneme_dict_path() -> Path:
     return Path(__file__).parent.parent / PHONEME_DICT_FILENAME
 
 
-def _download_phoneme_dict_from_s3(*, file_path: Path) -> None:
+async def _download_phoneme_dict_from_s3(*, file_path: Path) -> None:
     """Download phoneme dictionary from S3 to local cache.
 
     Args:
@@ -42,16 +54,18 @@ def _download_phoneme_dict_from_s3(*, file_path: Path) -> None:
         FileNotFoundError: If download fails.
     """
     logger.info("Downloading phoneme dictionary from S3...")
-    address = s3_utils.s3_addr_from_uri(S3_PHONEME_DICT_URI)
-    success = s3_utils.s3_try_download_file(address.bucket, address.key, file_path)
-    if not success:
+    address = s3_utils.S3Address.from_uri(uri=S3_PHONEME_DICT_URI)
+    await s3_utils.S3Service().download_file(
+        bucket=address.bucket, key=address.key, filename=file_path
+    )
+    if not file_path.exists():
         raise FileNotFoundError(
             f"Failed to download {address.bucket}/{address.key} to {file_path}."
         )
     logger.info(f"Phoneme dictionary cached at {file_path}")
 
 
-def _parse_phoneme_dict_file(*, file_path: Path) -> dict[str, str]:
+async def _parse_phoneme_dict_file(*, file_path: Path) -> dict[str, str]:
     """Parse phoneme dictionary file into word-to-phoneme mapping.
 
     Args:
@@ -71,7 +85,7 @@ def _parse_phoneme_dict_file(*, file_path: Path) -> dict[str, str]:
     return phoneme_dict
 
 
-def _load_phoneme_dict_from_s3() -> dict[str, str]:
+async def _load_phoneme_dict_from_s3() -> dict[str, str]:
     """Load the phoneme dictionary from S3 with thread-safe caching.
 
     Returns:
@@ -90,9 +104,9 @@ def _load_phoneme_dict_from_s3() -> dict[str, str]:
     if not file_path.exists():
         with _download_lock:
             if not file_path.exists():
-                _download_phoneme_dict_from_s3(file_path=file_path)
+                await _download_phoneme_dict_from_s3(file_path=file_path)
 
-    _phoneme_dict_cache = _parse_phoneme_dict_file(file_path=file_path)
+    _phoneme_dict_cache = await _parse_phoneme_dict_file(file_path=file_path)
     return _phoneme_dict_cache
 
 
@@ -102,7 +116,9 @@ def _create_standard_alignment_config() -> AlignmentConfig:
     Returns:
         Configured AlignmentConfig instance.
     """
-    return AlignmentConfig(use_prod=False, preprocess_next_exp=False, postprocess_infer=False)
+    return AlignmentConfig(
+        use_production_algorithm=False, preprocess_next_expected=False, postprocess_inference=False
+    )
 
 
 def _create_w2v_alignment_config() -> AlignmentConfig:
@@ -111,7 +127,7 @@ def _create_w2v_alignment_config() -> AlignmentConfig:
     Returns:
         Configured AlignmentConfig instance for W2V alignment.
     """
-    return AlignmentConfig(False, False, False, True, False, WordSelection.MATCH_ENSEMBLE, False)
+    return AlignmentConfig(False, False, False, True, False, WordSelectionStrategy.ENSEMBLE, False)
 
 
 def _convert_alignment_to_matches(
@@ -146,7 +162,7 @@ def _convert_words_to_amirabet(*, words: list[str], phoneme_dict: dict[str, str]
     Returns:
         Space-separated Amirabet phoneme string.
     """
-    amirabets = [english2amirabet(phoneme_dict, word) for word in words]
+    amirabets = [english2amirabet(text_to_phons=phoneme_dict, word=word) for word in words]
     return " ".join(amirabets)
 
 
@@ -155,7 +171,7 @@ def _apply_phoneme_matching_corrections(
     matches: list[int],
     story_aligned: list[str],
     transcript_aligned: list[str],
-    word_phoneme_distance: list[int],
+    word_phoneme_distance: list[float],
 ) -> list[int]:
     """Apply phoneme-based matching corrections to improve alignment accuracy.
 
@@ -168,7 +184,7 @@ def _apply_phoneme_matching_corrections(
     Returns:
         Corrected binary match scores.
     """
-    from orf_rescoring_pipeline.utils.file_operations import phoneme_match_with_map
+    from src.orf_rescoring_pipeline.utils.file_operations import phoneme_match_with_map
 
     corrected_matches = matches.copy()
 
@@ -207,7 +223,7 @@ def get_word_level_transcript_alignment(*, story_phrase: str, transcript_text: s
     try:
         config = _create_standard_alignment_config()
 
-        aligned_story, aligned_transcript, _, _, _, _, _ = align_texts_dash(
+        alignment_result = align_texts_dash(
             config=config,
             lang=LanguageHandling.ENGLISH,
             next_exp=None,
@@ -216,7 +232,8 @@ def get_word_level_transcript_alignment(*, story_phrase: str, transcript_text: s
         )
 
         return _convert_alignment_to_matches(
-            aligned_story=aligned_story, aligned_transcript=aligned_transcript
+            aligned_story=alignment_result.aligned_reference,
+            aligned_transcript=alignment_result.aligned_transcription_features,
         )
 
     except Exception as e:
@@ -244,7 +261,8 @@ def get_word_level_transcript_alignment_w2v(
         return [WORD_NO_MATCH_SCORE] * len(story_phrase.split())
 
     config = _create_w2v_alignment_config()
-    phoneme_dict = _load_phoneme_dict_from_s3()
+
+    phoneme_dict = _load_phoneme_dict_from_s3_sync()
 
     story_words = story_phrase.split()
     story_in_amirabet = _convert_words_to_amirabet(words=story_words, phoneme_dict=phoneme_dict)

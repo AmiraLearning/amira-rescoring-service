@@ -5,10 +5,12 @@ from types import MappingProxyType
 from typing import Final
 
 import polars as pl
-from loguru import logger
 
+from amira_pyutils.logging import get_logger
 from infra.athena_client import query_athena
 from utils.config import PipelineConfig
+
+logger = get_logger(__name__)
 
 ACTIVITY_QUERY: Final[str] = """
     SELECT activityid,
