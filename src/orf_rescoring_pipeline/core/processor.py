@@ -113,7 +113,7 @@ async def process_single_activity(
         _execute_word_alignment_phase(activity=activity)
         t3 = time.time()
 
-        result = _execute_flagging_rescoring_phase(
+        result = await _execute_flagging_rescoring_phase(
             activity=activity,
             appsync=appsync,
             kaldi=kaldi,
@@ -144,6 +144,7 @@ async def process_single_activity(
 
     except Exception as e:
         logger.error(f"Error processing activity: {e}")
+        raise e
         try:
             emit_standardized_metric(
                 namespace="Amira/ORFRescore",
@@ -203,7 +204,9 @@ async def _execute_audio_transcription_phase(
 
     phrase_manifest = _create_phrase_manifest()
     logger.debug(f"Creating phrase manifest for activity: {activity.activity_id}")
-    pages = phrase_manifest.generate(bucket=env.audio_bucket, activity_id=activity.activity_id)
+    pages = await phrase_manifest.generate(
+        bucket=env.audio_bucket, activity_id=activity.activity_id
+    )
 
     import asyncio
 
@@ -326,7 +329,7 @@ def _update_feature_with_deepgram_matches(
         raise AssertionError(error_msg)
 
 
-def _execute_flagging_rescoring_phase(
+async def _execute_flagging_rescoring_phase(
     *,
     activity: Activity,
     appsync: "AppSync",
@@ -353,7 +356,7 @@ def _execute_flagging_rescoring_phase(
     debugger = ActivityDebugger(activity=activity) if debug else None
     flagging_executor = FlaggingExecutor(activity=activity, kaldi=kaldi, w2v=w2v, debugger=debugger)
 
-    _process_features_with_flagging(activity=activity, flagging_executor=flagging_executor)
+    await _process_features_with_flagging(activity=activity, flagging_executor=flagging_executor)
 
     activity.errors_retouched = trim_predictions(predictions=activity.errors_retouched)
 
@@ -385,7 +388,7 @@ def _truncate_errors_to_available_pages(*, activity: Activity) -> None:
         )
 
 
-def _process_features_with_flagging(
+async def _process_features_with_flagging(
     *, activity: Activity, flagging_executor: FlaggingExecutor
 ) -> None:
     """Process each feature with flagging logic.
@@ -400,7 +403,7 @@ def _process_features_with_flagging(
         errors = activity.pad_to_phrase_length(errors=errors, phrase_index=feature.phrase_index)
 
         decision = FlaggingAnalyzer.decide_flagging_strategy(feature=feature, errors=errors)
-        retouched_errors = flagging_executor.execute_flagging_decision(
+        retouched_errors = await flagging_executor.execute_flagging_decision(
             feature=feature, decision=decision
         )
         activity.errors_retouched.append(retouched_errors)

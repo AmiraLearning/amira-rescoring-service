@@ -176,7 +176,7 @@ def rescore_phrase_errors(
     return cast(list[bool], is_error.tolist())
 
 
-def rescore_phrase(
+async def rescore_phrase(
     *,
     activity: Activity,
     feature: ModelFeature,
@@ -210,7 +210,7 @@ def rescore_phrase(
         fallback_errors = [True] * len(feature.kaldi_match)
         return fallback_errors, fallback_matches, fallback_matches, "", ""
 
-    kaldi_transcript, w2v_transcript = transcribe_phrase(
+    kaldi_transcript, w2v_transcript = await _transcribe_phrase_async(
         activity=activity, phrase_index=feature.phrase_index, kaldi=kaldi, w2v=w2v
     )
 

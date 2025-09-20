@@ -38,7 +38,7 @@ RETRY_MIN_WAIT: Final[float] = 1.0
 RETRY_MAX_WAIT: Final[float] = 10.0
 
 
-@retry(  # type: ignore[misc]
+@retry(
     stop=stop_after_attempt(RETRY_MAX_ATTEMPTS),
     wait=wait_exponential(multiplier=RETRY_MIN_WAIT, max=RETRY_MAX_WAIT),
     reraise=True,
@@ -567,6 +567,7 @@ class Activity:
                 logger.error(
                     f"Activity {self.activity_id}: Error reading page file {page_file}: {e}"
                 )
+                raise e
                 break
 
         return pages

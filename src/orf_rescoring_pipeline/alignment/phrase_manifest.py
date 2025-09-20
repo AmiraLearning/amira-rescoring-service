@@ -10,16 +10,17 @@ Copied from https://github.com/AmiraLearning/amira-slicing-service/blob/develop/
 
 from __future__ import annotations
 
+import asyncio
 import os
 import re
 import threading
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from typing import Any, Final
 
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from amira_pyutils.logging import get_logger
+from amira_pyutils.s3 import S3Service
 
 logger = get_logger(__name__)
 
@@ -129,9 +130,6 @@ class S3SegmentMetadata:
         return S3SegmentMetadata(**converted_vals)
 
 
-from amira_pyutils.s3 import S3Service
-
-
 class PhraseBuilder:
     """Builds phrases from individual audio segments stored in S3."""
 
@@ -141,9 +139,9 @@ class PhraseBuilder:
         Args:
             s3_client: Boto3 S3 client for accessing segment data.
         """
-        self._s3_client = s3_client._get_client()
+        self._s3_service = s3_client
 
-    def build(self, *, bucket: str, activity_id: str) -> list[Segment]:
+    async def build(self, *, bucket: str, activity_id: str) -> list[Segment]:
         """Build a list of segments with metadata for the given activity.
 
         Args:
@@ -157,13 +155,17 @@ class PhraseBuilder:
             InvalidV2Segment: If too many invalid segments are encountered.
         """
         logger.debug(f"Fetching segments for activity: {activity_id}")
-        segments = self._fetch_segments(bucket=bucket, activity_id=activity_id)
+        segments = await self._fetch_segments(bucket=bucket, activity_id=activity_id)
         logger.debug(f"Segments fetched for activity: {activity_id}")
-        segments_with_metadata = self._populate_segment_metadata(bucket=bucket, segments=segments)
+        segments_with_metadata = await self._populate_segment_metadata(
+            bucket=bucket, segments=segments
+        )
         logger.debug(f"Segments with metadata fetched for activity: {activity_id}")
         return segments_with_metadata
 
-    def _populate_segment_metadata(self, *, bucket: str, segments: list[Segment]) -> list[Segment]:
+    async def _populate_segment_metadata(
+        self, *, bucket: str, segments: list[Segment]
+    ) -> list[Segment]:
         """Populate metadata for all segments using concurrent processing.
 
         Args:
@@ -180,7 +182,9 @@ class PhraseBuilder:
         invalids_lock = threading.Lock()
         mutable_segments: list[Segment | None] = list(segments)
 
-        def _fetch_single_segment_metadata(*, index: int, segment: Segment) -> tuple[int, bool]:
+        async def _fetch_single_segment_metadata(
+            *, index: int, segment: Segment
+        ) -> tuple[int, bool]:
             """Fetch metadata for a single segment.
 
             Args:
@@ -191,7 +195,7 @@ class PhraseBuilder:
                 Tuple of (index, is_valid) indicating success.
             """
             try:
-                meta = self._fetch_meta(bucket=bucket, key=segment.filename)
+                meta = await self._fetch_meta(bucket=bucket, key=segment.filename)
                 self._apply_metadata_to_segment(segment=segment, metadata=meta)
                 return index, True
             except InvalidV2Segment as error:
@@ -199,17 +203,29 @@ class PhraseBuilder:
                     invalids.append(error)
                 return index, False
 
-        max_workers = min(len(segments), MAX_CONCURRENT_METADATA_WORKERS)
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            futures = {
-                executor.submit(_fetch_single_segment_metadata, index=i, segment=segment): i
-                for i, segment in enumerate(segments)
-            }
+        # Use asyncio.gather for concurrent async operations
+        tasks = [
+            _fetch_single_segment_metadata(index=i, segment=segment)
+            for i, segment in enumerate(segments)
+        ]
 
-            for future in as_completed(futures):
-                i, is_valid = future.result()
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        for i, result in enumerate(results):
+            if isinstance(result, Exception):
+                # Handle exception case - mark segment as invalid
+                mutable_segments[i] = None
+                with invalids_lock:
+                    if isinstance(result, InvalidV2Segment):
+                        invalids.append(result)
+            elif isinstance(result, tuple) and len(result) == 2:
+                # Handle successful result case
+                _, is_valid = result
                 if not is_valid:
                     mutable_segments[i] = None
+            else:
+                # Handle unexpected result format
+                mutable_segments[i] = None
 
         if len(invalids) > MAX_ALLOWED_INVALID_SEGMENTS:
             raise invalids[0]
@@ -254,12 +270,12 @@ class PhraseBuilder:
         phrase_index, seq_num = map(int, parts.groups())
         return S3SegmentMetadata(sequenceNumber=seq_num, phraseIndex=phrase_index)
 
-    @retry(  # type: ignore[misc]
+    @retry(
         stop=stop_after_attempt(RETRY_MAX_ATTEMPTS),
         wait=wait_exponential(multiplier=RETRY_MIN_WAIT, max=RETRY_MAX_WAIT),
         reraise=True,
     )
-    def _fetch_meta(self, *, bucket: str, key: str) -> S3SegmentMetadata:
+    async def _fetch_meta(self, *, bucket: str, key: str) -> S3SegmentMetadata:
         """Fetch metadata for a segment with retry logic.
 
         Args:
@@ -272,10 +288,11 @@ class PhraseBuilder:
         if meta := self._parse_segment_v2(filename=key):
             return meta
 
-        head = self._s3_client.head_object(Bucket=bucket, Key=key)
-        return S3SegmentMetadata.from_dict(data=head["Metadata"])
+        async with self._s3_service._get_client() as s3_client:
+            head = await s3_client.head_object(Bucket=bucket, Key=key)
+            return S3SegmentMetadata.from_dict(data=head["Metadata"])
 
-    def _fetch_segments(
+    async def _fetch_segments(
         self, *, bucket: str, activity_id: str, max_keys: int = DEFAULT_MAX_KEYS
     ) -> list[Segment]:
         """Fetch all segments for an activity from S3.
@@ -307,7 +324,8 @@ class PhraseBuilder:
             if start_after:
                 kwargs["StartAfter"] = start_after
             logger.debug(f"About to call list_objects_v2 for activity: {activity_id}")
-            objs = self._s3_client.list_objects(**kwargs)
+            async with self._s3_service._get_client() as s3_client:
+                objs = await s3_client.list_objects_v2(**kwargs)
             logger.debug(f"list_objects_v2 called for activity: {activity_id}")
             logger.debug(f"Segments fetched for activity: {activity_id}")
             if objs["KeyCount"] == 0:
@@ -339,7 +357,7 @@ class PhraseManifest:
         """
         self._builder = builder
 
-    def generate(self, *, bucket: str, activity_id: str) -> list[Phrase]:
+    async def generate(self, *, bucket: str, activity_id: str) -> list[Phrase]:
         """Generate an ordered phrase manifest for an activity.
 
         Args:
@@ -349,8 +367,8 @@ class PhraseManifest:
         Returns:
             Ordered list of phrases with timing information.
         """
-        logger.debug(f"Generating phrase manifest for activityYYYY: {activity_id}")
-        segments = self._builder.build(bucket=bucket, activity_id=activity_id)
+        logger.debug(f"Generating phrase manifest for activity: {activity_id}")
+        segments = await self._builder.build(bucket=bucket, activity_id=activity_id)
         logger.debug(f"Segments fetched for activity: {activity_id}")
         manifest = self._group_segments(segments=segments)
         logger.debug(f"Segments grouped for activity: {activity_id}")

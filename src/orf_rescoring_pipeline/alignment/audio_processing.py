@@ -169,7 +169,7 @@ async def load_activity_audio_data_from_s3(*, activity: Activity, audio_bucket: 
         except Exception as e:
             logger.error(f"Failed to load audio data for activity {activity.activity_id}: {e}")
             activity.audio_file_data = None
-            raise
+            raise e
 
 
 def slice_audio_file_data(
